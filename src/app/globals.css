@@ -1,0 +1,123 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ground: #f3f5f2;
+}
+
+html {
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  @apply bg-ground font-sans text-ink;
+  /* origami: duas facetas muito suaves nos cantos, como no logotipo */
+  background-image:
+    linear-gradient(135deg, rgba(230, 51, 41, 0.045) 0%, rgba(230, 51, 41, 0) 22%),
+    linear-gradient(225deg, rgba(10, 158, 127, 0.07) 0%, rgba(10, 158, 127, 0) 26%);
+  background-attachment: fixed;
+}
+
+h1,
+h2,
+h3 {
+  @apply font-display;
+}
+
+/* números alinhados em colunas e nos indicadores */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line bg-white shadow-card;
+  }
+  .card-h {
+    @apply flex items-center justify-between gap-3 border-b border-line px-5 py-3;
+  }
+  .card-t {
+    @apply font-display text-[15px] font-semibold tracking-tight text-ink;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg border px-3.5 py-2 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn border-brand bg-brand text-white hover:border-brand-dark hover:bg-brand-dark;
+  }
+  .btn-ghost {
+    @apply btn border-line bg-white text-gray-700 hover:bg-gray-50;
+  }
+  .btn-danger {
+    @apply btn border-bad/30 bg-white text-bad hover:bg-bad-soft;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1 text-xs;
+  }
+
+  .field {
+    @apply mt-1 block w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-ink placeholder:text-gray-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand/20;
+  }
+  .label {
+    @apply text-xs font-medium text-gray-600;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-0.5 text-[11px] font-semibold leading-5;
+  }
+  .chip-ok {
+    @apply chip bg-ok-soft text-ok;
+  }
+  .chip-info {
+    @apply chip bg-info-soft text-info;
+  }
+  .chip-warn {
+    @apply chip bg-warn-soft text-warn;
+  }
+  .chip-bad {
+    @apply chip bg-bad-soft text-bad;
+  }
+  .chip-mute {
+    @apply chip bg-gray-100 text-gray-600;
+  }
+
+  .tbl {
+    @apply w-full text-sm;
+  }
+  .tbl thead {
+    @apply bg-gray-50 text-[11px] font-semibold uppercase tracking-wide text-gray-500;
+  }
+  .tbl th {
+    @apply px-3 py-2.5 text-left;
+  }
+  .tbl td {
+    @apply px-3 py-2.5;
+  }
+  .tbl tbody tr {
+    @apply border-t border-gray-100;
+  }
+  .tbl tbody tr:hover {
+    @apply bg-gray-50/60;
+  }
+
+  .nav-item {
+    @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-ink;
+  }
+  .nav-item-active {
+    @apply bg-brand-soft text-brand-dark hover:bg-brand-soft hover:text-brand-dark;
+  }
+}
+
+/* faixa listrada: vaga aberta / sem equipe montada */
+.listrado {
+  background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.55) 0 4px, transparent 4px 8px);
+}
+
+@media print {
+  aside,
+  .no-print {
+    display: none !important;
+  }
+}

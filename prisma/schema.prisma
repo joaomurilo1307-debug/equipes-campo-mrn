@@ -1,0 +1,183 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-musl"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Sistema de controle de equipes de campo (afugentamento / resgate) da MRN.
+// Datas de calendario (sem hora) sao gravadas em UTC 00:00 e comparadas como
+// "AAAA-MM-DD" na camada de regra (src/lib/efetivos/disponibilidade.ts).
+
+enum UserRole {
+  ADMIN
+  EDITOR
+  VISUALIZADOR
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         UserRole @default(EDITOR)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+}
+
+// Quem mexeu em que (escalas, ausencias, veiculos, importacao).
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  userName   String?
+  action     String
+  entityType String?
+  entityId   String?
+  resumo     String   @db.Text
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// Equipe-base cadastrada (EQ-01...): agrupa as vagas de um contrato/projeto.
+model EfetivoEquipe {
+  id                String   @id @default(cuid())
+  codigo            String   @unique // EQ-01
+  projeto           String // contrato / projeto base, ex: "3636 PNM"
+  contratoConfirmado Boolean @default(true) // false = contrato deduzido pelo nome, a confirmar
+  gestor            String? // gestor MRN responsavel
+  grupo             String // Fauna | Flora | Apoio
+  nome              String // ex: FLANCO NORTE - EQUIPE 01
+  status            String   @default("Ativa") // Ativa | Em formação | Inativa
+  ordem             Int      @default(0)
+  criadoEm          DateTime @default(now())
+
+  vagas EfetivoVaga[]
+
+  @@index([grupo])
+}
+
+// Uma vaga/posicao da equipe; "nome" vazio = vaga ainda sem profissional.
+model EfetivoVaga {
+  id                String    @id @default(cuid())
+  numero            Int?
+  equipeId          String
+  atividade         String    @default("Resgate")
+  empresa           String
+  cargo             String
+  nome              String?
+  status            String    @default("Vigente") // Vigente | Apto com restrição | Afastado | Em contratação | Desmobilizado
+  previsaoInicio    DateTime? // vaga em contratacao: quando se espera o profissional
+  nivel             String? // Superior | Técnico | NA
+  direcao4x4        Boolean? // habilitado a dirigir 4x4 (null = nao informado)
+  contratoAtual     String? // contrato onde a pessoa esta hoje, quando fora da propria equipe (apoio vindo de outro contrato)
+  disponivelAPartir DateTime? // ate esta data (exclusive) a pessoa segue ocupada em contratoAtual
+  destino           String? // para onde esta previsto migrar depois
+  observacao        String?
+  criadoEm          DateTime  @default(now())
+
+  equipe    EfetivoEquipe     @relation(fields: [equipeId], references: [id])
+  ausencias EfetivoAusencia[]
+  alocacoes EfetivoAlocacao[]
+
+  @@index([equipeId])
+}
+
+// Ausencia com data (ferias, atestado, folga, treinamento...).
+model EfetivoAusencia {
+  id         String   @id @default(cuid())
+  vagaId     String
+  tipo       String // Férias | Atestado | Afastado | Folga | Treinamento | Outro
+  inicio     DateTime
+  fim        DateTime
+  observacao String?
+  criadoEm   DateTime @default(now())
+
+  vaga EfetivoVaga @relation(fields: [vagaId], references: [id], onDelete: Cascade)
+
+  @@index([vagaId, inicio, fim])
+}
+
+// Campanha = a demanda do cliente + o periodo em que as pessoas ficam alocadas.
+model EfetivoCampanha {
+  id            String    @id @default(cuid())
+  codigo        String    @unique // CAM-001
+  recebidaEm    DateTime?
+  solicitante   String?
+  projeto       String // contrato / projeto
+  grupo         String // Fauna | Flora
+  atividade     String // Afugentamento | Resgate | Afugentamento e Resgate | Apoio / Coordenação
+  local         String?
+  inicio        DateTime
+  fim           DateTime
+  qtdEquipes    Int       @default(1)
+  prioridade    String    @default("Média") // Alta | Média | Baixa
+  status        String    @default("Nova") // Nova | Em análise | Planejada | Confirmada | Em execução | Concluída | Cancelada
+  observacao    String?
+  criadoPorNome String?
+  criadoEm      DateTime  @default(now())
+
+  alocacoes EfetivoAlocacao[]
+
+  @@index([inicio, fim])
+  @@index([status])
+}
+
+// Pessoa (vaga com nome) reservada para uma campanha, num periodo (padrao = o da campanha).
+model EfetivoAlocacao {
+  id            String   @id @default(cuid())
+  campanhaId    String
+  vagaId        String
+  inicio        DateTime
+  fim           DateTime
+  criadoPorNome String?
+  criadoEm      DateTime @default(now())
+
+  campanha EfetivoCampanha @relation(fields: [campanhaId], references: [id], onDelete: Cascade)
+  vaga     EfetivoVaga     @relation(fields: [vagaId], references: [id])
+
+  @@unique([campanhaId, vagaId])
+  @@index([vagaId, inicio, fim])
+}
+
+// Veiculo (viatura). A planilha so traz "VL 01/02/03" por equipe, sem placa:
+// placa, modelo e contrato sao preenchidos no sistema.
+model EfetivoVeiculo {
+  id            String   @id @default(cuid())
+  codigo        String   @unique // VEI-001
+  identificacao String // como a equipe chama: VL 01, placa, prefixo...
+  placa         String?
+  modelo        String?
+  tracao4x4     Boolean?
+  status        String   @default("Em operação") // Em operação | Disponível | Em manutenção | Parado | Devolvido
+  observacao    String?
+  criadoEm      DateTime @default(now())
+
+  movimentos EfetivoVeiculoMovimento[]
+
+  @@index([status])
+}
+
+// Onde o veiculo esta (ou esteve): contrato/projeto, equipe e local, por periodo.
+// fim vazio = continua la. Nunca se apaga a passagem anterior: ao mover, fecha-se a anterior.
+model EfetivoVeiculoMovimento {
+  id            String    @id @default(cuid())
+  veiculoId     String
+  inicio        DateTime
+  fim           DateTime?
+  projeto       String
+  equipeId      String?
+  campanhaId    String?
+  local         String?
+  observacao    String?
+  criadoPorNome String?
+  criadoEm      DateTime  @default(now())
+
+  veiculo EfetivoVeiculo @relation(fields: [veiculoId], references: [id], onDelete: Cascade)
+
+  @@index([veiculoId, inicio])
+  @@index([projeto])
+}
