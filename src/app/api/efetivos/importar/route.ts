@@ -52,8 +52,12 @@ export async function POST(req: Request) {
   const acrescentar = url.searchParams.get("acrescentar") === "1";
 
   const form = await req.formData().catch(() => null);
-  const arquivo = form?.get("arquivo");
-  if (!(arquivo instanceof File)) return NextResponse.json({ error: "Envie a planilha (.xlsx) no campo 'arquivo'" }, { status: 422 });
+  const campoArquivo = form?.get("arquivo");
+  // aceita qualquer objeto com cara de arquivo (o File do undici nem sempre e o File global do Node)
+  if (!campoArquivo || typeof campoArquivo === "string" || typeof (campoArquivo as File).arrayBuffer !== "function") {
+    return NextResponse.json({ error: "Envie a planilha (.xlsx) no campo 'arquivo'" }, { status: 422 });
+  }
+  const arquivo = campoArquivo as File;
   if (arquivo.size > MAX_BYTES) return NextResponse.json({ error: "Arquivo grande demais (máximo 8 MB)" }, { status: 422 });
   const refInformada = String(form?.get("dataReferencia") ?? "");
   const dataRef = dataValida(refInformada) ? refInformada : instanteBrasilia().iso;

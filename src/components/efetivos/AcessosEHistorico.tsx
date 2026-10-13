@@ -248,3 +248,46 @@ export function Historico() {
     </div>
   );
 }
+
+// ---------------------------------------------------------------- cada pessoa troca a própria senha
+
+export function ModalMinhaSenha({ onFechar }: { onFechar: () => void }) {
+  const [f, setF] = useState({ atual: "", nova: "", repetir: "" });
+  const [erro, setErro] = useState<string | null>(null);
+  const [ok, setOk] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  async function salvar() {
+    setErro(null);
+    if (f.nova !== f.repetir) return setErro("As duas senhas novas não são iguais.");
+    setSalvando(true);
+    const r = await chamar("POST", "/api/minha-senha", { atual: f.atual, nova: f.nova });
+    setSalvando(false);
+    if (!r.ok) return setErro(r.dados.error ?? "Não foi possível trocar a senha");
+    setOk(true);
+  }
+  return (
+    <Modal titulo="Trocar minha senha" onFechar={onFechar}>
+      <div className="space-y-4 px-6 py-5">
+        <Campo rotulo="Senha atual">
+          <input type="password" value={f.atual} onChange={(e) => setF({ ...f, atual: e.target.value })} className="field" autoFocus autoComplete="current-password" />
+        </Campo>
+        <Campo rotulo="Nova senha" dica="Mínimo de 8 caracteres.">
+          <input type="password" value={f.nova} onChange={(e) => setF({ ...f, nova: e.target.value })} className="field" autoComplete="new-password" />
+        </Campo>
+        <Campo rotulo="Repita a nova senha">
+          <input type="password" value={f.repetir} onChange={(e) => setF({ ...f, repetir: e.target.value })} className="field" autoComplete="new-password" />
+        </Campo>
+        {ok && <Aviso tipo="ok">Senha trocada. Use a nova no próximo acesso.</Aviso>}
+        {erro && <Aviso tipo="erro">{erro}</Aviso>}
+      </div>
+      <RodapeModal>
+        <button onClick={onFechar} className="btn-ghost">{ok ? "Fechar" : "Cancelar"}</button>
+        {!ok && (
+          <button onClick={salvar} disabled={salvando || !f.atual || f.nova.length < 8} className="btn-primary">
+            {salvando ? "Salvando…" : "Trocar senha"}
+          </button>
+        )}
+      </RodapeModal>
+    </Modal>
+  );
+}

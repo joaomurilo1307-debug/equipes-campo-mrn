@@ -604,7 +604,7 @@ function CartaoEquipe({ l, cor, confirmado, comp, viaturas }: { l: LinhaEquipe; 
           <IcCarro tam={15} />
           {viaturas} viatura{viaturas === 1 ? "" : "s"}
         </span>
-        <Link href={`/quadro`} className="font-semibold text-brand-dark hover:underline">
+        <Link href={`/quadro?equipe=${l.id}`} className="font-semibold text-brand-dark hover:underline">
           Ver no quadro
         </Link>
       </div>

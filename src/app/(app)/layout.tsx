@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import ConsominasLogo from "@/components/ConsominasLogo";
 import { DadosGate, DadosProvider, useShell } from "@/components/efetivos/DadosContext";
+import { ModalMinhaSenha } from "@/components/efetivos/AcessosEHistorico";
 import { IcCampanha, IcCarro, IcEquipe, IcFechar, IcHistorico, IcOlho, IcPainel, IcQuadro, IcSair, IcUsuarios } from "@/components/efetivos/icones";
 
 type Item = { href: string; rotulo: string; icone: (p: { tam?: number }) => JSX.Element; so?: "editor" | "admin" };
@@ -24,6 +25,7 @@ function Menu({ aoNavegar }: { aoNavegar?: () => void }) {
   const { data: sessao } = useSession();
   const { nivel, podeEditar, ocultarNomes, setOcultarNomes } = useShell();
   const nome = (sessao?.user as any)?.name ?? "";
+  const [trocarSenha, setTrocarSenha] = useState(false);
   const visiveis = ITENS.filter((i) => !i.so || (i.so === "editor" ? podeEditar : nivel === "ADMIN"));
 
   return (
@@ -55,13 +57,19 @@ function Menu({ aoNavegar }: { aoNavegar?: () => void }) {
         <div className="flex items-center justify-between gap-2 px-2">
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-ink">{nome || "Usuário"}</div>
-            <div className="text-[11px] text-gray-500">{nivel === "ADMIN" ? "Administrador" : podeEditar ? "Editor" : "Consulta"}</div>
+            <div className="text-[11px] text-gray-500">
+              {nivel === "ADMIN" ? "Administrador" : podeEditar ? "Editor" : "Consulta"} ·{" "}
+              <button onClick={() => setTrocarSenha(true)} className="underline hover:text-ink">
+                trocar senha
+              </button>
+            </div>
           </div>
           <button onClick={() => signOut({ callbackUrl: "/login" })} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-accent" aria-label="Sair" title="Sair">
             <IcSair tam={18} />
           </button>
         </div>
       </div>
+      {trocarSenha && <ModalMinhaSenha onFechar={() => setTrocarSenha(false)} />}
     </div>
   );
 }

@@ -16,6 +16,7 @@ import { useDados } from "../DadosContext";
 import {
   A_DEFINIR,
   CHIP_STATUS_CAMPANHA,
+  CHIP_VEICULO,
   COR_STATUS_CAMPANHA,
   ESTADO_VISUAL,
   corDoContrato,
@@ -48,6 +49,7 @@ import Lane from "./Lane";
 type Zoom = "dia" | "semana" | "mes";
 const LARG_DIA: Record<Zoom, number> = { dia: 28, semana: 14, mes: 5 };
 const SEMANAS: Record<Zoom, number> = { dia: 8, semana: 20, mes: 52 };
+const SEM_LOCAL = "Sem localização";
 
 type ModalEstado =
   | { t: "campanha"; campanha?: Campanha; padrao?: PadraoCampanha; equipeId?: string }
@@ -231,6 +233,18 @@ export default function Quadro() {
       })
       .filter((x) => x.visivel);
   }, [dados.veiculos, dados.movimentos, equipePorId, contrato, fimJanela, hoje]);
+
+  // frota agrupada pelo contrato em que cada veículo está hoje
+  const frotaPorContrato = useMemo(() => {
+    const m = new Map<string, typeof frota>();
+    for (const x of frota) {
+      const k = x.loc?.projeto ?? SEM_LOCAL;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(x);
+    }
+    for (const lista of m.values()) lista.sort((a, b) => a.v.identificacao.localeCompare(b.v.identificacao, "pt-BR", { numeric: true }));
+    return [...m.entries()].sort(([a], [b]) => (a === SEM_LOCAL ? 1 : b === SEM_LOCAL ? -1 : a === A_DEFINIR ? 1 : b === A_DEFINIR ? -1 : a.localeCompare(b)));
+  }, [frota]);
 
   // ---- faixa "equipes livres × pedidas" por semana
   const semanas = useMemo(() => Array.from({ length: SEMANAS[zoom] }, (_, k) => somarDias(inicio, k * 7)), [inicio, zoom]);
@@ -585,37 +599,56 @@ export default function Quadro() {
             {/* FROTA */}
             <TituloSecao rotulo="Frota" n={frota.length} aberto={!fechadas.has("frota")} onAlternar={() => alternar(fechadas, "frota", setFechadas)} extra={podeEditar ? "Arraste sobre a linha de um veículo para movê-lo de contrato." : undefined} />
             {!fechadas.has("frota") &&
-              frota.map(({ v, barras, loc }) => (
-                <div key={v.id} className="flex border-b border-gray-100 hover:bg-gray-50/40">
-                  <Esq className="flex items-center gap-2.5 px-4" altura={52}>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-[13px] font-semibold">{v.identificacao}</span>
-                        <span className="font-mono text-[10px] text-gray-400">{v.codigo}</span>
-                      </div>
-                      <div className="truncate text-[11px] text-gray-500">
-                        {v.placa ?? "sem placa"}
-                        {loc ? ` · hoje em ${rotuloContrato(loc.projeto)}` : " · sem localização"}
+              frotaPorContrato.map(([projeto, itens]) => {
+                const cor = projeto === SEM_LOCAL ? "#9AA8A1" : corDoContrato(projeto);
+                return (
+                  <div key={projeto}>
+                    <div className="flex border-b border-line bg-white">
+                      <Esq className="flex items-center gap-2 px-4" altura={34}>
+                        <PontoContrato cor={cor} />
+                        <span className="truncate font-display text-[15px] font-semibold tracking-tight">{projeto === SEM_LOCAL ? SEM_LOCAL : rotuloContrato(projeto)}</span>
+                      </Esq>
+                      <div className="flex flex-1 items-center gap-4 px-3 text-xs text-gray-500" style={{ background: `${cor}0F` }}>
+                        <span>
+                          <strong className="num text-ink">{itens.length}</strong> veículo{itens.length === 1 ? "" : "s"} {projeto === SEM_LOCAL ? "" : "hoje"}
+                        </span>
                       </div>
                     </div>
-                    <button onClick={() => setDrawer({ t: "veiculo", id: v.id })} className="shrink-0 rounded-md border border-line px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 hover:bg-gray-50">
-                      detalhes
-                    </button>
-                  </Esq>
-                  <Lane
-                    inicio={inicio}
-                    totalDias={totalDias}
-                    dw={dw}
-                    altura={52}
-                    barras={distribuir(barras).map((x) => ({ ...x, faixa: 0 }))}
-                    topoBarras={12}
-                    alturaBarra={28}
-                    onSelecionar={podeEditar ? (a, b) => setModal({ t: "mover", veiculo: v, periodo: { inicio: a, fim: b } }) : undefined}
-                    umDia={zoom === "dia"}
-                    dica="Arraste para mover este veículo de contrato"
-                  />
-                </div>
-              ))}
+                    {itens.map(({ v, barras, loc }) => (
+                      <div key={v.id} className="flex border-b border-gray-100 hover:bg-gray-50/40">
+                        <Esq className="flex items-center gap-2.5 px-4 pl-9" altura={52}>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[13px] font-semibold">{v.identificacao}</span>
+                              <span className="font-mono text-[10px] text-gray-400">{v.codigo}</span>
+                              {v.status !== "Em operação" && <span className={CHIP_VEICULO[v.status]}>{v.status}</span>}
+                            </div>
+                            <div className="truncate text-[11px] text-gray-500">
+                              {v.placa ?? "sem placa"}
+                              {loc?.equipeId ? ` · ${equipePorId.get(loc.equipeId)?.nome ?? ""}` : ""}
+                            </div>
+                          </div>
+                          <button onClick={() => setDrawer({ t: "veiculo", id: v.id })} className="shrink-0 rounded-md border border-line px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 hover:bg-gray-50">
+                            detalhes
+                          </button>
+                        </Esq>
+                        <Lane
+                          inicio={inicio}
+                          totalDias={totalDias}
+                          dw={dw}
+                          altura={52}
+                          barras={distribuir(barras).map((x) => ({ ...x, faixa: 0 }))}
+                          topoBarras={12}
+                          alturaBarra={28}
+                          onSelecionar={podeEditar ? (a, b) => setModal({ t: "mover", veiculo: v, periodo: { inicio: a, fim: b } }) : undefined}
+                          umDia={zoom === "dia"}
+                          dica="Arraste para mover este veículo de contrato"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
             {!fechadas.has("frota") && frota.length === 0 && (
               <div className="flex border-b border-gray-100">
                 <Esq className="px-4 py-3 text-sm text-gray-400">Nenhum veículo cadastrado.</Esq>
