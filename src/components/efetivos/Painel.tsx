@@ -28,7 +28,7 @@ function Kpi({ rotulo, valor, sub, cor, children }: { rotulo: string; valor: num
   return (
     <div className="card p-4">
       <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{rotulo}</div>
-      <div className="num mt-2 font-display text-[40px] font-semibold leading-none" style={{ color: cor ?? "#101B17" }}>
+      <div className="num mt-2 font-display text-[28px] font-semibold leading-none" style={{ color: cor ?? "#101B17" }}>
         {valor}
       </div>
       {sub && <div className="mt-1.5 text-xs text-gray-500">{sub}</div>}
@@ -142,7 +142,6 @@ export default function Painel() {
       .filter((x) => x.at.pessoasAlocadas === 0 && x.at.atendimento !== "CAPACIDADE SUFICIENTE");
   }, [dados.campanhas, regra, hoje]);
 
-  const aConfirmar = dados.equipes.filter((e) => !e.contratoConfirmado).length;
   const t = painel.totais;
 
   // equipes por contrato (gráfico de capacidade), nos cinco estados
@@ -178,23 +177,6 @@ export default function Painel() {
         }
       />
 
-      {(aConfirmar > 0 || t.conflitos > 0) && (
-        <div className="space-y-2">
-          {t.conflitos > 0 && (
-            <Aviso tipo="erro">
-              <strong>{t.conflitos}</strong> pessoa{t.conflitos > 1 ? "s" : ""} escalada{t.conflitos > 1 ? "s" : ""} em campanha e ausente{t.conflitos > 1 ? "s" : ""} em {fmtDia(dataRef)}. Revise a equipe da campanha em{" "}
-              <Link href="/campanhas" className="font-semibold underline">Campanhas</Link>.
-            </Aviso>
-          )}
-          {aConfirmar > 0 && (
-            <Aviso tipo="atencao">
-              <strong>{aConfirmar}</strong> equipe{aConfirmar > 1 ? "s" : ""} com contrato <strong>a confirmar</strong> (a planilha não informa o contrato de cada equipe). Confira em{" "}
-              <Link href="/equipes" className="font-semibold underline">Equipes e pessoas</Link>.
-            </Aviso>
-          )}
-        </div>
-      )}
-
       {/* indicadores */}
       <section className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6" aria-label="Indicadores">
         <Kpi rotulo="Equipes" valor={t.equipes} sub={`${t.pessoas.vagas} vagas no total`} />
@@ -207,14 +189,14 @@ export default function Painel() {
 
       {/* resumo por grupo */}
       <section aria-label="Resumo por grupo">
-        <h2 className="mb-3 font-display text-lg font-semibold tracking-tight">Resumo por grupo</h2>
+        <h2 className="mb-2.5 font-display text-[15px] font-semibold tracking-tight">Resumo por grupo</h2>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {painel.grupos.map((g) => (
             <article key={g.grupo} className="card p-5">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
                   <span className="h-3 w-3 rotate-45 rounded-[3px]" style={{ background: corGrupo(g.grupo) }} />
-                  <h3 className="font-display text-xl font-semibold tracking-tight">{g.grupo}</h3>
+                  <h3 className="font-display text-[17px] font-semibold tracking-tight">{g.grupo}</h3>
                 </div>
                 <span className="chip-mute">
                   {g.total} equipe{g.total === 1 ? "" : "s"}
@@ -223,15 +205,15 @@ export default function Painel() {
 
               <div className="mt-4 grid grid-cols-3 gap-3 text-center">
                 <div>
-                  <div className="num font-display text-3xl font-semibold" style={{ color: COR.livre }}>{g.disponiveis}</div>
+                  <div className="num font-display text-2xl font-semibold" style={{ color: COR.livre }}>{g.disponiveis}</div>
                   <div className="text-[11px] font-medium text-gray-500">Disponíveis</div>
                 </div>
                 <div>
-                  <div className="num font-display text-3xl font-semibold" style={{ color: COR.alocada }}>{g.alocadas}</div>
+                  <div className="num font-display text-2xl font-semibold" style={{ color: COR.alocada }}>{g.alocadas}</div>
                   <div className="text-[11px] font-medium text-gray-500">Alocadas</div>
                 </div>
                 <div>
-                  <div className="num font-display text-3xl font-semibold" style={{ color: COR.ausente }}>{g.indisponiveis}</div>
+                  <div className="num font-display text-2xl font-semibold" style={{ color: COR.ausente }}>{g.indisponiveis}</div>
                   <div className="text-[11px] font-medium text-gray-500">Indisponíveis</div>
                 </div>
               </div>
@@ -280,14 +262,14 @@ export default function Painel() {
       {/* situação das equipes */}
       <section aria-label="Situação das equipes">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="font-display text-lg font-semibold tracking-tight">Situação das equipes</h2>
+          <h2 className="font-display text-[15px] font-semibold tracking-tight">Situação das equipes</h2>
           <Segmentado valor={visao} onChange={setVisao} opcoes={[{ id: "cards", rotulo: "Cartões" }, { id: "tabela", rotulo: "Tabela" }]} />
         </div>
 
         {visao === "cards" ? (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {painel.equipes.map((l) => (
-              <CartaoEquipe key={l.id} l={l} cor={corDoContrato(l.projeto)} confirmado={equipePorId.get(l.id)?.contratoConfirmado ?? true} comp={composicao.get(l.id)!} viaturas={viaturasPorEquipe.get(l.id) ?? 0} />
+              <CartaoEquipe key={l.id} l={l} cor={corDoContrato(l.projeto)} comp={composicao.get(l.id)!} viaturas={viaturasPorEquipe.get(l.id) ?? 0} />
             ))}
           </div>
         ) : (
@@ -512,7 +494,7 @@ export default function Painel() {
                 <PontoContrato cor={r.projeto === "Sem localização" ? "#9AA8A1" : corDoContrato(r.projeto)} />
                 {r.projeto === "Sem localização" ? r.projeto : rotuloContrato(r.projeto)}
               </div>
-              <div className="num mt-1 font-display text-3xl font-semibold">{r.total}</div>
+              <div className="num mt-1 font-display text-2xl font-semibold">{r.total}</div>
               <div className="text-[11px] text-gray-500">{Object.entries(r.porStatus).map(([s, n]) => `${n} ${s.toLowerCase()}`).join(" · ")}</div>
             </div>
           ))}
@@ -521,10 +503,8 @@ export default function Painel() {
       </section>
 
       {pendentes.length > 0 && (
-        <section className="card border-warn/30 p-5" aria-label="Campanhas sem equipe">
-          <h3 className="card-t flex items-center gap-2 text-warn">
-            <IcAlerta tam={18} /> Campanhas sem equipe e que a capacidade não cobre
-          </h3>
+        <section className="card p-5" aria-label="Campanhas aguardando equipe">
+          <h3 className="card-t">Campanhas aguardando equipe</h3>
           <ul className="mt-3 divide-y divide-line">
             {pendentes.map(({ c, at }) => (
               <li key={c.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
@@ -546,7 +526,7 @@ export default function Painel() {
 
 // ---------------------------------------------------------------- cartão de equipe
 
-function CartaoEquipe({ l, cor, confirmado, comp, viaturas }: { l: LinhaEquipe; cor: string; confirmado: boolean; comp: { livres: number; alocadas: number; ausentes: number; abertas: number; total: number }; viaturas: number }) {
+function CartaoEquipe({ l, cor, comp, viaturas }: { l: LinhaEquipe; cor: string; comp: { livres: number; alocadas: number; ausentes: number; abertas: number; total: number }; viaturas: number }) {
   const ev = ESTADO_VISUAL[estadoVisual(l)];
   return (
     <article className="card flex flex-col p-4">
@@ -557,7 +537,7 @@ function CartaoEquipe({ l, cor, confirmado, comp, viaturas }: { l: LinhaEquipe; 
             <span className="text-gray-300">·</span>
             <span className="text-[12px] text-gray-500">{l.grupo}</span>
           </div>
-          <h3 className="mt-0.5 font-display text-[17px] font-semibold leading-snug tracking-tight">{l.nome}</h3>
+          <h3 className="mt-0.5 font-display text-[14.5px] font-semibold leading-snug tracking-tight">{l.nome}</h3>
         </div>
         <span className={ev.chip} title={ev.dica}>{ev.rotulo}</span>
       </div>
@@ -567,7 +547,6 @@ function CartaoEquipe({ l, cor, confirmado, comp, viaturas }: { l: LinhaEquipe; 
           <PontoContrato cor={cor} tam={9} />
           {rotuloContrato(l.projeto)}
         </span>
-        {!confirmado && <span className="chip-warn" title="Contrato deduzido pelo nome ou ainda não informado">a confirmar</span>}
         {l.gestor && <span className="text-gray-500">gestor {l.gestor}</span>}
       </div>
 

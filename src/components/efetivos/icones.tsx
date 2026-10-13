@@ -134,3 +134,26 @@ export const IcImprimir = (p: P) => (
     <rect x="7" y="14" width="10" height="6" rx="1" />
   </Svg>
 );
+export const IcFerias = (p: P) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="4" />
+    <path d="M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6" />
+  </Svg>
+);
+export const IcLixo = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 7h16M9 7V4.5h6V7M6.5 7l.8 12.5h9.4L17.5 7M10 11v5M14 11v5" />
+  </Svg>
+);
+export const IcLapis = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 20l1-4L16.5 4.5a2 2 0 0 1 2.8 0l.2.2a2 2 0 0 1 0 2.8L8 19z" />
+    <path d="M14.5 6.5l3 3" />
+  </Svg>
+);
+export const IcContrato = (p: P) => (
+  <Svg {...p}>
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v4h4M9 12h6M9 16h6M9 8.5h2" />
+  </Svg>
+);

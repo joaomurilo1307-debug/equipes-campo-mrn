@@ -4,6 +4,7 @@
 // já com a regra de disponibilidade pronta para calcular qualquer data no próprio navegador.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { alocacoesQueSeguram, indexar, type DadosEfetivos, type Indice } from "@/lib/efetivos/disponibilidade";
+import { localizacaoNoDia, type MovimentoBase } from "@/lib/efetivos/veiculos";
 import { chamar, hojeBr, type Campanha, type DadosTela, type Equipe, type Vaga, type Veiculo } from "./comum";
 
 type Ctx = {
@@ -19,6 +20,10 @@ type Ctx = {
   campanhaPorId: Map<string, Campanha>;
   veiculoPorId: Map<string, Veiculo>;
   vagasPorEquipe: Map<string, Vaga[]>;
+  /** Viaturas que estao hoje com cada equipe (pela ultima passagem registrada). */
+  veiculosPorEquipe: Map<string, Veiculo[]>;
+  /** Pessoas que vao em cada viatura. */
+  ocupantesPorVeiculo: Map<string, Vaga[]>;
   /** Nome para exibir: no modo apresentação mostra o cargo no lugar do nome. */
   nomeDe: (v: Pick<Vaga, "nome" | "cargo">) => string;
 };
@@ -80,16 +85,37 @@ export function DadosProvider({ children }: { children: ReactNode }) {
       if (!vagasPorEquipe.has(v.equipeId)) vagasPorEquipe.set(v.equipeId, []);
       vagasPorEquipe.get(v.equipeId)!.push(v);
     }
+    const ocupantesPorVeiculo = new Map<string, Vaga[]>();
+    for (const v of dados.vagas) {
+      if (!v.veiculoId) continue;
+      if (!ocupantesPorVeiculo.has(v.veiculoId)) ocupantesPorVeiculo.set(v.veiculoId, []);
+      ocupantesPorVeiculo.get(v.veiculoId)!.push(v);
+    }
+    const movsPorVeiculo = new Map<string, MovimentoBase[]>();
+    for (const m of dados.movimentos) {
+      if (!movsPorVeiculo.has(m.veiculoId)) movsPorVeiculo.set(m.veiculoId, []);
+      movsPorVeiculo.get(m.veiculoId)!.push(m);
+    }
+    const veiculosPorEquipe = new Map<string, Veiculo[]>();
+    for (const ve of dados.veiculos) {
+      const loc = localizacaoNoDia(movsPorVeiculo.get(ve.id) ?? [], hoje);
+      if (!loc?.equipeId) continue;
+      if (!veiculosPorEquipe.has(loc.equipeId)) veiculosPorEquipe.set(loc.equipeId, []);
+      veiculosPorEquipe.get(loc.equipeId)!.push(ve);
+    }
+    for (const l of veiculosPorEquipe.values()) l.sort((a, b) => a.identificacao.localeCompare(b.identificacao, "pt-BR", { numeric: true }));
     return {
       regra,
       idx: indexar(regra),
+      veiculosPorEquipe,
+      ocupantesPorVeiculo,
       equipePorId: new Map(dados.equipes.map((e) => [e.id, e])),
       vagaPorId: new Map(dados.vagas.map((v) => [v.id, v])),
       campanhaPorId: new Map(dados.campanhas.map((c) => [c.id, c])),
       veiculoPorId: new Map(dados.veiculos.map((v) => [v.id, v])),
       vagasPorEquipe,
     };
-  }, [dados]);
+  }, [dados, hoje]);
 
   const shell: Shell = { ocultarNomes, setOcultarNomes, nivel: dados?.nivel ?? null, podeEditar: dados?.podeEditar ?? false, carregado: !!dados };
   const valor: Ctx | null =

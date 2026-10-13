@@ -29,7 +29,12 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   // Mudou o periodo ou reativou uma campanha cancelada: as pessoas reservadas precisam continuar livres.
   if (segura && antes.alocacoes.length > 0 && (mudouPeriodo || !segurava)) {
     const { regra } = await dadosParaRegra();
-    const problemas = validarAlocacao(regra, antes.id, antes.alocacoes.map((x) => x.vagaId), novoInicio, novoFim);
+    // quem foi escalado so em um trecho mantem o proprio periodo (que precisa continuar dentro da campanha)
+    const periodos: Record<string, { inicio: string; fim: string }> = {};
+    for (const x of antes.alocacoes) {
+      if (diaDe(x.inicio) !== diaDe(antes.inicio) || diaDe(x.fim) !== diaDe(antes.fim)) periodos[x.vagaId] = { inicio: diaDe(x.inicio)!, fim: diaDe(x.fim)! };
+    }
+    const problemas = validarAlocacao(regra, antes.id, antes.alocacoes.map((x) => x.vagaId), novoInicio, novoFim, periodos);
     if (problemas.length > 0) {
       const nomes = new Map(regra.vagas.map((v) => [v.id, v.nome ?? "(sem nome)"]));
       return NextResponse.json(
@@ -74,4 +79,16 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   if (partes.length === 0) partes.push("dados atualizados");
   await registrar(a.userId, "CAMPANHA_ALTERADA", "CAMPANHA", campanha.id, `Campanha ${campanha.codigo}: ${partes.join("; ")} (por ${a.nome})`);
   return NextResponse.json({ campanha });
+}
+
+// Exclui uma campanha criada por engano (as escalas dela saem juntas e as pessoas ficam livres). Para guardar o historico, prefira Cancelar.
+export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
+  const a = await exigir("editar");
+  if ("erro" in a) return a.erro;
+  const c = await prisma.efetivoCampanha.findUnique({ where: { id: params.id }, include: { _count: { select: { alocacoes: true } } } });
+  if (!c) return NextResponse.json({ error: "Campanha não encontrada" }, { status: 404 });
+  await prisma.efetivoVeiculoMovimento.updateMany({ where: { campanhaId: c.id }, data: { campanhaId: null } });
+  await prisma.efetivoCampanha.delete({ where: { id: c.id } });
+  await registrar(a.userId, "CAMPANHA_EXCLUIDA", "CAMPANHA", c.id, `Campanha ${c.codigo} (${c.projeto}, ${diaDe(c.inicio)} a ${diaDe(c.fim)}) excluída por ${a.nome}, com ${c._count.alocacoes} pessoa(s) escalada(s)`);
+  return NextResponse.json({ ok: true });
 }

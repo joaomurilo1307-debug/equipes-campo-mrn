@@ -51,6 +51,8 @@ model EfetivoEquipe {
   gestor            String? // gestor MRN responsavel
   grupo             String // Fauna | Flora | Apoio
   nome              String // ex: FLANCO NORTE - EQUIPE 01
+  local             String? // local / frente de trabalho
+  observacao        String?
   status            String   @default("Ativa") // Ativa | Em formação | Inativa
   ordem             Int      @default(0)
   criadoEm          DateTime @default(now())
@@ -76,9 +78,11 @@ model EfetivoVaga {
   contratoAtual     String? // contrato onde a pessoa esta hoje, quando fora da propria equipe (apoio vindo de outro contrato)
   disponivelAPartir DateTime? // ate esta data (exclusive) a pessoa segue ocupada em contratoAtual
   destino           String? // para onde esta previsto migrar depois
+  veiculoId         String? // viatura em que a pessoa vai (coluna CARROS da planilha)
   observacao        String?
   criadoEm          DateTime  @default(now())
 
+  veiculo   EfetivoVeiculo?   @relation(fields: [veiculoId], references: [id], onDelete: SetNull)
   equipe    EfetivoEquipe     @relation(fields: [equipeId], references: [id])
   ausencias EfetivoAusencia[]
   alocacoes EfetivoAlocacao[]
@@ -157,8 +161,23 @@ model EfetivoVeiculo {
   criadoEm      DateTime @default(now())
 
   movimentos EfetivoVeiculoMovimento[]
+  ocupantes  EfetivoVaga[]
 
   @@index([status])
+}
+
+// Cadastro de contratos/projetos (CT). As equipes, campanhas e veiculos apontam para o codigo.
+// Um contrato que so aparece numa equipe tambem e listado; aqui fica o espaco para os dados dele.
+model EfetivoContrato {
+  id         String   @id @default(cuid())
+  codigo     String   @unique // como o time chama: "3636 PNM"
+  nome       String? // descricao
+  cliente    String?
+  gestor     String?
+  local      String?
+  observacao String?
+  ativo      Boolean  @default(true)
+  criadoEm   DateTime @default(now())
 }
 
 // Onde o veiculo esta (ou esteve): contrato/projeto, equipe e local, por periodo.

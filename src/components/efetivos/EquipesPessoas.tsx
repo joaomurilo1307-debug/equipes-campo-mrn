@@ -1,35 +1,39 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import { STATUS_VAGA, estadoDaVaga, ordenarGrupos, temNome } from "@/lib/efetivos/disponibilidade";
+import { useEffect, useMemo, useState } from "react";
+import { STATUS_EQUIPE, STATUS_VAGA, estadoDaVaga, ordenarGrupos, temNome } from "@/lib/efetivos/disponibilidade";
 import { localizacaoNoDia } from "@/lib/efetivos/veiculos";
 import { useDados } from "./DadosContext";
-import { A_DEFINIR, chamar, corDoContrato, hojeBr, rotuloContrato, fmtDia, type Equipe, type Vaga } from "./comum";
-import { IcBusca, IcCarro, IcMais } from "./icones";
+import { A_DEFINIR, CHIP_VEICULO, SEM_CONTRATO, chamar, contratosConhecidos, corDoContrato, fmtDia, rotuloContrato, type Equipe, type Vaga, type Veiculo } from "./comum";
+import { IcBusca, IcCalendario, IcLapis, IcMais } from "./icones";
+import { CampoInline } from "./inline";
+import ImportarPlanilha from "./ImportarPlanilha";
 import ModalAusencias from "./modais/ModalAusencias";
 import ModalEquipe from "./modais/ModalEquipe";
+import ModalOcupantes from "./modais/ModalOcupantes";
 import ModalVaga from "./modais/ModalVaga";
-import { Aviso, CabecalhoPagina, PontoContrato, Vazio } from "./ui";
+import { ModalHistoricoVeiculo, ModalMover, ModalVeiculo } from "./modais/ModaisVeiculo";
+import { Aviso, CabecalhoPagina, Modal, PontoContrato, Vazio } from "./ui";
 
 const CHIP_SITUACAO: Record<string, string> = { LIVRE: "chip-ok", ALOCADA: "chip-info", AUSENTE: "chip-bad", VAGA_ABERTA: "chip-warn" };
-const ROTULO_SITUACAO: Record<string, string> = { LIVRE: "Livre", ALOCADA: "Escalada", AUSENTE: "Ausente", VAGA_ABERTA: "Vaga aberta" };
-
-function dataDoNomeDoArquivo(nome: string): string | null {
-  const m = /(\d{2})_(\d{2})_(\d{4})/.exec(nome);
-  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
-}
+const ROTULO_SITUACAO: Record<string, string> = { LIVRE: "Livre", ALOCADA: "Escalada", AUSENTE: "Ausente", VAGA_ABERTA: "Aberta" };
 
 export default function EquipesPessoas() {
-  const { dados, idx, hoje, vagasPorEquipe, recarregar, nomeDe, ocultarNomes } = useDados();
+  const { dados, vagasPorEquipe } = useDados();
   const grupos = ordenarGrupos(dados.equipes.map((e) => e.grupo));
+  const [sel, setSel] = useState<string | null>(null);
   const [filtroGrupo, setFiltroGrupo] = useState("");
   const [busca, setBusca] = useState("");
-  const [abertas, setAbertas] = useState<Set<string>>(() => new Set(dados.equipes.length <= 3 ? dados.equipes.map((e) => e.id) : []));
-  const [mensagem, setMensagem] = useState<{ tipo: "erro" | "ok" | "atencao"; texto: string } | null>(null);
-  const [equipeModal, setEquipeModal] = useState<Equipe | "nova" | null>(null);
-  const [novaVagaEm, setNovaVagaEm] = useState<Equipe | null>(null);
-  const [detalhes, setDetalhes] = useState<Vaga | null>(null);
-  const [ausenciasDe, setAusenciasDe] = useState<Vaga | null>(null);
+  const [nova, setNova] = useState(false);
+  const [importar, setImportar] = useState(false);
+
+  // abre na equipe pedida (?equipe=ID) ou na primeira
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("equipe");
+    setSel(id && dados.equipes.some((e) => e.id === id) ? id : dados.equipes[0]?.id ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const equipeSel = dados.equipes.find((e) => e.id === sel) ?? null;
 
   const t = busca.trim().toLowerCase();
   const visiveis = dados.equipes.filter((e) => {
@@ -40,358 +44,468 @@ export default function EquipesPessoas() {
   const porContrato = useMemo(() => {
     const m = new Map<string, Equipe[]>();
     for (const e of visiveis) {
-      if (!m.has(e.projeto)) m.set(e.projeto, []);
-      m.get(e.projeto)!.push(e);
+      const k = !e.projeto || e.projeto === A_DEFINIR ? A_DEFINIR : e.projeto;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k)!.push(e);
     }
-    return [...m.entries()].sort(([a], [b]) => (a === A_DEFINIR ? 1 : b === A_DEFINIR ? -1 : a.localeCompare(b)));
+    return [...m.entries()].sort(([a], [b]) => (a === A_DEFINIR ? 1 : b === A_DEFINIR ? -1 : a.localeCompare(b, "pt-BR", { numeric: true })));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dados.equipes, filtroGrupo, busca, dados.vagas]);
-  const aConfirmar = dados.equipes.filter((e) => !e.contratoConfirmado).length;
-  const viaturasPorEquipe = useMemo(() => {
-    const m = new Map<string, string[]>();
-    for (const v of dados.veiculos) {
-      const loc = localizacaoNoDia(dados.movimentos.filter((x) => x.veiculoId === v.id), hoje);
-      if (loc?.equipeId) m.set(loc.equipeId, [...(m.get(loc.equipeId) ?? []), v.identificacao]);
-    }
-    return m;
-  }, [dados.veiculos, dados.movimentos, hoje]);
-
-  async function alterarVaga(v: Vaga, corpo: Record<string, unknown>) {
-    const r = await chamar("PATCH", `/api/efetivos/vagas/${v.id}`, corpo);
-    if (!r.ok) {
-      setMensagem({ tipo: "erro", texto: r.dados.error ?? "Não foi possível salvar" });
-      return;
-    }
-    const futuras = (r.dados as any).alocacoesFuturas as number;
-    if (futuras > 0) setMensagem({ tipo: "atencao", texto: `Profissional trocado. Esta vaga tem ${futuras} escala(s) em campanha: elas continuam na vaga, revise em Campanhas se for outra pessoa.` });
-    await recarregar();
-  }
 
   return (
     <div>
       <CabecalhoPagina
         titulo="Equipes e pessoas"
-        subtitulo="Cadastro vivo: equipes por contrato, vagas, profissionais, ausências e quem dirige 4x4. Tudo o que você muda aqui aparece no Quadro."
+        subtitulo="A composição de cada equipe como na planilha: atividade, empresa, nível, função, profissional, 4x4, carro e status. Tudo editável."
         acoes={
           dados.podeEditar && (
-            <button onClick={() => setEquipeModal("nova")} className="btn-primary">
-              <IcMais tam={16} /> Nova equipe
-            </button>
+            <>
+              <button onClick={() => setImportar(true)} className="btn-ghost">
+                Importar planilha
+              </button>
+              <button onClick={() => setNova(true)} className="btn-primary">
+                <IcMais tam={16} /> Nova equipe
+              </button>
+            </>
           )
         }
       />
 
-      {mensagem && (
-        <div className="mb-4 cursor-pointer" onClick={() => setMensagem(null)}>
-          <Aviso tipo={mensagem.tipo}>{mensagem.texto}</Aviso>
-        </div>
-      )}
-      {dados.podeEditar && <ImportarPlanilha temEquipes={dados.equipes.length > 0} />}
-      {dados.podeEditar && aConfirmar > 0 && (
-        <div className="mb-4">
-          <Aviso tipo="atencao">
-            <strong>{aConfirmar}</strong> equipe{aConfirmar > 1 ? "s" : ""} com contrato <strong>a confirmar</strong>: a planilha não informa o contrato de cada equipe. Abra <strong>Editar equipe</strong> e confirme (ou corrija) — as viaturas da equipe acompanham.
-          </Aviso>
-        </div>
-      )}
+      <div className="grid gap-5 lg:grid-cols-[272px_minmax(0,1fr)]">
+        {/* lista de equipes */}
+        <aside className="lg:sticky lg:top-4 lg:self-start">
+          <div className="card p-3">
+            <div className="mb-2.5 flex gap-2">
+              <span className="relative block flex-1">
+                <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400">
+                  <IcBusca tam={14} />
+                </span>
+                <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar" className="w-full rounded-md border border-line bg-white py-1.5 pl-8 pr-2 text-[13px] focus:border-brand focus:outline-none" />
+              </span>
+              <select value={filtroGrupo} onChange={(e) => setFiltroGrupo(e.target.value)} className="rounded-md border border-line bg-white px-2 py-1.5 text-[13px]" aria-label="Grupo">
+                <option value="">Grupos</option>
+                {grupos.map((g) => (
+                  <option key={g}>{g}</option>
+                ))}
+              </select>
+            </div>
+            <div className="max-h-[calc(100vh-230px)] space-y-3 overflow-y-auto pr-0.5">
+              {porContrato.map(([projeto, equipes]) => (
+                <div key={projeto}>
+                  <div className="mb-1 flex items-center gap-1.5 px-1 text-[10.5px] font-semibold uppercase tracking-wider text-gray-500">
+                    <PontoContrato cor={corDoContrato(projeto)} tam={8} />
+                    {rotuloContrato(projeto)}
+                    <span className="num font-normal text-gray-400">{equipes.length}</span>
+                  </div>
+                  <ul className="space-y-0.5">
+                    {equipes.map((e) => {
+                      const vs = vagasPorEquipe.get(e.id) ?? [];
+                      const ativa = e.id === sel;
+                      return (
+                        <li key={e.id}>
+                          <button onClick={() => setSel(e.id)} className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors ${ativa ? "bg-brand-soft" : "hover:bg-gray-50"}`} aria-current={ativa ? "true" : undefined}>
+                            <span className="min-w-0 flex-1">
+                              <span className={`block truncate text-[12.5px] leading-tight ${ativa ? "font-semibold text-brand-dark" : "font-medium text-ink"}`}>{e.nome}</span>
+                              <span className="block text-[10.5px] text-gray-500">
+                                {e.codigo} · {e.grupo}
+                              </span>
+                            </span>
+                            <span className="num shrink-0 rounded bg-white px-1.5 py-0.5 text-[10.5px] font-semibold text-gray-600 ring-1 ring-line">
+                              {vs.filter(temNome).length}/{vs.length}
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+              {visiveis.length === 0 && <p className="px-1 py-4 text-center text-xs text-gray-400">{dados.equipes.length === 0 ? "Nenhuma equipe ainda." : "Nenhuma equipe neste filtro."}</p>}
+            </div>
+          </div>
+        </aside>
 
-      <div className="card mb-5 flex flex-wrap items-end gap-3 p-4">
-        <label>
-          <span className="label">Grupo</span>
-          <select value={filtroGrupo} onChange={(e) => setFiltroGrupo(e.target.value)} className="field">
-            <option value="">Todos</option>
-            {grupos.map((g) => (
-              <option key={g}>{g}</option>
-            ))}
-          </select>
-        </label>
-        <label className="min-w-[240px] flex-1">
-          <span className="label">Buscar equipe, cargo ou nome</span>
-          <span className="relative block">
-            <span className="pointer-events-none absolute left-3 top-1/2 mt-0.5 -translate-y-1/2 text-gray-400">
-              <IcBusca tam={16} />
-            </span>
-            <input value={busca} onChange={(e) => setBusca(e.target.value)} className="field !pl-9" />
-          </span>
-        </label>
-        <button onClick={() => setAbertas(abertas.size ? new Set() : new Set(visiveis.map((e) => e.id)))} className="btn-ghost">
-          {abertas.size ? "Recolher todas" : "Expandir todas"}
-        </button>
+        {/* ficha da equipe */}
+        <div className="min-w-0">
+          {equipeSel ? (
+            <FichaEquipe key={equipeSel.id} equipe={equipeSel} aoExcluir={() => setSel(dados.equipes.find((e) => e.id !== equipeSel.id)?.id ?? null)} />
+          ) : (
+            <div className="card">
+              <Vazio titulo="Nenhuma equipe selecionada" texto={dados.podeEditar ? "Crie a primeira equipe ou importe a planilha do Samuel." : undefined} acao={dados.podeEditar ? <button onClick={() => setImportar(true)} className="btn-primary">Importar planilha</button> : undefined} />
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="space-y-7">
-        {porContrato.map(([projeto, equipes]) => (
-          <section key={projeto}>
-            <h2 className="mb-3 flex items-center gap-2.5 font-display text-lg font-semibold tracking-tight">
-              <PontoContrato cor={corDoContrato(projeto)} tam={12} />
-              {rotuloContrato(projeto)}
-              <span className="chip-mute">{equipes.length} equipe{equipes.length === 1 ? "" : "s"}</span>
-            </h2>
-            <div className="space-y-3">
-              {equipes.map((e) => {
-                const vagas = vagasPorEquipe.get(e.id) ?? [];
-                const preenchidas = vagas.filter(temNome).length;
-                const aberta = abertas.has(e.id) || !!t;
-                const viaturas = viaturasPorEquipe.get(e.id) ?? [];
-                return (
-                  <article key={e.id} className="card overflow-hidden">
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3.5">
-                      <button
-                        onClick={() => setAbertas((s) => { const n = new Set(s); if (n.has(e.id)) n.delete(e.id); else n.add(e.id); return n; })}
-                        className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                        aria-expanded={aberta}
-                      >
-                        <span className={`text-gray-400 transition-transform ${aberta ? "rotate-90" : ""}`}>▸</span>
-                        <span className="min-w-0">
-                          <span className="flex flex-wrap items-center gap-2">
-                            <span className="font-mono text-[12px] text-gray-500">{e.codigo}</span>
-                            <span className="font-display text-base font-semibold tracking-tight">{e.nome}</span>
-                            {!e.contratoConfirmado && <span className="chip-warn">contrato a confirmar</span>}
-                          </span>
-                          <span className="block text-xs text-gray-500">
-                            {e.grupo}
-                            {e.gestor ? ` · gestor ${e.gestor}` : ""}
-                            {viaturas.length > 0 && (
-                              <span className="ml-2 inline-flex items-center gap-1 text-gray-500">
-                                <IcCarro tam={13} /> {viaturas.join(", ")}
-                              </span>
-                            )}
-                          </span>
-                        </span>
-                      </button>
-                      <span className="num text-sm text-gray-600">
-                        <strong className="text-ink">{preenchidas}</strong>/{vagas.length} preenchidas
-                      </span>
-                      <span className={e.status === "Ativa" ? "chip-ok" : "chip-mute"}>{e.status}</span>
-                      {dados.podeEditar && (
-                        <div className="flex gap-1.5">
-                          <button onClick={() => setEquipeModal(e)} className="btn-ghost btn-sm">
-                            Editar equipe
-                          </button>
-                          <button onClick={() => setNovaVagaEm(e)} className="btn-ghost btn-sm">
-                            <IcMais tam={13} /> Pessoa
-                          </button>
-                        </div>
-                      )}
-                    </div>
+      {nova && (
+        <ModalEquipe
+          onFechar={() => setNova(false)}
+          onSalvo={(id) => {
+            setNova(false);
+            if (id) setSel(id);
+          }}
+        />
+      )}
+      {importar && (
+        <Modal titulo="Importar planilha" onFechar={() => setImportar(false)}>
+          <ImportarPlanilha onConcluido={() => setImportar(false)} />
+        </Modal>
+      )}
+    </div>
+  );
+}
 
-                    {aberta && (
-                      <div className="overflow-x-auto border-t border-line">
-                        <table className="tbl">
-                          <thead>
-                            <tr>
-                              <th>Cargo / função</th>
-                              <th>Empresa</th>
-                              <th>Atividade</th>
-                              <th>Profissional</th>
-                              <th>Status</th>
-                              <th className="text-center" title="Habilitado a dirigir 4x4">4x4</th>
-                              <th>Hoje</th>
-                              <th />
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {vagas.map((v) => {
-                              const est = estadoDaVaga(v, idx, hoje);
-                              const nAus = dados.ausencias.filter((a) => a.vagaId === v.id).length;
-                              return (
-                                <tr key={v.id} className="align-top">
-                                  <td>
-                                    {v.cargo}
-                                    {v.nivel && v.nivel !== "NA" && <span className="ml-1.5 text-[11px] text-gray-400">{v.nivel}</span>}
-                                  </td>
-                                  <td className="text-gray-600">{v.empresa}</td>
-                                  <td className="text-gray-600">{v.atividade}</td>
-                                  <td>
-                                    {dados.podeEditar && !ocultarNomes ? (
-                                      <input
-                                        key={`${v.id}-${v.nome ?? ""}`}
-                                        defaultValue={v.nome ?? ""}
-                                        placeholder="vaga aberta"
-                                        onBlur={(ev) => {
-                                          const novo = ev.target.value.trim();
-                                          if (novo !== (v.nome ?? "")) alterarVaga(v, { nome: novo || null });
-                                        }}
-                                        onKeyDown={(ev) => ev.key === "Enter" && (ev.target as HTMLInputElement).blur()}
-                                        className="w-full min-w-[170px] rounded-md border border-transparent bg-transparent px-2 py-1 text-sm text-ink placeholder:italic placeholder:text-gray-300 hover:border-line focus:border-brand focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand/20"
-                                      />
-                                    ) : (
-                                      <span className={temNome(v) ? "text-ink" : "italic text-gray-300"}>{temNome(v) ? nomeDe(v) : "vaga aberta"}</span>
-                                    )}
-                                    {v.contratoAtual && v.disponivelAPartir && v.disponivelAPartir > hoje && (
-                                      <div className="mt-0.5 text-[11px] text-info">em {v.contratoAtual} até {fmtDia(v.disponivelAPartir)}</div>
-                                    )}
-                                    {v.destino && <div className="text-[11px] text-gray-400">vai para: {v.destino}</div>}
-                                  </td>
-                                  <td>
-                                    {dados.podeEditar ? (
-                                      <select value={v.status} onChange={(ev) => alterarVaga(v, { status: ev.target.value })} className="rounded-md border border-line bg-white px-2 py-1 text-xs text-gray-700">
-                                        {(STATUS_VAGA as readonly string[]).includes(v.status) ? null : <option>{v.status}</option>}
-                                        {STATUS_VAGA.map((s) => (
-                                          <option key={s}>{s}</option>
-                                        ))}
-                                      </select>
-                                    ) : (
-                                      <span className="text-xs text-gray-600">{v.status}</span>
-                                    )}
-                                  </td>
-                                  <td className="text-center text-xs text-gray-500">{v.direcao4x4 === true ? "Sim" : v.direcao4x4 === false ? "Não" : "—"}</td>
-                                  <td>
-                                    <span className={CHIP_SITUACAO[est.situacao]}>{ROTULO_SITUACAO[est.situacao]}</span>
-                                    {est.situacao !== "VAGA_ABERTA" && est.motivo && <div className="mt-0.5 text-[11px] text-gray-400">{est.motivo}</div>}
-                                  </td>
-                                  <td className="whitespace-nowrap text-right">
-                                    <button onClick={() => setAusenciasDe(v)} className="btn-ghost btn-sm">
-                                      Ausências{nAus > 0 ? ` (${nAus})` : ""}
-                                    </button>
-                                    {dados.podeEditar && (
-                                      <button onClick={() => setDetalhes(v)} className="btn-ghost btn-sm ml-1">
-                                        Detalhes
-                                      </button>
-                                    )}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+// ---------------------------------------------------------------- ficha de uma equipe
+
+function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => void }) {
+  const { dados, idx, hoje, vagasPorEquipe, veiculosPorEquipe, ocupantesPorVeiculo, veiculoPorId, recarregar, nomeDe, ocultarNomes } = useDados();
+  const grupos = ordenarGrupos([...dados.equipes.map((e) => e.grupo), "Fauna", "Flora"]);
+  const contratos = useMemo(() => contratosConhecidos(dados), [dados]);
+  const podeEditar = dados.podeEditar;
+  const [editar, setEditar] = useState(false);
+  const [novaVaga, setNovaVaga] = useState(false);
+  const [detalhes, setDetalhes] = useState<Vaga | null>(null);
+  const [ausenciasDe, setAusenciasDe] = useState<Vaga | null>(null);
+  const [ocupantes, setOcupantes] = useState<Veiculo | null>(null);
+  const [viatura, setViatura] = useState<{ t: "mover" | "historico" | "editar" | "nova"; v?: Veiculo } | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+
+  const vagas = [...(vagasPorEquipe.get(equipe.id) ?? [])].sort((a, b) => (a.numero ?? 0) - (b.numero ?? 0));
+  const viaturas = veiculosPorEquipe.get(equipe.id) ?? [];
+
+  const contagem = useMemo(() => {
+    const c = { livres: 0, escaladas: 0, ausentes: 0, abertas: 0 };
+    for (const v of vagas) {
+      const s = estadoDaVaga(v, idx, hoje).situacao;
+      if (s === "LIVRE") c.livres++;
+      else if (s === "ALOCADA") c.escaladas++;
+      else if (s === "AUSENTE") c.ausentes++;
+      else c.abertas++;
+    }
+    return c;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vagas, idx, hoje]);
+
+  const salvarEquipe = (campo: string) => async (novo: string) => {
+    const valor = campo === "projeto" ? novo || A_DEFINIR : novo || null;
+    const r = await chamar("PATCH", `/api/efetivos/equipes/${equipe.id}`, { [campo]: valor });
+    if (!r.ok) return r.dados.error ?? "Não foi possível salvar";
+    await recarregar();
+    return null;
+  };
+  async function alterarVaga(v: Vaga, corpo: Record<string, unknown>) {
+    const r = await chamar("PATCH", `/api/efetivos/vagas/${v.id}`, corpo);
+    if (!r.ok) return setAviso(r.dados.error ?? "Não foi possível salvar");
+    const futuras = (r.dados as any).alocacoesFuturas as number;
+    if (futuras > 0) setAviso(`Profissional trocado. Esta vaga tem ${futuras} escala(s) em campanha: elas continuam na vaga, revise em Campanhas se for outra pessoa.`);
+    await recarregar();
+  }
+
+  // viaturas: celula do carro mesclada para as linhas seguidas que vao no mesmo carro (como na planilha)
+  const spans = useMemo(() => {
+    const m = new Map<string, number>(); // vagaId -> rowSpan (so na 1a linha do grupo); 0 = pula
+    let i = 0;
+    while (i < vagas.length) {
+      const id = vagas[i].veiculoId;
+      let j = i + 1;
+      if (id) while (j < vagas.length && vagas[j].veiculoId === id) j++;
+      m.set(vagas[i].id, j - i);
+      for (let k = i + 1; k < j; k++) m.set(vagas[k].id, 0);
+      i = j;
+    }
+    return m;
+  }, [vagas]);
+
+  const campoEquipe = podeEditar ? undefined : true;
+  return (
+    <div className="space-y-4">
+      {aviso && (
+        <div className="cursor-pointer" onClick={() => setAviso(null)}>
+          <Aviso tipo="atencao">{aviso}</Aviso>
+        </div>
+      )}
+
+      {/* cabeçalho / dados da equipe */}
+      <section className="card p-4">
+        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-[11px] text-gray-500">{equipe.codigo}</span>
+              <span className="chip-mute">{equipe.grupo}</span>
+              <span className={equipe.status === "Ativa" ? "chip-ok" : "chip-mute"}>{equipe.status}</span>
+            </div>
+            <h2 className="mt-1 font-display text-[18px] font-semibold leading-snug tracking-tight">{equipe.nome}</h2>
+          </div>
+          {podeEditar && (
+            <button onClick={() => setEditar(true)} className="btn-ghost btn-sm">
+              <IcLapis tam={13} /> Editar tudo / excluir
+            </button>
+          )}
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <CampoInline rotulo="Contrato" valor={equipe.projeto === A_DEFINIR ? "" : equipe.projeto} lista={contratos} placeholder={SEM_CONTRATO} onSalvar={salvarEquipe("projeto")} desabilitado={campoEquipe} />
+          <CampoInline rotulo="Gestor MRN" valor={equipe.gestor ?? ""} onSalvar={salvarEquipe("gestor")} desabilitado={campoEquipe} />
+          <CampoInline rotulo="Local / frente" valor={equipe.local ?? ""} onSalvar={salvarEquipe("local")} desabilitado={campoEquipe} />
+          <label className="block">
+            <span className="text-[11px] font-medium text-gray-500">Situação</span>
+            <select
+              value={equipe.status}
+              disabled={!podeEditar}
+              onChange={(e) => salvarEquipe("status")(e.target.value)}
+              className="mt-1 block w-full rounded-md border border-line bg-white px-2.5 py-1.5 text-[13px] focus:border-brand focus:outline-none disabled:bg-gray-50"
+            >
+              {STATUS_EQUIPE.map((s) => (
+                <option key={s}>{s}</option>
+              ))}
+            </select>
+          </label>
+          <CampoInline rotulo="Grupo" valor={equipe.grupo} lista={grupos} onSalvar={salvarEquipe("grupo")} desabilitado={campoEquipe} />
+          <CampoInline rotulo="Observações" valor={equipe.observacao ?? ""} linhas={1} onSalvar={salvarEquipe("observacao")} desabilitado={campoEquipe} className="sm:col-span-1 xl:col-span-3" />
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-line pt-3 text-[12px] text-gray-600">
+          <span>
+            <strong className="num text-ink">{vagas.filter(temNome).length}</strong>/{vagas.length} vagas preenchidas
+          </span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-ok" /> <strong className="num">{contagem.livres}</strong> livres hoje</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-info" /> <strong className="num">{contagem.escaladas}</strong> escaladas</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-bad" /> <strong className="num">{contagem.ausentes}</strong> ausentes</span>
+          <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-[#E0A100]" /> <strong className="num">{contagem.abertas}</strong> vagas abertas</span>
+          <span>
+            <strong className="num text-ink">{vagas.filter((v) => v.direcao4x4 === true).length}</strong> dirigem 4x4
+          </span>
+        </div>
+      </section>
+
+      {/* composição, como na planilha */}
+      <section className="card overflow-hidden">
+        <div className="card-h !py-2.5">
+          <h3 className="card-t">Composição da equipe</h3>
+          {podeEditar && (
+            <button onClick={() => setNovaVaga(true)} className="btn-ghost btn-sm">
+              <IcMais tam={13} /> Pessoa
+            </button>
+          )}
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-[12.5px]">
+            <thead className="bg-gray-50 text-[10.5px] font-semibold uppercase tracking-wide text-gray-500">
+              <tr>
+                <th className="px-3 py-2 text-left">Atividade</th>
+                <th className="px-3 py-2 text-left">Empresa</th>
+                <th className="px-3 py-2 text-left">Nível</th>
+                <th className="px-3 py-2 text-left">Cargo / função</th>
+                <th className="px-3 py-2 text-left">Profissional</th>
+                <th className="px-3 py-2 text-center" title="Habilitado a dirigir 4x4">4x4</th>
+                <th className="px-3 py-2 text-center">Carro</th>
+                <th className="px-3 py-2 text-left">Status</th>
+                <th className="px-3 py-2 text-left">Hoje</th>
+                <th className="px-3 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {vagas.map((v, i) => {
+                const est = estadoDaVaga(v, idx, hoje);
+                const nAus = dados.ausencias.filter((a) => a.vagaId === v.id).length;
+                const span = spans.get(v.id) ?? 1;
+                const carro = v.veiculoId ? veiculoPorId.get(v.veiculoId) : null;
+                const trocouAtividade = i > 0 && vagas[i - 1].atividade !== v.atividade;
+                return (
+                  <tr key={v.id} className={`border-t align-middle ${trocouAtividade ? "border-t-2 border-gray-300" : "border-gray-100"} hover:bg-gray-50/60`}>
+                    <td className="whitespace-nowrap px-3 py-1.5 text-gray-600">{v.atividade}</td>
+                    <td className="whitespace-nowrap px-3 py-1.5 text-gray-600">{v.empresa}</td>
+                    <td className="px-3 py-1.5 text-gray-500">{v.nivel ?? "—"}</td>
+                    <td className="min-w-[210px] px-3 py-1.5 text-ink">{v.cargo}</td>
+                    <td className="px-3 py-1">
+                      {podeEditar && !ocultarNomes ? (
+                        <input
+                          key={`${v.id}-${v.nome ?? ""}`}
+                          defaultValue={v.nome ?? ""}
+                          placeholder="vaga aberta"
+                          onBlur={(ev) => {
+                            const novo = ev.target.value.trim();
+                            if (novo !== (v.nome ?? "")) alterarVaga(v, { nome: novo || null });
+                          }}
+                          onKeyDown={(ev) => ev.key === "Enter" && (ev.target as HTMLInputElement).blur()}
+                          className="w-full min-w-[170px] rounded-md border border-transparent bg-transparent px-2 py-1 text-[12.5px] font-medium text-ink placeholder:font-normal placeholder:italic placeholder:text-gray-300 hover:border-line focus:border-brand focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand/20"
+                        />
+                      ) : (
+                        <span className={temNome(v) ? "font-medium text-ink" : "italic text-gray-300"}>{temNome(v) ? nomeDe(v) : "vaga aberta"}</span>
+                      )}
+                      {v.contratoAtual && v.disponivelAPartir && v.disponivelAPartir > hoje && <div className="px-2 text-[10.5px] text-info">em {v.contratoAtual} até {fmtDia(v.disponivelAPartir)}</div>}
+                      {v.destino && <div className="px-2 text-[10.5px] text-gray-400">vai para: {v.destino}</div>}
+                    </td>
+                    <td className="px-3 py-1 text-center">
+                      {podeEditar ? (
+                        <button
+                          onClick={() => alterarVaga(v, { direcao4x4: v.direcao4x4 === true ? false : v.direcao4x4 === false ? null : true })}
+                          className={`min-w-[38px] rounded-md px-2 py-0.5 text-[11px] font-semibold ${v.direcao4x4 === true ? "bg-info-soft text-info" : v.direcao4x4 === false ? "bg-gray-100 text-gray-500" : "text-gray-300 hover:bg-gray-100"}`}
+                          title="Clique para alternar: Sim / Não / em branco"
+                        >
+                          {v.direcao4x4 === true ? "Sim" : v.direcao4x4 === false ? "Não" : "—"}
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-gray-500">{v.direcao4x4 === true ? "Sim" : v.direcao4x4 === false ? "Não" : "—"}</span>
+                      )}
+                    </td>
+                    {span > 0 && (
+                      <td rowSpan={span} className={`border-l border-gray-100 px-2 text-center align-middle ${carro ? "bg-gray-50/70" : ""}`}>
+                        {carro ? (
+                          <button onClick={() => podeEditar && setOcupantes(carro)} className={`rounded-md bg-white px-2 py-1 text-[12px] font-bold text-ink ring-1 ring-line ${podeEditar ? "hover:bg-brand-soft" : ""}`} title={podeEditar ? "Quem vai neste carro" : undefined}>
+                            {carro.identificacao}
+                          </button>
+                        ) : (
+                          <span className="text-gray-300">—</span>
+                        )}
+                      </td>
                     )}
-                  </article>
+                    <td className="px-3 py-1">
+                      {podeEditar ? (
+                        <select value={v.status} onChange={(ev) => alterarVaga(v, { status: ev.target.value })} className="w-[104px] rounded-md border border-line bg-white px-1 py-0.5 text-[11.5px] text-gray-700">
+                          {(STATUS_VAGA as readonly string[]).includes(v.status) ? null : <option>{v.status}</option>}
+                          {STATUS_VAGA.map((s) => (
+                            <option key={s}>{s}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <span className="text-gray-600">{v.status}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-1.5">
+                      <span className={CHIP_SITUACAO[est.situacao]}>{ROTULO_SITUACAO[est.situacao]}</span>
+                      {est.situacao !== "VAGA_ABERTA" && est.motivo && <div className="text-[10.5px] text-gray-400">{est.motivo}</div>}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-1 text-right">
+                      <button onClick={() => setAusenciasDe(v)} className={`relative rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-brand-dark ${nAus > 0 ? "text-info" : ""}`} title={`Ausências e férias${nAus ? ` (${nAus})` : ""}`} aria-label="Ausências e férias">
+                        <IcCalendario tam={15} />
+                        {nAus > 0 && <span className="num absolute -right-0.5 -top-0.5 rounded-full bg-info px-1 text-[9px] font-bold leading-3 text-white">{nAus}</span>}
+                      </button>
+                      {podeEditar && (
+                        <button onClick={() => setDetalhes(v)} className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-brand-dark" title="Todos os detalhes" aria-label="Detalhes">
+                          <IcLapis tam={15} />
+                        </button>
+                      )}
+                    </td>
+                  </tr>
                 );
               })}
-            </div>
-          </section>
-        ))}
-        {visiveis.length === 0 && (
-          <div className="card">
-            <Vazio titulo={dados.equipes.length === 0 ? "Nenhuma equipe cadastrada" : "Nenhuma equipe neste filtro"} texto={dados.equipes.length === 0 ? "Importe a planilha do Samuel acima ou crie a primeira equipe." : undefined} />
-          </div>
-        )}
-      </div>
+              {vagas.length === 0 && (
+                <tr>
+                  <td colSpan={10}>
+                    <Vazio titulo="Esta equipe ainda não tem pessoas" texto={podeEditar ? "Use “+ Pessoa” para criar as vagas e preencher quem trabalha nela." : undefined} />
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
-      {equipeModal && <ModalEquipe equipe={equipeModal === "nova" ? null : equipeModal} onFechar={() => setEquipeModal(null)} onSalvo={() => setEquipeModal(null)} />}
-      {novaVagaEm && <ModalVaga equipe={novaVagaEm} onFechar={() => setNovaVagaEm(null)} onSalvo={() => setNovaVagaEm(null)} />}
+      {/* viaturas da equipe */}
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="card-t">Viaturas da equipe</h3>
+          {podeEditar && (
+            <button onClick={() => setViatura({ t: "nova" })} className="btn-ghost btn-sm">
+              <IcMais tam={13} /> Viatura
+            </button>
+          )}
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {viaturas.map((ve) => {
+            const pessoas = ocupantesPorVeiculo.get(ve.id) ?? [];
+            const nomes = pessoas.filter(temNome);
+            const dirigem = nomes.filter((p) => p.direcao4x4);
+            const loc = localizacaoNoDia(dados.movimentos.filter((m) => m.veiculoId === ve.id), hoje);
+            return (
+              <article key={ve.id} className="card flex flex-col p-3.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-display text-[16px] font-semibold">{ve.identificacao}</span>
+                      <span className={CHIP_VEICULO[ve.status]}>{ve.status}</span>
+                    </div>
+                    <div className="text-[11.5px] text-gray-500">
+                      {[ve.placa, ve.modelo, ve.tracao4x4 ? "4x4" : null].filter(Boolean).join(" · ") || ve.codigo}
+                    </div>
+                  </div>
+                  {loc && (
+                    <span className="shrink-0 text-right text-[10.5px] text-gray-400">
+                      desde
+                      <br />
+                      {fmtDia(loc.inicio)}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2.5 flex-1 border-t border-line pt-2">
+                  <div className="mb-1 text-[10.5px] font-semibold uppercase tracking-wide text-gray-500">Vai neste carro ({pessoas.length})</div>
+                  {pessoas.length === 0 ? (
+                    <p className="text-[12px] text-gray-400">Ninguém marcado.</p>
+                  ) : (
+                    <ul className="space-y-0.5 text-[12px]">
+                      {pessoas.map((p) => (
+                        <li key={p.id} className="flex items-center justify-between gap-2">
+                          <span className={`truncate ${temNome(p) ? "text-ink" : "italic text-gray-400"}`}>{temNome(p) ? nomeDe(p) : `vaga aberta · ${p.cargo}`}</span>
+                          {p.direcao4x4 && <span className="shrink-0 text-[10px] font-semibold text-info">4x4</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {nomes.length > 0 && <p className="mt-1.5 text-[11px] text-gray-500">Dirigem 4x4: {dirigem.length ? dirigem.map(nomeDe).join(", ") : "ninguém marcado"}</p>}
+                </div>
+                <div className="mt-2.5 flex flex-wrap gap-1.5">
+                  {podeEditar && (
+                    <button onClick={() => setOcupantes(ve)} className="btn-ghost btn-sm">
+                      Quem vai
+                    </button>
+                  )}
+                  {podeEditar && (
+                    <button onClick={() => setViatura({ t: "mover", v: ve })} className="btn-ghost btn-sm">
+                      Mover
+                    </button>
+                  )}
+                  <button onClick={() => setViatura({ t: "historico", v: ve })} className="btn-ghost btn-sm">
+                    Histórico
+                  </button>
+                  {podeEditar && (
+                    <button onClick={() => setViatura({ t: "editar", v: ve })} className="btn-ghost btn-sm">
+                      Editar
+                    </button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
+          {viaturas.length === 0 && <div className="card md:col-span-2 xl:col-span-3"><Vazio titulo="Sem viaturas nesta equipe" texto={podeEditar ? "Use “+ Viatura” para cadastrar o carro da equipe." : undefined} /></div>}
+        </div>
+      </section>
+
+      {editar && (
+        <ModalEquipe
+          equipe={equipe}
+          onFechar={() => setEditar(false)}
+          onSalvo={() => {
+            setEditar(false);
+            if (!dados.equipes.some((e) => e.id === equipe.id)) aoExcluir();
+          }}
+        />
+      )}
+      {novaVaga && <ModalVaga equipe={equipe} onFechar={() => setNovaVaga(false)} onSalvo={() => setNovaVaga(false)} />}
       {detalhes && (
         <ModalVaga
           vaga={detalhes}
           onFechar={() => setDetalhes(null)}
           onSalvo={(av) => {
             setDetalhes(null);
-            if (av) setMensagem({ tipo: "atencao", texto: av });
+            if (av) setAviso(av);
           }}
         />
       )}
       {ausenciasDe && <ModalAusencias vaga={ausenciasDe} onFechar={() => setAusenciasDe(null)} />}
+      {ocupantes && <ModalOcupantes veiculo={ocupantes} equipeId={equipe.id} onFechar={() => setOcupantes(null)} />}
+      {viatura?.t === "mover" && viatura.v && <ModalMover veiculo={viatura.v} onFechar={() => setViatura(null)} />}
+      {viatura?.t === "historico" && viatura.v && <ModalHistoricoVeiculo veiculo={viatura.v} onFechar={() => setViatura(null)} />}
+      {viatura?.t === "editar" && viatura.v && <ModalVeiculo veiculo={viatura.v} onFechar={() => setViatura(null)} />}
+      {viatura?.t === "nova" && <ModalVeiculo equipeIdPadrao={equipe.id} onFechar={() => setViatura(null)} />}
     </div>
-  );
-}
-
-// ---------------------------------------------------------------- importar planilha
-
-function ImportarPlanilha({ temEquipes }: { temEquipes: boolean }) {
-  const { recarregar } = useDados();
-  const [aberto, setAberto] = useState(!temEquipes);
-  const arquivoRef = useRef<HTMLInputElement>(null);
-  const [nomeArquivo, setNomeArquivo] = useState("");
-  const [dataRef, setDataRef] = useState(hojeBr());
-  const [acrescentar, setAcrescentar] = useState(false);
-  const [resumo, setResumo] = useState<any | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-  const [ok, setOk] = useState<string | null>(null);
-  const [ocupado, setOcupado] = useState(false);
-
-  async function enviar(simular: boolean) {
-    const arquivo = arquivoRef.current?.files?.[0];
-    if (!arquivo) return setErro("Escolha a planilha (.xlsx) primeiro.");
-    setOcupado(true);
-    setErro(null);
-    setOk(null);
-    const fd = new FormData();
-    fd.append("arquivo", arquivo);
-    fd.append("dataReferencia", dataRef);
-    const q = [simular ? "simular=1" : "", acrescentar ? "acrescentar=1" : ""].filter(Boolean).join("&");
-    const r = await chamar("POST", `/api/efetivos/importar${q ? `?${q}` : ""}`, fd);
-    setOcupado(false);
-    if (!r.ok) {
-      setResumo(null);
-      return setErro(r.dados.error ?? "Não foi possível importar");
-    }
-    if (simular) return setResumo(r.dados);
-    setResumo(null);
-    setOk(`Importado: ${(r.dados as any).equipesNovas} equipes, ${(r.dados as any).vagasNovas} vagas e ${(r.dados as any).veiculosNovos} viaturas.`);
-    if (arquivoRef.current) arquivoRef.current.value = "";
-    setNomeArquivo("");
-    await recarregar();
-  }
-
-  return (
-    <section className="card mb-5 p-5">
-      <button onClick={() => setAberto(!aberto)} className="flex w-full items-center justify-between text-left">
-        <span className="card-t">Importar planilha</span>
-        <span className="text-gray-400">{aberto ? "▾" : "▸"}</span>
-      </button>
-      {aberto && (
-        <div className="mt-3 space-y-3">
-          <p className="text-xs text-gray-500">
-            Use a planilha mais recente (aba “DIVISÃO DE EQUIPES”, com a aba de apoio de outro contrato). É a <strong>carga inicial</strong>: depois dela, a atualização é feita aqui no sistema e a importação nunca sobrescreve o que já foi ajustado.
-          </p>
-          <div className="flex flex-wrap items-end gap-3">
-            <label>
-              <span className="label">Planilha</span>
-              <input
-                ref={arquivoRef}
-                type="file"
-                accept=".xlsx"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  setNomeArquivo(f?.name ?? "");
-                  setResumo(null);
-                  const d = f ? dataDoNomeDoArquivo(f.name) : null;
-                  if (d) setDataRef(d);
-                }}
-                className="mt-1 block text-sm"
-              />
-            </label>
-            <label>
-              <span className="label">Data da planilha</span>
-              <input type="date" value={dataRef} onChange={(e) => setDataRef(e.target.value)} className="field" />
-            </label>
-            <button onClick={() => enviar(true)} disabled={ocupado || !nomeArquivo} className="btn-ghost">
-              {ocupado ? "Lendo…" : "Conferir antes de importar"}
-            </button>
-          </div>
-          {temEquipes && (
-            <label className="flex items-center gap-2 text-xs text-gray-600">
-              <input type="checkbox" checked={acrescentar} onChange={(e) => { setAcrescentar(e.target.checked); setResumo(null); }} className="accent-[#0A9E7F]" />
-              Acrescentar só equipes novas (já existem equipes; as de mesmo nome são mantidas como estão)
-            </label>
-          )}
-          {erro && <Aviso tipo="erro">{erro}</Aviso>}
-          {ok && <Aviso tipo="ok">{ok}</Aviso>}
-          {resumo && (
-            <div className="space-y-2 rounded-xl border border-line bg-gray-50 p-4 text-sm">
-              <div className="font-semibold text-ink">O que vai entrar (nada foi gravado ainda):</div>
-              <ul className="grid gap-x-6 gap-y-0.5 text-xs text-gray-700 sm:grid-cols-2">
-                <li>Equipes novas: <strong>{resumo.equipesNovas}</strong> (de {resumo.equipesNaPlanilha} na planilha)</li>
-                <li>Vagas: <strong>{resumo.vagasNovas}</strong> — {resumo.vagasPreenchidas} com profissional, {resumo.vagasAbertas} abertas</li>
-                <li>Viaturas citadas: <strong>{resumo.veiculosNovos}</strong></li>
-                <li>Apoio de outro contrato: <strong>{resumo.apoioDeOutroContrato}</strong> pessoas</li>
-              </ul>
-              {resumo.avisos?.length > 0 && (
-                <ul className="list-disc space-y-0.5 pl-5 text-xs text-warn">
-                  {resumo.avisos.map((a: string, i: number) => (
-                    <li key={i}>{a}</li>
-                  ))}
-                </ul>
-              )}
-              <button onClick={() => enviar(false)} disabled={ocupado || resumo.equipesNovas === 0} className="btn-primary">
-                {ocupado ? "Importando…" : "Importar agora"}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-    </section>
   );
 }

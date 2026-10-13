@@ -85,3 +85,14 @@ export function resumoPorContrato(veiculos: VeiculoBase[], movimentos: Movimento
 export function diasNoLocal(m: MovimentoBase, hoje: Dia): number {
   return Math.max(0, diferencaDias(m.inicio, hoje) + 1);
 }
+
+/** Valida a edicao de uma passagem existente: continua sem sobrepor as outras do mesmo veiculo. */
+export function validarEdicaoMovimento(movs: MovimentoBase[], id: string, novo: { inicio: Dia; fim: Dia | null }): string | null {
+  if (novo.fim && novo.fim < novo.inicio) return "O fim não pode ser antes do início";
+  const fimNovo = novo.fim ?? ATE_O_FIM;
+  for (const m of movs) {
+    if (m.id === id) continue;
+    if (m.inicio <= fimNovo && fimDe(m) >= novo.inicio) return `Já existe uma passagem de ${m.inicio} a ${m.fim ?? "sem fim"} que se sobrepõe a este período`;
+  }
+  return null;
+}

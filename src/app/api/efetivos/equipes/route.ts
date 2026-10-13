@@ -9,6 +9,8 @@ const schema = z.object({
   nome: z.string().trim().min(1).max(120),
   projeto: z.string().trim().min(1).max(60),
   gestor: z.string().trim().max(80).nullable().optional(),
+  local: z.string().trim().max(160).nullable().optional(),
+  observacao: z.string().trim().max(600).nullable().optional(),
   grupo: z.string().trim().min(1).max(40),
   status: z.enum(STATUS_EQUIPE).default("Ativa"),
 });
@@ -31,7 +33,7 @@ export async function POST(req: Request) {
   }
   const total = await prisma.efetivoEquipe.count();
   const equipe = await prisma.efetivoEquipe.create({
-    data: { codigo, nome: d.nome, projeto: d.projeto, gestor: d.gestor || null, grupo: d.grupo, status: d.status, ordem: total + 1 },
+    data: { codigo, nome: d.nome, projeto: d.projeto, gestor: d.gestor || null, local: d.local || null, observacao: d.observacao || null, grupo: d.grupo, status: d.status, ordem: total + 1 },
   });
   await registrar(a.userId, "EQUIPE_CRIADA", "EQUIPE", equipe.id, `Equipe ${codigo} (${d.nome}) criada por ${a.nome}`);
   return NextResponse.json({ equipe }, { status: 201 });

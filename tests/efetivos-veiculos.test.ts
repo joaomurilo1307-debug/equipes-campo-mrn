@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { diasNoLocal, localizacaoNoDia, planejarMovimento, proximoMovimento, resumoPorContrato, type MovimentoBase } from "../src/lib/efetivos/veiculos";
+import { diasNoLocal, localizacaoNoDia, planejarMovimento, proximoMovimento, resumoPorContrato, validarEdicaoMovimento, type MovimentoBase } from "../src/lib/efetivos/veiculos";
 
 // Regras puras (sem banco): rodam com `tsx --test`.
 
@@ -53,4 +53,13 @@ test("Resumo por contrato: conta por projeto no dia, por situacao, e separa quem
   assert.deepEqual(r.map((x) => [x.projeto, x.total]), [["3636 PNM", 2], ["Sem localização", 2]]); // v3 so chega em 20/10
   assert.deepEqual(r[0].porStatus, { "Em operação": 1, "Em manutenção": 1 });
   assert.deepEqual(resumoPorContrato(veic, ms, "2026-10-25").map((x) => [x.projeto, x.total]), [["3636 PNM", 2], ["3687 LT", 1], ["Sem localização", 1]]);
+});
+
+test("Editar passagem: nao pode sobrepor outra do mesmo veiculo, mas pode manter o proprio periodo", () => {
+  const ms = [mov("a", "v1", "2026-09-01", "2026-09-30", "A"), mov("b", "v1", "2026-10-01", null, "B")];
+  assert.equal(validarEdicaoMovimento(ms, "a", { inicio: "2026-08-20", fim: "2026-09-30" }), null); // estica para tras
+  assert.equal(validarEdicaoMovimento(ms, "a", { inicio: "2026-09-01", fim: "2026-10-05" }) !== null, true); // invade a "b"
+  assert.equal(validarEdicaoMovimento(ms, "b", { inicio: "2026-10-01", fim: null }), null); // sem mudar nada
+  assert.equal(validarEdicaoMovimento(ms, "b", { inicio: "2026-09-15", fim: null }) !== null, true); // comeca dentro da "a"
+  assert.match(validarEdicaoMovimento(ms, "a", { inicio: "2026-09-10", fim: "2026-09-01" }) ?? "", /fim não pode ser antes/);
 });

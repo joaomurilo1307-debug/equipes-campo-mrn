@@ -7,7 +7,7 @@ import { signOut, useSession } from "next-auth/react";
 import ConsominasLogo from "@/components/ConsominasLogo";
 import { DadosGate, DadosProvider, useShell } from "@/components/efetivos/DadosContext";
 import { ModalMinhaSenha } from "@/components/efetivos/AcessosEHistorico";
-import { IcCampanha, IcCarro, IcEquipe, IcFechar, IcHistorico, IcOlho, IcPainel, IcQuadro, IcSair, IcUsuarios } from "@/components/efetivos/icones";
+import { IcCampanha, IcCarro, IcContrato, IcEquipe, IcFechar, IcFerias, IcHistorico, IcOlho, IcPainel, IcQuadro, IcSair, IcUsuarios } from "@/components/efetivos/icones";
 
 type Item = { href: string; rotulo: string; icone: (p: { tam?: number }) => JSX.Element; so?: "editor" | "admin" };
 const ITENS: Item[] = [
@@ -15,6 +15,8 @@ const ITENS: Item[] = [
   { href: "/quadro", rotulo: "Quadro de equipes", icone: IcQuadro },
   { href: "/campanhas", rotulo: "Campanhas", icone: IcCampanha },
   { href: "/equipes", rotulo: "Equipes e pessoas", icone: IcEquipe },
+  { href: "/contratos", rotulo: "Contratos", icone: IcContrato },
+  { href: "/ferias", rotulo: "Férias e ausências", icone: IcFerias },
   { href: "/frota", rotulo: "Frota", icone: IcCarro },
   { href: "/historico", rotulo: "Histórico", icone: IcHistorico, so: "editor" },
   { href: "/usuarios", rotulo: "Acessos", icone: IcUsuarios, so: "admin" },

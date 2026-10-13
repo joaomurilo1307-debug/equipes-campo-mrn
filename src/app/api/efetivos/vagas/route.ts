@@ -19,6 +19,7 @@ const schema = z.object({
   contratoAtual: z.string().trim().max(60).nullable().optional(),
   disponivelAPartir: dia.nullable().optional(),
   destino: z.string().trim().max(120).nullable().optional(),
+  veiculoId: z.string().nullable().optional(),
   observacao: z.string().trim().max(300).nullable().optional(),
 });
 
@@ -46,6 +47,7 @@ export async function POST(req: Request) {
       contratoAtual: d.contratoAtual || null,
       disponivelAPartir: d.disponivelAPartir ? dataDe(d.disponivelAPartir) : null,
       destino: d.destino || null,
+      veiculoId: d.veiculoId || null,
       observacao: d.observacao || null,
     },
   });

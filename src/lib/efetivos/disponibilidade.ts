@@ -325,7 +325,7 @@ export function livresNoPeriodo(
   return { livres, indisponiveis };
 }
 
-export type ProblemaAlocacao = { vagaId: string; motivo: "INEXISTENTE" | "SEM_PROFISSIONAL" | "EQUIPE_INATIVA" | "AUSENTE" | "ALOCADA"; detalhe: string | null };
+export type ProblemaAlocacao = { vagaId: string; motivo: "INEXISTENTE" | "SEM_PROFISSIONAL" | "EQUIPE_INATIVA" | "AUSENTE" | "ALOCADA" | "PERIODO_INVALIDO"; detalhe: string | null };
 
 /** Valida a escolha de pessoas para uma campanha; lista vazia = pode gravar. */
 export function validarAlocacao(
@@ -333,7 +333,9 @@ export function validarAlocacao(
   campanhaId: string,
   vagaIds: string[],
   ini: Dia,
-  fim: Dia
+  fim: Dia,
+  // periodo proprio de quem entra so em parte da campanha (ex.: volta de ferias no meio)
+  periodos: Record<string, { inicio: Dia; fim: Dia }> = {}
 ): ProblemaAlocacao[] {
   const idx = indexar(dados, campanhaId);
   const vagas = new Map(dados.vagas.map((v) => [v.id, v]));
@@ -353,11 +355,64 @@ export function validarAlocacao(
       problemas.push({ vagaId: id, motivo: "EQUIPE_INATIVA", detalhe: null });
       continue;
     }
-    const e = estadoDaVaga(v, idx, ini, fim);
+    const p = periodos[id];
+    if (p && (p.inicio > p.fim || p.inicio < ini || p.fim > fim)) {
+      problemas.push({ vagaId: id, motivo: "PERIODO_INVALIDO", detalhe: null });
+      continue;
+    }
+    const e = estadoDaVaga(v, idx, p?.inicio ?? ini, p?.fim ?? fim);
     if (e.situacao === "AUSENTE") problemas.push({ vagaId: id, motivo: "AUSENTE", detalhe: e.motivo });
     else if (e.situacao === "ALOCADA") problemas.push({ vagaId: id, motivo: "ALOCADA", detalhe: e.campanhaId ?? e.motivo });
   }
   return problemas;
+}
+
+// ---------------------------------------------------------------- por que alguem nao esta livre, e em que trechos esta
+
+export type Bloqueio = {
+  tipo: string; // "Férias", "Atestado", "Em 4362 LT", "Campanha CAM-001", status...
+  inicio: Dia;
+  fim: Dia;
+  origem: "ausencia" | "status" | "outro_contrato" | "campanha";
+  campanhaId?: string | null;
+};
+
+/** Tudo o que impede a pessoa de trabalhar dentro de [ini,fim], com as datas (para mostrar "Férias de 02/11 a 20/11"). */
+export function bloqueiosNoPeriodo(vaga: VagaBase, idx: Indice, ini: Dia, fim: Dia): Bloqueio[] {
+  const out: Bloqueio[] = [];
+  const recorta = (a: Dia, b: Dia) => ({ inicio: a < ini ? ini : a, fim: b > fim ? fim : b });
+  if (!STATUS_QUE_TRABALHAM.includes(vaga.status) && temNome(vaga)) {
+    out.push({ tipo: vaga.status, inicio: ini, fim, origem: "status" });
+  }
+  for (const a of idx.ausencias.get(vaga.id) ?? []) {
+    if (intersecta(a.inicio, a.fim, ini, fim)) out.push({ tipo: a.tipo, ...recorta(a.inicio, a.fim), origem: "ausencia" });
+  }
+  if (vaga.disponivelAPartir && ini < vaga.disponivelAPartir) {
+    out.push({ tipo: `Em ${vaga.contratoAtual ?? "outro contrato"}`, ...recorta(ini, somarDias(vaga.disponivelAPartir, -1)), origem: "outro_contrato" });
+  }
+  for (const a of idx.alocacoes.get(vaga.id) ?? []) {
+    if (intersecta(a.inicio, a.fim, ini, fim)) out.push({ tipo: "Em campanha", ...recorta(a.inicio, a.fim), origem: "campanha", campanhaId: a.campanhaId });
+  }
+  return out.sort((a, b) => a.inicio.localeCompare(b.inicio) || a.fim.localeCompare(b.fim));
+}
+
+/** Trechos de [ini,fim] em que a pessoa esta livre (dias seguidos), para escalar so quem volta no meio da campanha. */
+export function trechosLivres(vaga: VagaBase, idx: Indice, ini: Dia, fim: Dia): { inicio: Dia; fim: Dia }[] {
+  if (ini > fim || !temNome(vaga)) return [];
+  const out: { inicio: Dia; fim: Dia }[] = [];
+  let atual: { inicio: Dia; fim: Dia } | null = null;
+  for (let d = ini; d <= fim; d = somarDias(d, 1)) {
+    const livre = estadoDaVaga(vaga, idx, d).situacao === "LIVRE";
+    if (livre) {
+      if (atual) atual.fim = d;
+      else atual = { inicio: d, fim: d };
+    } else if (atual) {
+      out.push(atual);
+      atual = null;
+    }
+  }
+  if (atual) out.push(atual);
+  return out;
 }
 
 // ---------------------------------------------------------------- campanha x capacidade

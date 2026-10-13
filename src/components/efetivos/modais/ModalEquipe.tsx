@@ -3,13 +3,14 @@
 import { useMemo, useState } from "react";
 import { STATUS_EQUIPE, ordenarGrupos } from "@/lib/efetivos/disponibilidade";
 import { useDados } from "../DadosContext";
-import { A_DEFINIR, chamar, type Equipe } from "../comum";
+import { A_DEFINIR, chamar, contratosConhecidos, type Equipe } from "../comum";
+import { IcLixo } from "../icones";
 import { Aviso, Campo, Modal, RodapeModal } from "../ui";
 
-/** Cria ou edita uma equipe-base (o contrato dela é o que organiza o quadro e a frota). */
-export default function ModalEquipe({ equipe, projetoPadrao, onFechar, onSalvo }: { equipe?: Equipe | null; projetoPadrao?: string; onFechar: () => void; onSalvo: () => void | Promise<void> }) {
+/** Cria ou edita uma equipe-base. O contrato é opcional e pode ser digitado ou escolhido. */
+export default function ModalEquipe({ equipe, projetoPadrao, onFechar, onSalvo }: { equipe?: Equipe | null; projetoPadrao?: string; onFechar: () => void; onSalvo: (equipeId?: string) => void | Promise<void> }) {
   const { dados, recarregar } = useDados();
-  const projetos = useMemo(() => Array.from(new Set(dados.equipes.map((e) => e.projeto).filter((p) => p !== A_DEFINIR))).sort(), [dados.equipes]);
+  const contratos = useMemo(() => contratosConhecidos(dados), [dados]);
   const grupos = ordenarGrupos([...dados.equipes.map((e) => e.grupo), "Fauna", "Flora"]);
   const [v, setV] = useState({
     nome: equipe?.nome ?? "",
@@ -17,45 +18,44 @@ export default function ModalEquipe({ equipe, projetoPadrao, onFechar, onSalvo }
     gestor: equipe?.gestor ?? "",
     grupo: equipe?.grupo ?? "Fauna",
     status: equipe?.status ?? "Ativa",
+    local: equipe?.local ?? "",
+    observacao: equipe?.observacao ?? "",
   });
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const set = (k: keyof typeof v, valor: string) => setV((x) => ({ ...x, [k]: valor }));
-  const aConfirmar = !!equipe && !equipe.contratoConfirmado;
 
-  async function salvar(soConfirmar = false) {
+  async function salvar() {
     setSalvando(true);
     setErro(null);
-    const corpo = soConfirmar ? { contratoConfirmado: true } : { nome: v.nome, projeto: v.projeto || A_DEFINIR, gestor: v.gestor || null, grupo: v.grupo, status: v.status };
+    const corpo = { nome: v.nome, projeto: v.projeto.trim() || A_DEFINIR, gestor: v.gestor || null, grupo: v.grupo, status: v.status, local: v.local || null, observacao: v.observacao || null };
     const r = await chamar(equipe ? "PATCH" : "POST", equipe ? `/api/efetivos/equipes/${equipe.id}` : "/api/efetivos/equipes", corpo);
     setSalvando(false);
     if (!r.ok) return setErro(r.dados.error ?? "Não foi possível salvar");
+    await recarregar();
+    await onSalvo((r.dados as any).equipe?.id);
+  }
+
+  async function excluir() {
+    if (!equipe || !window.confirm(`Excluir a equipe ${equipe.codigo} (${equipe.nome})?`)) return;
+    setSalvando(true);
+    const r = await chamar("DELETE", `/api/efetivos/equipes/${equipe.id}`);
+    setSalvando(false);
+    if (!r.ok) return setErro(r.dados.error ?? "Não foi possível excluir");
     await recarregar();
     await onSalvo();
   }
 
   return (
-    <Modal titulo={equipe ? `Editar ${equipe.codigo}` : "Nova equipe"} subtitulo="Equipe-base: o grupo de vagas que trabalha junto num contrato." onFechar={onFechar}>
+    <Modal titulo={equipe ? `Editar ${equipe.codigo}` : "Nova equipe"} onFechar={onFechar}>
       <div className="grid gap-4 px-6 py-5 sm:grid-cols-2">
-        {aConfirmar && (
-          <div className="sm:col-span-2">
-            <Aviso tipo="atencao">
-              O contrato desta equipe foi <strong>deduzido pelo nome</strong> (a planilha não o informa). Se estiver certo, confirme; se não, corrija abaixo.
-              <div className="mt-2">
-                <button onClick={() => salvar(true)} disabled={salvando} className="btn-ghost btn-sm">
-                  Confirmar “{equipe!.projeto === A_DEFINIR ? "a definir" : equipe!.projeto}”
-                </button>
-              </div>
-            </Aviso>
-          </div>
-        )}
         <Campo rotulo="Nome da equipe / frente" className="sm:col-span-2">
           <input value={v.nome} onChange={(e) => set("nome", e.target.value)} className="field" autoFocus={!equipe} />
         </Campo>
-        <Campo rotulo="Contrato / projeto (CT)">
-          <input list="lista-projetos-eq" value={v.projeto} onChange={(e) => set("projeto", e.target.value)} placeholder="ex.: 3636 PNM" className="field" />
-          <datalist id="lista-projetos-eq">
-            {projetos.map((p) => (
+        <Campo rotulo="Contrato">
+          <input list="lista-contratos-eq" value={v.projeto} onChange={(e) => set("projeto", e.target.value)} placeholder="deixe em branco se ainda não tem" className="field" />
+          <datalist id="lista-contratos-eq">
+            {contratos.map((p) => (
               <option key={p} value={p} />
             ))}
           </datalist>
@@ -78,6 +78,12 @@ export default function ModalEquipe({ equipe, projetoPadrao, onFechar, onSalvo }
             ))}
           </select>
         </Campo>
+        <Campo rotulo="Local / frente" className="sm:col-span-2">
+          <input value={v.local} onChange={(e) => set("local", e.target.value)} className="field" />
+        </Campo>
+        <Campo rotulo="Observações" className="sm:col-span-2">
+          <textarea value={v.observacao} onChange={(e) => set("observacao", e.target.value)} rows={3} className="field" />
+        </Campo>
       </div>
       {erro && (
         <div className="px-6 pb-4">
@@ -85,10 +91,15 @@ export default function ModalEquipe({ equipe, projetoPadrao, onFechar, onSalvo }
         </div>
       )}
       <RodapeModal>
+        {equipe && (
+          <button onClick={excluir} disabled={salvando} className="btn-danger mr-auto">
+            <IcLixo tam={15} /> Excluir
+          </button>
+        )}
         <button onClick={onFechar} className="btn-ghost">
           Cancelar
         </button>
-        <button onClick={() => salvar()} disabled={salvando || !v.nome.trim() || !v.grupo.trim()} className="btn-primary">
+        <button onClick={salvar} disabled={salvando || !v.nome.trim() || !v.grupo.trim()} className="btn-primary">
           {salvando ? "Salvando…" : equipe ? "Salvar" : "Criar equipe"}
         </button>
       </RodapeModal>

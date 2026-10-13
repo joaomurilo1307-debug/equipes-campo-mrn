@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as XLSX from "xlsx";
-import { aplicarAjustes, interpretarStatus, lerPlanilhaEfetivos, paraDia } from "../src/lib/efetivos/importarPlanilha";
+import { interpretarStatus, lerPlanilhaEfetivos, paraDia } from "../src/lib/efetivos/importarPlanilha";
 
 // Planilhas montadas em memoria (sem arquivo do usuario): rodam com `tsx --test`.
 
@@ -145,43 +145,15 @@ test("Formato DIVISAO DE EQUIPES (semana 42): equipe e viatura mescladas, 4x4, v
   assert.equal(doNorte[0].nivel, "Superior");
   // viaturas: VL 01 (Ana) e VL 02 (Bia) na equipe 1; VL 01 da lavra e outra equipe
   assert.deepEqual(r.veiculos.map((v) => [v.equipeCodigo, v.identificacao, v.ocupantes]), [["EQ-01", "VL 01", 1], ["EQ-01", "VL 02", 1], ["EQ-02", "VL 01", 2]]);
+  // cada pessoa (inclusive a vaga em branco dentro do grupo mesclado) aponta para a viatura do seu grupo
+  assert.deepEqual(r.veiculos.map((v) => v.ref), ["EQ-01#1", "EQ-01#2", "EQ-02#3"]);
+  assert.deepEqual(doNorte.map((v) => v.carroRef), ["EQ-01#1", "EQ-01#1", "EQ-01#2", "EQ-01#2"]);
+  assert.deepEqual(r.vagas.filter((v) => v.equipeCodigo === "EQ-02").map((v) => v.carroRef), ["EQ-02#3", "EQ-02#3"]);
+  assert.ok(r.equipes.every((e) => e.contratoConfirmado)); // nada de "a confirmar": contrato em branco e so em branco
   const apoio = r.vagas.filter((v) => v.contratoAtual === "4362 LT");
   assert.equal(apoio[0].disponivelAPartir, "2026-10-11"); // "acaba LT 10/10" = livre no dia seguinte
   assert.equal(apoio[0].destino, "FELINOS");
   assert.match(apoio[0].observacao ?? "", /Lavra: Treinamento dia 29\/09/);
   assert.equal(apoio[1].disponivelAPartir, null); // data que nao entendi nao inventa liberacao
   assert.ok(r.avisos.some((a) => /não entendi a data/.test(a)));
-  assert.ok(r.avisos.some((a) => /não informa contrato/.test(a)));
-});
-
-test("Ajustes da carga: deduz contrato pelo nome, marca como a confirmar e nunca mexe em contrato ja informado", () => {
-  const buf = xlsx({
-    "DIVISÃO DE EQUIPES": [
-      ["ATIVIDADE", "EMPRESA", "EQUIPE", "NIVEL", "Cargo / Função", "NOME PROFISSIONAIS", "DIREÇÃO 4X4", "CARROS", "STATUS ATUAL"],
-      ["FLANCO NORTE - EQUIPE 01", "Consominas", "Resgate", "Superior", "Biólogo", "Ana Teste", "Sim", "VL 01", ""],
-      ["LAVRA - EQUIPE 01", "Consominas", "Afugentamento", "Superior", "Biólogo", "Bia Teste", "", "", ""],
-      ["MELIPONÁRIO", "Consominas", "Meliponário", "Superior", "Biólogo", "Caio Teste", "", "", ""],
-    ],
-    "EQUIPE DE LT PARA APOIO": [
-      ["CONTRATO", "FUNÇÃO", "PROFISSIONAL", "DATA DE TRANASIÇÃO"],
-      ["4362 LT", "CONSULTOR", "EVA TESTE", "Acaba LT 10/10"],
-    ],
-  });
-  const base = lerPlanilhaEfetivos(buf, { anoReferencia: 2026 });
-  assert.ok(base.equipes.slice(0, 3).every((e) => !e.contratoConfirmado && e.projeto === "A definir"));
-  assert.equal(base.equipes[3].contratoConfirmado, true); // contrato do apoio vem escrito na planilha
-  const r = aplicarAjustes(base, [
-    { contem: ["flanco"], projeto: "3636 PNM", gestor: "Ronaldo" },
-    { contem: ["LAVRA"], projeto: "3686 LAVRA" },
-    { contem: ["APOIO"], projeto: "9999 XX" }, // nao pode sobrescrever contrato ja informado
-  ]);
-  assert.deepEqual(r.equipes.map((e) => [e.projeto, e.contratoConfirmado, e.gestor]), [
-    ["3636 PNM", false, "Ronaldo"], // deduzido: segue "a confirmar"
-    ["3686 LAVRA", false, null],
-    ["A definir", false, null], // MELIPONÁRIO: sem pista no nome, continua a definir
-    ["4362 LT", true, null],
-  ]);
-  assert.ok(r.avisos.some((a) => /deduzido pelo nome/.test(a)));
-  assert.ok(r.avisos.some((a) => /1 equipe\(s\) sem contrato/.test(a)));
-  assert.equal(aplicarAjustes(base, []), base); // sem ajustes, nada muda
 });

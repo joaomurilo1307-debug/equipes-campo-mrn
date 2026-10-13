@@ -1,14 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { livresNoPeriodo, ordenarGrupos } from "@/lib/efetivos/disponibilidade";
+import { bloqueiosNoPeriodo, indexar, livresNoPeriodo, ordenarGrupos, trechosLivres, type Dia } from "@/lib/efetivos/disponibilidade";
 import { useDados } from "../DadosContext";
-import { MOTIVO_CONFLITO, chamar, corDoContrato, fmtDia, rotuloContrato, type Campanha } from "../comum";
+import { MOTIVO_CONFLITO, chamar, corDaAusencia, corDoContrato, fmtDia, fmtDiaCurto, rotuloContrato, somarDias, type Campanha } from "../comum";
 import { Aviso, Modal, PontoContrato, RodapeModal } from "../ui";
 
 /**
- * "Montar equipe": mostra só quem está livre em TODOS os dias da campanha e grava exatamente o
- * conjunto escolhido. Não há composição mínima nem máxima.
+ * "Montar equipe": mostra quem está livre em TODOS os dias da campanha e, logo abaixo, quem NÃO está
+ * (férias, atestado, outro contrato, outra campanha) com as datas e a volta. Quem volta no meio da
+ * campanha pode ser escalado só no trecho em que está livre. Não há composição mínima nem máxima.
  */
 export default function ModalMontarEquipe({
   campanha,
@@ -28,22 +29,27 @@ export default function ModalMontarEquipe({
   const [empresa, setEmpresa] = useState("");
   const [cargo, setCargo] = useState("");
   const [busca, setBusca] = useState("");
-  const [verIndisponiveis, setVerIndisponiveis] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [conflitos, setConflitos] = useState<{ nome: string | null; motivo: string }[]>([]);
 
-  const { livres, indisponiveis } = useMemo(
-    () => livresNoPeriodo(regra, campanha.inicio, campanha.fim, { ignorarCampanhaId: campanha.id, grupo: grupo || null }),
-    [regra, campanha.inicio, campanha.fim, campanha.id, grupo]
-  );
-  const todosLivres = useMemo(() => livresNoPeriodo(regra, campanha.inicio, campanha.fim, { ignorarCampanhaId: campanha.id }).livres, [regra, campanha.inicio, campanha.fim, campanha.id]);
+  const ini = campanha.inicio;
+  const fim = campanha.fim;
+  const { livres, indisponiveis } = useMemo(() => livresNoPeriodo(regra, ini, fim, { ignorarCampanhaId: campanha.id, grupo: grupo || null }), [regra, ini, fim, campanha.id, grupo]);
+  const todosLivres = useMemo(() => livresNoPeriodo(regra, ini, fim, { ignorarCampanhaId: campanha.id }).livres, [regra, ini, fim, campanha.id]);
+  const idxSemEla = useMemo(() => indexar(regra, campanha.id), [regra, campanha.id]);
 
   const [sel, setSel] = useState<Set<string>>(() => {
     const atuais = dados.alocacoes.filter((a) => a.campanhaId === campanha.id).map((a) => a.vagaId);
     if (atuais.length > 0 || !preselecionarEquipeId) return new Set(atuais);
     // vindo do Quadro (arrastar sobre a linha da equipe): já marca quem da equipe está livre
     return new Set(todosLivres.filter((p) => p.equipeId === preselecionarEquipeId).map((p) => p.id));
+  });
+  // periodo proprio de quem entra so em um trecho (volta de ferias no meio da campanha etc.)
+  const [periodos, setPeriodos] = useState<Record<string, { inicio: Dia; fim: Dia }>>(() => {
+    const m: Record<string, { inicio: Dia; fim: Dia }> = {};
+    for (const a of dados.alocacoes) if (a.campanhaId === campanha.id && (a.inicio !== ini || a.fim !== fim)) m[a.vagaId] = { inicio: a.inicio, fim: a.fim };
+    return m;
   });
 
   const empresas = Array.from(new Set(dados.vagas.map((v) => v.empresa))).sort();
@@ -55,17 +61,38 @@ export default function ModalMontarEquipe({
     (!busca.trim() || (p.nome ?? "").toLowerCase().includes(busca.trim().toLowerCase()));
 
   const livresFiltrados = livres.filter(filtra);
-  const porEquipe = useMemo(() => {
-    const m = new Map<string, typeof livresFiltrados>();
-    for (const p of livresFiltrados) {
-      if (!m.has(p.equipeId)) m.set(p.equipeId, []);
-      m.get(p.equipeId)!.push(p);
+
+  // quem nao esta livre no periodo inteiro: motivos com datas e os trechos em que da para escalar
+  const foraDoPeriodo = useMemo(() => {
+    return indisponiveis
+      .filter(filtra)
+      .map((p) => {
+        const v = vagaPorId.get(p.id)!;
+        const bloqueios = bloqueiosNoPeriodo(v, idxSemEla, ini, fim);
+        const trechos = trechosLivres(v, idxSemEla, ini, fim);
+        return { p, v, bloqueios, trechos };
+      })
+      .sort((a, b) => b.trechos.length - a.trechos.length || (a.p.nome ?? "").localeCompare(b.p.nome ?? "", "pt-BR"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [indisponiveis, idxSemEla, ini, fim, equipeId, empresa, cargo, busca, vagaPorId]);
+
+  const resumoFora = useMemo(() => {
+    const c = new Map<string, number>();
+    for (const x of foraDoPeriodo) {
+      const principal = x.bloqueios[0];
+      const rotulo = !principal ? "indisponível" : principal.origem === "ausencia" ? principal.tipo.toLowerCase() : principal.origem === "campanha" ? "em outra campanha" : principal.origem === "outro_contrato" ? "em outro contrato" : principal.tipo.toLowerCase();
+      c.set(rotulo, (c.get(rotulo) ?? 0) + 1);
     }
-    return [...m.entries()];
-  }, [livresFiltrados]);
+    return [...c.entries()].sort((a, b) => b[1] - a[1]);
+  }, [foraDoPeriodo]);
+
+  const equipesLista = useMemo(() => {
+    const ids = new Set<string>([...livresFiltrados.map((p) => p.equipeId), ...foraDoPeriodo.map((x) => x.p.equipeId)]);
+    return [...ids].sort((a, b) => (equipePorId.get(a)?.codigo ?? "").localeCompare(equipePorId.get(b)?.codigo ?? ""));
+  }, [livresFiltrados, foraDoPeriodo, equipePorId]);
 
   const idsLivres = new Set(todosLivres.map((p) => p.id));
-  const foraDaLista = [...sel].filter((id) => !idsLivres.has(id));
+  const foraDaLista = [...sel].filter((id) => !idsLivres.has(id) && !periodos[id]);
   const composicao = useMemo(() => {
     const c = new Map<string, number>();
     for (const id of sel) {
@@ -75,25 +102,42 @@ export default function ModalMontarEquipe({
     return [...c.entries()].sort((a, b) => b[1] - a[1]);
   }, [sel, vagaPorId]);
 
-  const alternar = (id: string) =>
+  const alternar = (id: string) => {
     setSel((s) => {
       const n = new Set(s);
       if (n.has(id)) n.delete(id);
       else n.add(id);
       return n;
     });
-  const marcar = (ids: string[], marcar: boolean) =>
+    setPeriodos((m) => {
+      if (!m[id]) return m;
+      const { [id]: _, ...resto } = m;
+      return resto;
+    });
+  };
+  const marcar = (ids: string[], marcado: boolean) => {
     setSel((s) => {
       const n = new Set(s);
-      ids.forEach((id) => (marcar ? n.add(id) : n.delete(id)));
+      ids.forEach((id) => (marcado ? n.add(id) : n.delete(id)));
       return n;
     });
+    setPeriodos((m) => {
+      const c = { ...m };
+      ids.forEach((id) => delete c[id]);
+      return c;
+    });
+  };
+  const escalarTrecho = (id: string, t: { inicio: Dia; fim: Dia }) => {
+    setSel((s) => new Set(s).add(id));
+    setPeriodos((m) => ({ ...m, [id]: t }));
+  };
 
   async function salvar() {
     setSalvando(true);
     setErro(null);
     setConflitos([]);
-    const r = await chamar("PUT", `/api/efetivos/campanhas/${campanha.id}/alocacoes`, { vagaIds: [...sel] });
+    const usados = Object.fromEntries(Object.entries(periodos).filter(([id]) => sel.has(id)));
+    const r = await chamar("PUT", `/api/efetivos/campanhas/${campanha.id}/alocacoes`, { vagaIds: [...sel], periodos: usados });
     setSalvando(false);
     if (!r.ok) {
       setErro(r.dados.error ?? "Não foi possível gravar a equipe");
@@ -104,6 +148,7 @@ export default function ModalMontarEquipe({
     await onSalvo();
   }
 
+  const select = "field";
   return (
     <Modal
       titulo={`Montar equipe — ${campanha.codigo}`}
@@ -113,14 +158,14 @@ export default function ModalMontarEquipe({
     >
       <div className="px-6 pt-4">
         <Aviso tipo="info">
-          Aparece só quem está livre em <strong>todos</strong> os dias do período: sem férias, atestado, afastamento, outro contrato nem outra campanha. Escolha quem quiser — não há composição mínima nem máxima.
+          Em cima, quem está livre em <strong>todos</strong> os dias da campanha. Embaixo, quem <strong>não está</strong> (férias, atestado, outro contrato, outra campanha), com as datas e a volta — e, para quem volta no meio, dá para escalar só o trecho livre. Sem composição mínima nem máxima.
         </Aviso>
       </div>
 
       <div className="flex flex-wrap items-end gap-3 px-6 py-4">
         <label className="text-xs">
           <span className="label">Grupo</span>
-          <select value={grupo} onChange={(e) => setGrupo(e.target.value)} className="field">
+          <select value={grupo} onChange={(e) => setGrupo(e.target.value)} className={select}>
             <option value="">Todos</option>
             {grupos.map((g) => (
               <option key={g}>{g}</option>
@@ -129,7 +174,7 @@ export default function ModalMontarEquipe({
         </label>
         <label className="text-xs">
           <span className="label">Equipe-base</span>
-          <select value={equipeId} onChange={(e) => setEquipeId(e.target.value)} className="field">
+          <select value={equipeId} onChange={(e) => setEquipeId(e.target.value)} className={select}>
             <option value="">Todas</option>
             {dados.equipes
               .filter((e) => !grupo || e.grupo === grupo)
@@ -142,7 +187,7 @@ export default function ModalMontarEquipe({
         </label>
         <label className="text-xs">
           <span className="label">Empresa</span>
-          <select value={empresa} onChange={(e) => setEmpresa(e.target.value)} className="field">
+          <select value={empresa} onChange={(e) => setEmpresa(e.target.value)} className={select}>
             <option value="">Todas</option>
             {empresas.map((e) => (
               <option key={e}>{e}</option>
@@ -151,7 +196,7 @@ export default function ModalMontarEquipe({
         </label>
         <label className="text-xs">
           <span className="label">Função</span>
-          <select value={cargo} onChange={(e) => setCargo(e.target.value)} className="field">
+          <select value={cargo} onChange={(e) => setCargo(e.target.value)} className={select}>
             <option value="">Todas</option>
             {cargos.map((e) => (
               <option key={e}>{e}</option>
@@ -160,19 +205,23 @@ export default function ModalMontarEquipe({
         </label>
         <label className="text-xs">
           <span className="label">Nome</span>
-          <input value={busca} onChange={(e) => setBusca(e.target.value)} className="field" />
-        </label>
-        <label className="flex items-center gap-2 pb-2 text-xs text-gray-600">
-          <input type="checkbox" checked={verIndisponiveis} onChange={(e) => setVerIndisponiveis(e.target.checked)} className="accent-[#0A9E7F]" /> mostrar quem não está livre
+          <input value={busca} onChange={(e) => setBusca(e.target.value)} className={select} />
         </label>
       </div>
 
       <div className="grid gap-5 px-6 pb-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
-        <div className="max-h-[50vh] space-y-4 overflow-y-auto rounded-xl border border-line p-4">
-          {porEquipe.map(([eqId, pessoas]) => {
+        <div className="max-h-[56vh] space-y-5 overflow-y-auto rounded-xl border border-line p-4">
+          <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-gray-600">
+            <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-ok" /> <strong className="num">{livresFiltrados.length}</strong> livres no período todo</span>
+            <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-full bg-warn" /> <strong className="num">{foraDoPeriodo.length}</strong> não estão livres</span>
+            {resumoFora.length > 0 && <span className="text-gray-500">({resumoFora.map(([r, n]) => `${n} ${r}`).join(" · ")})</span>}
+          </p>
+          {equipesLista.map((eqId) => {
             const eq = equipePorId.get(eqId)!;
+            const pessoas = livresFiltrados.filter((p) => p.equipeId === eqId);
+            const fora = foraDoPeriodo.filter((x) => x.p.equipeId === eqId);
             const ids = pessoas.map((p) => p.id);
-            const todos = ids.every((id) => sel.has(id));
+            const todos = ids.length > 0 && ids.every((id) => sel.has(id) && !periodos[id]);
             return (
               <div key={eqId}>
                 <div className="mb-1.5 flex items-center justify-between gap-3 text-xs">
@@ -183,15 +232,17 @@ export default function ModalMontarEquipe({
                     </span>
                     <span className="font-normal text-gray-400">{rotuloContrato(eq.projeto)}</span>
                   </span>
-                  <button onClick={() => marcar(ids, !todos)} className="shrink-0 font-semibold text-brand-dark hover:underline">
-                    {todos ? "desmarcar" : "marcar"} os {ids.length} livres
-                  </button>
+                  {ids.length > 0 && (
+                    <button onClick={() => marcar(ids, !todos)} className="shrink-0 font-semibold text-brand-dark hover:underline">
+                      {todos ? "desmarcar" : "marcar"} os {ids.length} livres
+                    </button>
+                  )}
                 </div>
                 <div className="grid gap-1.5 sm:grid-cols-2">
                   {pessoas.map((p) => {
                     const marcado = sel.has(p.id);
                     return (
-                      <label key={p.id} className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2 text-sm transition-colors ${marcado ? "border-brand bg-brand-soft" : "border-line hover:bg-gray-50"}`}>
+                      <label key={p.id} className={`flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2 text-[13px] transition-colors ${marcado ? "border-brand bg-brand-soft" : "border-line hover:bg-gray-50"}`}>
                         <input type="checkbox" checked={marcado} onChange={() => alternar(p.id)} className="mt-0.5 accent-[#0A9E7F]" />
                         <span className="min-w-0">
                           <span className="block truncate font-medium text-ink">{p.nome}</span>
@@ -203,30 +254,55 @@ export default function ModalMontarEquipe({
                       </label>
                     );
                   })}
+                  {fora.map(({ p, bloqueios, trechos }) => {
+                    const marcadoTrecho = periodos[p.id];
+                    return (
+                      <div key={p.id} className={`rounded-lg border px-3 py-2 text-[13px] ${marcadoTrecho ? "border-brand bg-brand-soft" : "border-line bg-gray-50"}`}>
+                        <div className="truncate font-medium text-gray-700">{p.nome}</div>
+                        <div className="truncate text-[11px] text-gray-500">{p.cargo}</div>
+                        <ul className="mt-1 space-y-0.5">
+                          {bloqueios.slice(0, 3).map((b, i) => {
+                            const cod = b.campanhaId ? campanhaPorId.get(b.campanhaId)?.codigo : null;
+                            const cor = b.origem === "ausencia" ? corDaAusencia(b.tipo) : b.origem === "outro_contrato" ? "#1D6FB8" : b.origem === "campanha" ? "#0A9E7F" : "#C9342B";
+                            return (
+                              <li key={i} className="flex flex-wrap items-center gap-1.5 text-[11.5px]">
+                                <span className="inline-block h-2 w-2 shrink-0 rounded-sm" style={{ background: cor }} />
+                                <span className="font-semibold" style={{ color: cor }}>
+                                  {cod ? `Em ${cod}` : b.tipo}
+                                </span>
+                                <span className="text-gray-500">
+                                  {b.origem === "status" ? "sem previsão de volta" : `${fmtDiaCurto(b.inicio)}–${fmtDiaCurto(b.fim)}${b.fim < fim ? ` · volta ${fmtDiaCurto(somarDias(b.fim, 1))}` : ""}`}
+                                </span>
+                              </li>
+                            );
+                          })}
+                          {bloqueios.length > 3 && <li className="text-[11px] text-gray-400">+ {bloqueios.length - 3} outro(s)</li>}
+                        </ul>
+                        {trechos.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
+                            {trechos.slice(0, 3).map((t) => {
+                              const ativo = marcadoTrecho && marcadoTrecho.inicio === t.inicio && marcadoTrecho.fim === t.fim;
+                              return (
+                                <button
+                                  key={t.inicio}
+                                  onClick={() => (ativo ? alternar(p.id) : escalarTrecho(p.id, t))}
+                                  className={`rounded-md border px-2 py-0.5 text-[11px] font-semibold ${ativo ? "border-brand bg-brand text-white" : "border-line bg-white text-brand-dark hover:bg-brand-soft"}`}
+                                  title="Escalar só neste trecho, em que a pessoa está livre"
+                                >
+                                  {ativo ? "✓ " : "+ "}só {fmtDiaCurto(t.inicio)} a {fmtDiaCurto(t.fim)}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             );
           })}
-          {porEquipe.length === 0 && <p className="py-10 text-center text-sm text-gray-400">Ninguém livre neste período com esses filtros.</p>}
-
-          {verIndisponiveis && (
-            <div className="border-t border-dashed border-line pt-4">
-              <div className="mb-2 text-xs font-semibold text-gray-500">Não estão livres no período</div>
-              <div className="grid gap-1.5 sm:grid-cols-2">
-                {indisponiveis.filter(filtra).map((p) => {
-                  const outra = p.campanhaId ? campanhaPorId.get(p.campanhaId)?.codigo : null;
-                  return (
-                    <div key={p.id} className="rounded-lg border border-line bg-gray-50 px-3 py-2 text-sm text-gray-400">
-                      <span className="block truncate">{p.nome}</span>
-                      <span className="block text-[11px]">
-                        {p.situacao === "ALOCADA" ? (outra ? `em ${outra}` : p.motivo ?? "ocupado") : p.motivo ?? "ausente"} · {p.equipeCodigo}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+          {equipesLista.length === 0 && <p className="py-8 text-center text-sm text-gray-400">Ninguém encontrado com esses filtros.</p>}
         </div>
 
         <aside className="space-y-3">
@@ -242,8 +318,29 @@ export default function ModalMontarEquipe({
                 </li>
               ))}
             </ul>
-            <div className="mt-3 text-[11px] text-gray-400">{todosLivres.length} pessoas livres no período (todos os grupos)</div>
+            <div className="mt-3 text-[11px] text-gray-400">{todosLivres.length} pessoas livres no período todo (todos os grupos)</div>
           </div>
+
+          {Object.keys(periodos).filter((id) => sel.has(id)).length > 0 && (
+            <div className="rounded-xl border border-brand/30 bg-brand-soft p-3 text-xs">
+              <div className="font-semibold text-brand-dark">Escaladas só em um trecho</div>
+              <ul className="mt-1.5 space-y-1">
+                {Object.entries(periodos)
+                  .filter(([id]) => sel.has(id))
+                  .map(([id, t]) => (
+                    <li key={id} className="flex items-center justify-between gap-2">
+                      <span className="truncate">
+                        {vagaPorId.get(id)?.nome} · {fmtDiaCurto(t.inicio)}–{fmtDiaCurto(t.fim)}
+                      </span>
+                      <button onClick={() => alternar(id)} className="shrink-0 rounded border border-brand/30 px-1.5 py-0.5 hover:bg-white">
+                        tirar
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          )}
+
           {foraDaLista.length > 0 && (
             <Aviso tipo="atencao">
               <div className="font-semibold">Escalados que deixaram de estar livres</div>

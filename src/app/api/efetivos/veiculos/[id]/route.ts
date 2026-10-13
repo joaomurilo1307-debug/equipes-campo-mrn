@@ -45,3 +45,14 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   if (partes.length) await registrar(a.userId, "VEICULO_ALTERADO", "VEICULO", veiculo.id, `Veículo ${veiculo.codigo} (${veiculo.identificacao}): ${partes.join("; ")} (por ${a.nome})`);
   return NextResponse.json({ veiculo });
 }
+
+// Exclui um veiculo cadastrado por engano, com o historico de passagens dele. Para guardar o historico, prefira marcar como Devolvido.
+export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
+  const a = await exigir("editar");
+  if ("erro" in a) return a.erro;
+  const v = await prisma.efetivoVeiculo.findUnique({ where: { id: params.id }, include: { _count: { select: { movimentos: true } } } });
+  if (!v) return NextResponse.json({ error: "Veículo não encontrado" }, { status: 404 });
+  await prisma.efetivoVeiculo.delete({ where: { id: v.id } });
+  await registrar(a.userId, "VEICULO_EXCLUIDO", "VEICULO", v.id, `Veículo ${v.codigo} (${v.identificacao}${v.placa ? `, ${v.placa}` : ""}) excluído por ${a.nome}, com ${v._count.movimentos} passagem(ns)`);
+  return NextResponse.json({ ok: true });
+}

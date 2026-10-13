@@ -2,6 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   alocacoesQueSeguram,
+  bloqueiosNoPeriodo,
+  indexar,
+  trechosLivres,
   atendimentoDaCampanha,
   balancoCapacidade,
   dataValida,
@@ -247,4 +250,45 @@ test("Pessoa ainda em outro contrato: ocupada ate a data de liberacao e livre a 
   const probs = validarAlocacao(dados, "k", [id("Ana")], "2026-10-08", "2026-10-20");
   assert.equal(probs[0].motivo, "ALOCADA");
   assert.match(String(probs[0].detalhe), /4362 LT/);
+});
+
+test("Por que nao esta livre e em que trechos esta: ferias no meio da campanha, outro contrato e campanha", () => {
+  const { dados, id } = cenario();
+  const ana = dados.vagas.find((v) => v.nome === "Ana")!;
+  dados.ausencias.push({ vagaId: id("Ana"), tipo: "Férias", inicio: "2026-11-10", fim: "2026-11-20" });
+  dados.alocacoes.push({ vagaId: id("Ana"), campanhaId: "k7", inicio: "2026-11-28", fim: "2026-12-05" });
+  ana.contratoAtual = "4362 LT";
+  ana.disponivelAPartir = "2026-11-03";
+  const idx = indexar(dados);
+  const b = bloqueiosNoPeriodo(ana, idx, "2026-11-01", "2026-12-10");
+  assert.deepEqual(
+    b.map((x) => [x.origem, x.tipo, x.inicio, x.fim]),
+    [
+      ["outro_contrato", "Em 4362 LT", "2026-11-01", "2026-11-02"],
+      ["ausencia", "Férias", "2026-11-10", "2026-11-20"],
+      ["campanha", "Em campanha", "2026-11-28", "2026-12-05"],
+    ]
+  );
+  // livre de 03/11 a 09/11, de 21/11 a 27/11 e de 06/12 a 10/12
+  assert.deepEqual(trechosLivres(ana, idx, "2026-11-01", "2026-12-10"), [
+    { inicio: "2026-11-03", fim: "2026-11-09" },
+    { inicio: "2026-11-21", fim: "2026-11-27" },
+    { inicio: "2026-12-06", fim: "2026-12-10" },
+  ]);
+  assert.deepEqual(trechosLivres(ana, idx, "2026-11-12", "2026-11-15"), []); // tudo dentro das ferias
+  const aberta = dados.vagas.find((v) => v.nome === null)!;
+  assert.deepEqual(trechosLivres(aberta, idx, "2026-11-01", "2026-11-05"), []); // vaga sem profissional nunca esta livre
+});
+
+test("Validar alocacao com periodo proprio: so vale dentro da campanha e respeita as ferias do trecho", () => {
+  const { dados, id } = cenario();
+  dados.ausencias.push({ vagaId: id("Ana"), tipo: "Férias", inicio: "2026-11-10", fim: "2026-11-20" });
+  // campanha de 01/11 a 30/11: inteira recusa a Ana, mas o trecho de 21/11 a 30/11 pode
+  assert.equal(validarAlocacao(dados, "k", [id("Ana")], "2026-11-01", "2026-11-30")[0].motivo, "AUSENTE");
+  assert.deepEqual(validarAlocacao(dados, "k", [id("Ana")], "2026-11-01", "2026-11-30", { [id("Ana")]: { inicio: "2026-11-21", fim: "2026-11-30" } }), []);
+  // trecho fora da campanha ou invertido e invalido
+  assert.equal(validarAlocacao(dados, "k", [id("Ana")], "2026-11-01", "2026-11-30", { [id("Ana")]: { inicio: "2026-10-25", fim: "2026-11-05" } })[0].motivo, "PERIODO_INVALIDO");
+  assert.equal(validarAlocacao(dados, "k", [id("Ana")], "2026-11-01", "2026-11-30", { [id("Ana")]: { inicio: "2026-11-25", fim: "2026-11-22" } })[0].motivo, "PERIODO_INVALIDO");
+  // o trecho ainda pode colidir com a ferias
+  assert.equal(validarAlocacao(dados, "k", [id("Ana")], "2026-11-01", "2026-11-30", { [id("Ana")]: { inicio: "2026-11-15", fim: "2026-11-30" } })[0].motivo, "AUSENTE");
 });

@@ -29,12 +29,14 @@ import {
   rotuloContrato,
   segundaDaSemana,
   semanaIso,
+  type Ausencia,
   type Campanha,
   type Equipe,
   type Vaga,
   type Veiculo,
 } from "../comum";
 import { IcBaixo, IcBusca, IcDir, IcEsq, IcMais } from "../icones";
+import ModalAusencia from "../modais/ModalAusencia";
 import ModalAusencias from "../modais/ModalAusencias";
 import ModalCampanha, { type PadraoCampanha } from "../modais/ModalCampanha";
 import ModalEquipe from "../modais/ModalEquipe";
@@ -56,7 +58,8 @@ type ModalEstado =
   | { t: "montar"; campanha: Campanha; equipeId?: string }
   | { t: "equipe"; equipe?: Equipe; projeto?: string }
   | { t: "vaga"; equipe?: Equipe; vaga?: Vaga }
-  | { t: "ausencias"; vaga: Vaga; periodo?: { inicio: Dia; fim: Dia } }
+  | { t: "ausencias"; vaga: Vaga }
+  | { t: "ausencia"; ausencia?: Ausencia; vagaIds?: string[]; periodo?: { inicio: Dia; fim: Dia } }
   | { t: "veiculo"; veiculo?: Veiculo }
   | { t: "mover"; veiculo: Veiculo; periodo?: { inicio: Dia; fim: Dia } }
   | { t: "historico"; veiculo: Veiculo };
@@ -188,7 +191,7 @@ export default function Quadro() {
       out.push({ id: a.id, inicio: a.inicio, fim: a.fim, rotulo: c.codigo, cor: COR_STATUS_CAMPANHA[c.status] ?? "#0A9E7F", dica: `${c.codigo} — ${rotuloContrato(c.projeto)}\n${fmtDia(a.inicio)} a ${fmtDia(a.fim)}`, onClick: () => setDrawer({ t: "campanha", id: c.id }) });
     }
     for (const x of dados.ausencias.filter((a) => a.vagaId === v.id)) {
-      out.push({ id: x.id, inicio: x.inicio, fim: x.fim, rotulo: x.tipo, cor: "#CBD4CE", corTexto: "#3E4A45", dica: `${x.tipo}\n${fmtDia(x.inicio)} a ${fmtDia(x.fim)}`, listrada: true, onClick: () => setModal({ t: "ausencias", vaga: v }) });
+      out.push({ id: x.id, inicio: x.inicio, fim: x.fim, rotulo: x.tipo, cor: "#CBD4CE", corTexto: "#3E4A45", dica: `${x.tipo}\n${fmtDia(x.inicio)} a ${fmtDia(x.fim)}`, listrada: true, onClick: () => setModal({ t: "ausencia", ausencia: x }) });
     }
     if (v.contratoAtual && v.disponivelAPartir && v.disponivelAPartir > inicio) {
       const ate = somarDias(v.disponivelAPartir, -1);
@@ -520,7 +523,6 @@ export default function Quadro() {
                                   <div className="flex items-center gap-1.5">
                                     <span className="font-mono text-[11px] text-gray-500">{e.codigo}</span>
                                     <span className={ev.chip} title={ev.dica}>{ev.rotulo}</span>
-                                    {!e.contratoConfirmado && <span className="chip-warn" title="Contrato a confirmar">?</span>}
                                   </div>
                                   <div className="truncate text-[13px] font-semibold leading-snug text-ink" title={e.nome}>{e.nome}</div>
                                   <div className="text-[11px] text-gray-500">
@@ -582,7 +584,7 @@ export default function Quadro() {
                                       barras={distribuir(barrasDaPessoa(v)).map((x) => ({ ...x, faixa: 0 }))}
                                       topoBarras={9}
                                       alturaBarra={20}
-                                      onSelecionar={podeEditar && !aberta ? (a, b) => setModal({ t: "ausencias", vaga: v, periodo: { inicio: a, fim: b } }) : undefined}
+                                      onSelecionar={podeEditar && !aberta ? (a, b) => setModal({ t: "ausencia", vagaIds: [v.id], periodo: { inicio: a, fim: b } }) : undefined}
                                       umDia={zoom === "dia"}
                                       dica="Arraste para lançar uma ausência"
                                     />
@@ -714,7 +716,8 @@ export default function Quadro() {
           }}
         />
       )}
-      {modal?.t === "ausencias" && <ModalAusencias vaga={modal.vaga} periodo={modal.periodo} onFechar={() => setModal(null)} />}
+      {modal?.t === "ausencias" && <ModalAusencias vaga={modal.vaga} onFechar={() => setModal(null)} />}
+      {modal?.t === "ausencia" && <ModalAusencia ausencia={modal.ausencia} vagaIds={modal.vagaIds} periodo={modal.periodo} onFechar={() => setModal(null)} />}
       {modal?.t === "veiculo" && <ModalVeiculo veiculo={modal.veiculo} onFechar={() => setModal(null)} />}
       {modal?.t === "mover" && <ModalMover veiculo={modal.veiculo} periodo={modal.periodo} onFechar={() => setModal(null)} />}
       {modal?.t === "historico" && <ModalHistoricoVeiculo veiculo={modal.veiculo} onFechar={() => setModal(null)} />}

@@ -10,5 +10,5 @@ export default modoMock
   : withAuth({ pages: { signIn: "/login" } });
 
 export const config = {
-  matcher: ["/painel/:path*", "/quadro/:path*", "/campanhas/:path*", "/equipes/:path*", "/frota/:path*", "/historico/:path*", "/usuarios/:path*"],
+  matcher: ["/painel/:path*", "/quadro/:path*", "/campanhas/:path*", "/equipes/:path*", "/ferias/:path*", "/contratos/:path*", "/frota/:path*", "/historico/:path*", "/usuarios/:path*"],
 };

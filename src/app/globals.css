@@ -8,6 +8,8 @@
 
 html {
   -webkit-font-smoothing: antialiased;
+  /* escala geral menor: telas de operacao, muita informacao, pouco espaco para fonte grande */
+  font-size: 14px;
 }
 
 body {

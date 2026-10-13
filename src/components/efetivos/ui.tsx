@@ -113,10 +113,10 @@ export function Segmentado<T extends string>({ valor, opcoes, onChange }: { valo
 
 export function CabecalhoPagina({ titulo, subtitulo, acoes }: { titulo: string; subtitulo?: ReactNode; acoes?: ReactNode }) {
   return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+    <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">
-        <h1 className="font-display text-[28px] font-semibold leading-tight tracking-tight text-ink">{titulo}</h1>
-        {subtitulo && <p className="mt-1 max-w-3xl text-sm text-gray-500">{subtitulo}</p>}
+        <h1 className="font-display text-[22px] font-semibold leading-tight tracking-tight text-ink">{titulo}</h1>
+        {subtitulo && <p className="mt-0.5 max-w-3xl text-[13px] text-gray-500">{subtitulo}</p>}
       </div>
       {acoes && <div className="no-print flex flex-wrap items-center gap-2">{acoes}</div>}
     </div>

@@ -1,7 +1,8 @@
 // Tipos, formatadores, cores e chamadas de API compartilhados pelas telas.
 import { diferencaDias, somarDias, type Dia, type LinhaEquipe } from "@/lib/efetivos/disponibilidade";
 
-export type Equipe = { id: string; codigo: string; nome: string; projeto: string; contratoConfirmado: boolean; gestor: string | null; grupo: string; status: string };
+export type Equipe = { id: string; codigo: string; nome: string; projeto: string; gestor: string | null; grupo: string; local: string | null; observacao: string | null; status: string };
+export type Contrato = { id: string; codigo: string; nome: string | null; cliente: string | null; gestor: string | null; local: string | null; observacao: string | null; ativo: boolean };
 export type Vaga = {
   id: string;
   numero: number | null;
@@ -17,6 +18,7 @@ export type Vaga = {
   contratoAtual: string | null;
   disponivelAPartir: Dia | null;
   destino: string | null;
+  veiculoId: string | null;
   observacao: string | null;
 };
 export type Ausencia = { id: string; vagaId: string; tipo: string; inicio: Dia; fim: Dia; observacao: string | null };
@@ -68,6 +70,7 @@ export type DadosTela = {
   alocacoes: Alocacao[];
   veiculos: Veiculo[];
   movimentos: Movimento[];
+  contratos: Contrato[];
 };
 
 export const A_DEFINIR = "A definir";
@@ -121,7 +124,8 @@ export function corDoContrato(projeto: string): string {
   return PALETA_CONTRATOS[h % PALETA_CONTRATOS.length];
 }
 
-export const rotuloContrato = (projeto: string) => (projeto === A_DEFINIR ? "Contrato a definir" : projeto);
+export const SEM_CONTRATO = "Sem contrato";
+export const rotuloContrato = (projeto: string) => (!projeto || projeto === A_DEFINIR ? SEM_CONTRATO : projeto);
 
 export type EstadoVisual = "disponivel" | "alocada" | "incompleta" | "ausencia" | "inativa";
 
@@ -179,6 +183,7 @@ export const MOTIVO_CONFLITO: Record<string, string> = {
   EQUIPE_INATIVA: "equipe inativa",
   AUSENTE: "ausente no período",
   ALOCADA: "já está ocupado no período",
+  PERIODO_INVALIDO: "trecho fora do período da campanha",
 };
 
 // ---------------------------------------------------------------- chamadas
@@ -232,4 +237,35 @@ export function campanhaDeApi(c: any): Campanha {
 /** Cargos/empresas/atividades já usados, para sugerir nos formulários sem digitar tudo de novo. */
 export function valoresUsados(vagas: Vaga[], campo: "cargo" | "empresa" | "atividade"): string[] {
   return Array.from(new Set(vagas.map((v) => v[campo]).filter(Boolean))).sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+
+// ---------------------------------------------------------------- ausencias
+
+export const COR_AUSENCIA: Record<string, string> = {
+  Férias: "#2F6FDE",
+  Atestado: "#E4572E",
+  Afastado: "#8A4B4B",
+  Folga: "#7C5CD6",
+  Treinamento: "#D9910A",
+  Outro: "#6F7E77",
+  Ausente: "#6F7E77",
+};
+export const corDaAusencia = (tipo: string) => COR_AUSENCIA[tipo] ?? "#6F7E77";
+
+export type SituacaoAusencia = "em curso" | "futura" | "encerrada";
+export function situacaoDaAusencia(a: { inicio: Dia; fim: Dia }, hoje: Dia): SituacaoAusencia {
+  return a.fim < hoje ? "encerrada" : a.inicio > hoje ? "futura" : "em curso";
+}
+
+/** Dias corridos de um periodo fechado. */
+export const diasDoPeriodo = (inicio: Dia, fim: Dia) => diferencaDias(inicio, fim) + 1;
+
+/** Todos os contratos conhecidos: os cadastrados e os que ja aparecem em equipes, campanhas ou passagens de veiculo. */
+export function contratosConhecidos(d: Pick<DadosTela, "contratos" | "equipes" | "campanhas" | "movimentos">): string[] {
+  const s = new Set<string>();
+  for (const c of d.contratos) if (c.ativo) s.add(c.codigo);
+  for (const e of d.equipes) if (e.projeto && e.projeto !== A_DEFINIR) s.add(e.projeto);
+  for (const c of d.campanhas) if (c.projeto && c.projeto !== A_DEFINIR) s.add(c.projeto);
+  for (const m of d.movimentos) if (m.projeto && m.projeto !== A_DEFINIR) s.add(m.projeto);
+  return [...s].sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true }));
 }

@@ -34,9 +34,11 @@ export type VagaImportada = {
   contratoAtual?: string | null;
   disponivelAPartir?: Dia | null;
   destino?: string | null;
+  // viatura em que a pessoa vai (a coluna CARROS da planilha, mesclada por subgrupo)
+  carroRef?: string | null;
 };
 // Viatura que a planilha cita para a equipe ("VL 01"); placa e contrato nao vem na planilha.
-export type VeiculoImportado = { identificacao: string; equipeCodigo: string; ocupantes: number };
+export type VeiculoImportado = { ref: string; identificacao: string; equipeCodigo: string; ocupantes: number };
 export type ResultadoImportacao = {
   formato: "painel" | "divisao" | "original";
   equipes: EquipeImportada[];
@@ -357,7 +359,7 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
         gestor: null,
         grupo: "Fauna",
         nome: nomeEquipe || "(sem nome na planilha)",
-        contratoConfirmado: false,
+        contratoConfirmado: true,
         status: "Ativa",
       };
       equipes.push(atual);
@@ -367,7 +369,7 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
     // a viatura (coluna CARROS) tambem vem mesclada: vale ate a proxima viatura citada
     const placa = texto(r[iCarro]);
     if (placa !== "") {
-      carroAtual = { identificacao: placa, equipeCodigo: atual.codigo, ocupantes: 0 };
+      carroAtual = { ref: `${atual.codigo}#${veiculos.length + 1}`, identificacao: placa, equipeCodigo: atual.codigo, ocupantes: 0 };
       veiculos.push(carroAtual);
     }
     const nome = ehVago(r[iNome]) ? null : texto(r[iNome]);
@@ -388,6 +390,7 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
       ausencia: null,
       nivel: textoOuNulo(r[iNivel]),
       direcao4x4: dir === "sim" ? true : dir === "nao" ? false : null,
+      carroRef: carroAtual?.ref ?? null,
     });
   }
   if (vagas.length === 0) throw new Error('A aba "DIVISÃO DE EQUIPES" não tem nenhuma vaga.');
@@ -396,9 +399,6 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
   for (const e of equipes) {
     if ((cargosPorEquipe.get(e.codigo) ?? []).some((x) => normalizar(x).includes("flora"))) e.grupo = "Flora";
   }
-  avisos.unshift(
-    `A planilha não informa contrato/projeto, gestor nem grupo das ${equipes.length} equipes: entraram com projeto "${PROJETO_A_DEFINIR}" e grupo deduzido pelos cargos (Fauna, salvo cargo de Flora). Defina o contrato de cada equipe no sistema.`
-  );
 
   // aba de apoio vindo de outro contrato (ex.: "EQUIPE DE LT PARA APOIO")
   const abaApoio = wb.SheetNames.find((n) => normalizar(n).includes("apoio"));
@@ -450,35 +450,4 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
     }
   }
   return { formato: "divisao", equipes, vagas, veiculos, avisos };
-}
-
-
-// ---------------------------------------------------------------- ajustes na carga
-
-export type AjusteContrato = { contem: string[]; projeto: string; gestor?: string | null; grupo?: string | null };
-
-/**
- * Preenche contrato/gestor/grupo de equipes cujo nome contem uma das palavras indicadas (carga inicial).
- * So mexe em equipe cujo contrato ainda nao foi informado pela planilha; o que for deduzido por nome
- * entra marcado como "a confirmar" para a pessoa responsavel conferir no sistema.
- */
-export function aplicarAjustes(r: ResultadoImportacao, ajustes: AjusteContrato[]): ResultadoImportacao {
-  if (ajustes.length === 0) return r;
-  const equipes = r.equipes.map((e) => {
-    if (e.contratoConfirmado) return e;
-    const nome = normalizar(e.nome);
-    const aj = ajustes.find((a) => a.contem.some((c) => nome.includes(normalizar(c))));
-    if (!aj) return e;
-    return { ...e, projeto: aj.projeto, gestor: aj.gestor ?? e.gestor, grupo: aj.grupo ?? e.grupo, contratoConfirmado: false };
-  });
-  const deduzidas = equipes.filter((e, i) => e.projeto !== r.equipes[i].projeto).length;
-  const avisos = r.avisos.filter((a) => !a.startsWith("A planilha não informa contrato"));
-  if (deduzidas > 0) {
-    avisos.unshift(
-      `Contrato de ${deduzidas} equipe(s) deduzido pelo nome (ex.: "FLANCO" = 3636 PNM, como na planilha de setembro) e marcado como "a confirmar"; as demais seguem como "A definir".`
-    );
-  }
-  const faltam = equipes.filter((e) => e.projeto === "A definir").length;
-  if (faltam > 0) avisos.push(`${faltam} equipe(s) sem contrato na planilha: definir no sistema.`);
-  return { ...r, equipes, avisos };
 }

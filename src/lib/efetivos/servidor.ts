@@ -56,7 +56,7 @@ export async function registrar(userId: string | null, acao: string, entidade: s
 const STATUS_SENSIVEIS = ["Afastado", "Apto com restrição"];
 
 async function carregarDadosReal(editor: boolean) {
-  const [equipes, vagas, ausencias, campanhas, alocacoes, veiculos, movimentos] = await Promise.all([
+  const [equipes, vagas, ausencias, campanhas, alocacoes, veiculos, movimentos, contratos] = await Promise.all([
     prisma.efetivoEquipe.findMany({ orderBy: [{ ordem: "asc" }, { codigo: "asc" }] }),
     prisma.efetivoVaga.findMany({ orderBy: [{ numero: "asc" }, { criadoEm: "asc" }] }),
     prisma.efetivoAusencia.findMany({ orderBy: { inicio: "asc" } }),
@@ -64,6 +64,7 @@ async function carregarDadosReal(editor: boolean) {
     prisma.efetivoAlocacao.findMany(),
     prisma.efetivoVeiculo.findMany({ orderBy: { codigo: "asc" } }),
     prisma.efetivoVeiculoMovimento.findMany({ orderBy: { inicio: "asc" } }),
+    prisma.efetivoContrato.findMany({ orderBy: { codigo: "asc" } }),
   ]);
   return {
     equipes: equipes.map((e) => ({
@@ -74,6 +75,8 @@ async function carregarDadosReal(editor: boolean) {
       contratoConfirmado: e.contratoConfirmado,
       gestor: e.gestor,
       grupo: e.grupo,
+      local: e.local,
+      observacao: e.observacao,
       status: e.status,
     })),
     vagas: vagas.map((v) => ({
@@ -91,6 +94,7 @@ async function carregarDadosReal(editor: boolean) {
       contratoAtual: v.contratoAtual,
       disponivelAPartir: diaDe(v.disponivelAPartir),
       destino: v.destino,
+      veiculoId: v.veiculoId,
       observacao: editor ? v.observacao : null,
     })),
     ausencias: ausencias.map((a) => ({
@@ -139,6 +143,7 @@ async function carregarDadosReal(editor: boolean) {
       local: m.local,
       observacao: m.observacao,
     })),
+    contratos: contratos.map((c) => ({ id: c.id, codigo: c.codigo, nome: c.nome, cliente: c.cliente, gestor: c.gestor, local: c.local, observacao: c.observacao, ativo: c.ativo })),
   };
 }
 

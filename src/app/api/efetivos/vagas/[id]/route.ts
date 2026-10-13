@@ -20,6 +20,7 @@ const schema = z
     contratoAtual: z.string().trim().max(60).nullable(),
     disponivelAPartir: dia.nullable(),
     destino: z.string().trim().max(120).nullable(),
+    veiculoId: z.string().nullable(),
     observacao: z.string().trim().max(300).nullable(),
   })
   .partial();
@@ -38,7 +39,8 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     const nova = await prisma.efetivoEquipe.findUnique({ where: { id: parsed.data.equipeId } });
     if (!nova) return NextResponse.json({ error: "Equipe de destino não encontrada" }, { status: 404 });
   }
-  const { previsaoInicio, disponivelAPartir, nome, observacao, nivel, contratoAtual, destino, ...resto } = parsed.data;
+  const { previsaoInicio, disponivelAPartir, nome, observacao, nivel, contratoAtual, destino, veiculoId, ...resto } = parsed.data;
+  if (veiculoId && !(await prisma.efetivoVeiculo.findUnique({ where: { id: veiculoId } }))) return NextResponse.json({ error: "Veículo não encontrado" }, { status: 404 });
   const vaga = await prisma.efetivoVaga.update({
     where: { id: params.id },
     data: {
@@ -48,6 +50,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       ...(nivel !== undefined ? { nivel: nivel || null } : {}),
       ...(contratoAtual !== undefined ? { contratoAtual: contratoAtual || null } : {}),
       ...(destino !== undefined ? { destino: destino || null } : {}),
+      ...(veiculoId !== undefined ? { veiculoId: veiculoId || null } : {}),
       ...(previsaoInicio !== undefined ? { previsaoInicio: previsaoInicio ? dataDe(previsaoInicio) : null } : {}),
       ...(disponivelAPartir !== undefined ? { disponivelAPartir: disponivelAPartir ? dataDe(disponivelAPartir) : null } : {}),
     },
@@ -69,4 +72,19 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     alocacoesFuturas = await prisma.efetivoAlocacao.count({ where: { vagaId: vaga.id, fim: { gte: dataDe(new Date().toISOString().slice(0, 10)) } } });
   }
   return NextResponse.json({ vaga, alocacoesFuturas });
+}
+
+// Exclui uma vaga criada por engano. Se a pessoa ja foi escalada em campanha, nao exclui (use "Desmobilizado" ou tire-a da equipe da campanha antes).
+export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
+  const a = await exigir("editar");
+  if ("erro" in a) return a.erro;
+  const vaga = await prisma.efetivoVaga.findUnique({ where: { id: params.id }, include: { equipe: true, alocacoes: { include: { campanha: { select: { codigo: true } } } } } });
+  if (!vaga) return NextResponse.json({ error: "Vaga não encontrada" }, { status: 404 });
+  if (vaga.alocacoes.length > 0) {
+    const codigos = Array.from(new Set(vaga.alocacoes.map((x) => x.campanha.codigo))).join(", ");
+    return NextResponse.json({ error: `Esta vaga está escalada em ${codigos}. Tire-a da equipe da campanha antes de excluir (ou marque como Desmobilizado).` }, { status: 409 });
+  }
+  await prisma.efetivoVaga.delete({ where: { id: vaga.id } }); // as ausencias dela saem juntas
+  await registrar(a.userId, "VAGA_EXCLUIDA", "VAGA", vaga.id, `Vaga ${vaga.numero ?? ""} (${vaga.cargo}${vaga.nome ? `, ${vaga.nome}` : ", aberta"}) da equipe ${vaga.equipe.codigo} excluída por ${a.nome}`);
+  return NextResponse.json({ ok: true });
 }

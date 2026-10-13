@@ -1,46 +1,27 @@
 import { NextResponse } from "next/server";
-import { timingSafeEqual } from "node:crypto";
-import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { dataDe, exigir, registrar } from "@/lib/efetivos/servidor";
 import { dataValida } from "@/lib/efetivos/disponibilidade";
-import { aplicarAjustes, lerPlanilhaEfetivos, normalizar } from "@/lib/efetivos/importarPlanilha";
+import { lerPlanilhaEfetivos, normalizar } from "@/lib/efetivos/importarPlanilha";
 import { instanteBrasilia } from "@/lib/efetivos/hoje";
+import { tokenDeCargaValido } from "@/lib/efetivos/token";
 
 const MAX_BYTES = 8 * 1024 * 1024;
-
-const ajustesSchema = z.array(
-  z.object({
-    contem: z.array(z.string().min(1)).min(1),
-    projeto: z.string().min(1).max(60),
-    gestor: z.string().max(80).nullable().optional(),
-    grupo: z.string().max(40).nullable().optional(),
-  })
-);
 
 const proximoNumero = (codigos: string[], prefixo: string, largura: number) => {
   const maior = codigos.reduce((m, c) => Math.max(m, Number(new RegExp(`^${prefixo}-(\\d+)$`).exec(c)?.[1] ?? 0)), 0);
   return (n: number) => `${prefixo}-${String(maior + n).padStart(largura, "0")}`;
 };
 
-/** Carga inicial feita pelo desenvolvedor: token longo guardado no ambiente do servidor (nunca no código). */
-function tokenValido(req: Request): boolean {
-  const esperado = process.env.IMPORT_TOKEN;
-  const recebido = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
-  if (!esperado || esperado.length < 24 || !recebido) return false;
-  const a = Buffer.from(esperado);
-  const b = Buffer.from(recebido);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
-
 // Carga a partir da planilha do Samuel (a mais recente: "DIVISÃO DE EQUIPES"; tambem le os formatos antigos).
+// SO usa o que esta na planilha: contrato, gestor e placa nao constam nela e ficam em branco para serem preenchidos.
 // NUNCA sobrescreve: o sistema vira a fonte da verdade depois da carga inicial.
 //   - base vazia: importa tudo;
 //   - base com dados: recusa, a menos que ?acrescentar=1 (entao entram so equipes de nome ainda nao cadastrado).
 // Com ?simular=1 so mostra o que entraria, sem gravar.
 export async function POST(req: Request) {
   let quem: { userId: string | null; nome: string };
-  if (tokenValido(req)) {
+  if (tokenDeCargaValido(req)) {
     quem = { userId: null, nome: "Carga inicial" };
   } else {
     const a = await exigir("editar");
@@ -62,19 +43,9 @@ export async function POST(req: Request) {
   const refInformada = String(form?.get("dataReferencia") ?? "");
   const dataRef = dataValida(refInformada) ? refInformada : instanteBrasilia().iso;
 
-  let ajustes: z.infer<typeof ajustesSchema> = [];
-  const brutoAjustes = form?.get("ajustes");
-  if (typeof brutoAjustes === "string" && brutoAjustes.trim()) {
-    try {
-      ajustes = ajustesSchema.parse(JSON.parse(brutoAjustes));
-    } catch {
-      return NextResponse.json({ error: "O campo 'ajustes' não é um JSON válido" }, { status: 422 });
-    }
-  }
-
   let lido;
   try {
-    lido = aplicarAjustes(lerPlanilhaEfetivos(Buffer.from(await arquivo.arrayBuffer()), { anoReferencia: Number(dataRef.slice(0, 4)) }), ajustes);
+    lido = lerPlanilhaEfetivos(Buffer.from(await arquivo.arrayBuffer()), { anoReferencia: Number(dataRef.slice(0, 4)) });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Não consegui ler a planilha" }, { status: 422 });
   }
@@ -108,7 +79,6 @@ export async function POST(req: Request) {
     vagasAbertas: vagasNovas.filter((v) => !v.nome).length,
     veiculosNovos: veiculosNovos.length,
     apoioDeOutroContrato: vagasNovas.filter((v) => v.contratoAtual).length,
-    contratosParaConfirmar: equipesNovas.filter((e) => !e.contratoConfirmado).length,
     avisos: lido.avisos,
   };
   if (simular) return NextResponse.json({ simulacao: true, ...resumo });
@@ -119,30 +89,36 @@ export async function POST(req: Request) {
       const vagaMax = (await tx.efetivoVaga.aggregate({ _max: { numero: true } }))._max.numero ?? 0;
       const veiCodigos = proximoNumero((await tx.efetivoVeiculo.findMany({ select: { codigo: true } })).map((v) => v.codigo), "VEI", 3);
       let ordem = existentes.length;
-      const idPorCodigoImportado = new Map<string, { id: string; projeto: string; nome: string }>();
+      const equipePorCodigoImportado = new Map<string, { id: string; projeto: string; nome: string }>();
 
       let n = 0;
       for (const e of equipesNovas) {
         const criada = await tx.efetivoEquipe.create({
-          data: {
-            codigo: eqCodigos(++n),
-            nome: e.nome,
-            projeto: e.projeto,
-            contratoConfirmado: e.contratoConfirmado,
-            gestor: e.gestor,
-            grupo: e.grupo,
-            status: e.status,
-            ordem: ++ordem,
-          },
+          data: { codigo: eqCodigos(++n), nome: e.nome, projeto: e.projeto, gestor: e.gestor, grupo: e.grupo, status: e.status, ordem: ++ordem },
         });
-        idPorCodigoImportado.set(e.codigo, { id: criada.id, projeto: e.projeto, nome: e.nome });
+        equipePorCodigoImportado.set(e.codigo, { id: criada.id, projeto: e.projeto, nome: e.nome });
       }
+
+      // viaturas primeiro: cada pessoa aponta para a viatura em que vai
+      const veiculoPorRef = new Map<string, string>();
+      let k = 0;
+      for (const v of veiculosNovos) {
+        const eq = equipePorCodigoImportado.get(v.equipeCodigo)!;
+        const veiculo = await tx.efetivoVeiculo.create({
+          data: { codigo: veiCodigos(++k), identificacao: v.identificacao, status: "Em operação" },
+        });
+        veiculoPorRef.set(v.ref, veiculo.id);
+        await tx.efetivoVeiculoMovimento.create({
+          data: { veiculoId: veiculo.id, inicio: dataDe(dataRef), fim: null, projeto: eq.projeto, equipeId: eq.id, observacao: `Posição inicial segundo a planilha de ${dataRef}`, criadoPorNome: quem.nome },
+        });
+      }
+
       let numero = vagaMax;
       for (const v of vagasNovas) {
         const vaga = await tx.efetivoVaga.create({
           data: {
             numero: ++numero,
-            equipeId: idPorCodigoImportado.get(v.equipeCodigo)!.id,
+            equipeId: equipePorCodigoImportado.get(v.equipeCodigo)!.id,
             atividade: v.atividade,
             empresa: v.empresa || "—",
             cargo: v.cargo || "—",
@@ -153,27 +129,13 @@ export async function POST(req: Request) {
             contratoAtual: v.contratoAtual ?? null,
             disponivelAPartir: v.disponivelAPartir ? dataDe(v.disponivelAPartir) : null,
             destino: v.destino ?? null,
+            veiculoId: v.carroRef ? veiculoPorRef.get(v.carroRef) ?? null : null,
             observacao: v.observacao,
           },
         });
         if (v.ausencia) {
           await tx.efetivoAusencia.create({ data: { vagaId: vaga.id, tipo: v.ausencia.tipo, inicio: dataDe(v.ausencia.inicio), fim: dataDe(v.ausencia.fim) } });
         }
-      }
-      let k = 0;
-      for (const v of veiculosNovos) {
-        const eq = idPorCodigoImportado.get(v.equipeCodigo)!;
-        const veiculo = await tx.efetivoVeiculo.create({
-          data: {
-            codigo: veiCodigos(++k),
-            identificacao: v.identificacao,
-            status: "Em operação",
-            observacao: `Viatura "${v.identificacao}" da equipe ${eq.nome}, como na planilha de ${dataRef}. Placa e modelo ainda não constam: preencher.`,
-          },
-        });
-        await tx.efetivoVeiculoMovimento.create({
-          data: { veiculoId: veiculo.id, inicio: dataDe(dataRef), fim: null, projeto: eq.projeto, equipeId: eq.id, observacao: "Posição inicial segundo a planilha", criadoPorNome: quem.nome },
-        });
       }
     },
     { timeout: 90000, maxWait: 15000 }
