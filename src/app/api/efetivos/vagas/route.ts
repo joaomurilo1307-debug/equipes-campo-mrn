@@ -20,6 +20,12 @@ const schema = z.object({
   disponivelAPartir: dia.nullable().optional(),
   destino: z.string().trim().max(120).nullable().optional(),
   veiculoId: z.string().nullable().optional(),
+  contrato: z.string().trim().max(60).nullable().optional(),
+  equipeContrato: z.string().trim().max(120).nullable().optional(),
+  grupo: z.string().trim().max(40).nullable().optional(),
+  semNome: z.boolean().optional(),
+  // abrir várias vagas iguais de uma vez (só vale quando não há nome)
+  quantidade: z.number().int().min(1).max(50).default(1),
   observacao: z.string().trim().max(300).nullable().optional(),
 });
 
@@ -32,9 +38,12 @@ export async function POST(req: Request) {
   const equipe = await prisma.efetivoEquipe.findUnique({ where: { id: d.equipeId } });
   if (!equipe) return NextResponse.json({ error: "Equipe não encontrada" }, { status: 404 });
   const maior = await prisma.efetivoVaga.aggregate({ _max: { numero: true } });
-  const vaga = await prisma.efetivoVaga.create({
+  const copias = d.nome ? 1 : d.quantidade;
+  let vaga: Awaited<ReturnType<typeof prisma.efetivoVaga.create>> | null = null;
+  for (let i = 0; i < copias; i++) {
+    const criada = await prisma.efetivoVaga.create({
     data: {
-      numero: (maior._max.numero ?? 0) + 1,
+      numero: (maior._max.numero ?? 0) + 1 + i,
       equipeId: d.equipeId,
       atividade: d.atividade,
       empresa: d.empresa,
@@ -48,9 +57,15 @@ export async function POST(req: Request) {
       disponivelAPartir: d.disponivelAPartir ? dataDe(d.disponivelAPartir) : null,
       destino: d.destino || null,
       veiculoId: d.veiculoId || null,
+      contrato: d.contrato || null,
+      equipeContrato: d.equipeContrato || null,
+      grupo: d.grupo || null,
+      semNome: d.semNome ?? false,
       observacao: d.observacao || null,
     },
-  });
-  await registrar(a.userId, "VAGA_CRIADA", "VAGA", vaga.id, `Vaga de ${d.cargo} criada na equipe ${equipe.codigo} por ${a.nome}`);
-  return NextResponse.json({ vaga }, { status: 201 });
+    });
+    if (!vaga) vaga = criada;
+  }
+  await registrar(a.userId, "VAGA_CRIADA", "VAGA", vaga!.id, d.nome ? `${d.nome} (${d.cargo}) cadastrado(a) na equipe ${equipe.codigo} por ${a.nome}` : `${copias} vaga(s) de ${d.cargo} aberta(s) na equipe ${equipe.codigo} por ${a.nome}`);
+  return NextResponse.json({ vaga, criadas: copias }, { status: 201 });
 }

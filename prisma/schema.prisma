@@ -55,9 +55,13 @@ model EfetivoEquipe {
   observacao        String?
   status            String   @default("Ativa") // Ativa | Em formação | Inativa
   ordem             Int      @default(0)
+  inicio            DateTime? // periodo da equipe (opcional)
+  fim               DateTime?
+  campanhaId        String? // campanha a que a equipe esta associada (opcional)
   criadoEm          DateTime @default(now())
 
-  vagas EfetivoVaga[]
+  vagas    EfetivoVaga[]
+  campanha EfetivoCampanha? @relation(fields: [campanhaId], references: [id], onDelete: SetNull)
 
   @@index([grupo])
 }
@@ -79,6 +83,10 @@ model EfetivoVaga {
   disponivelAPartir DateTime? // ate esta data (exclusive) a pessoa segue ocupada em contratoAtual
   destino           String? // para onde esta previsto migrar depois
   veiculoId         String? // viatura em que a pessoa vai (coluna CARROS da planilha)
+  contrato          String? // contrato a que a pessoa pertence (planilha: PROJETO)
+  equipeContrato    String? // equipe no cadastro do contrato (planilha: EQUIPE / PROJETO), diferente da equipe de campo
+  grupo             String? // Fauna | Flora, da pessoa (vazio = o da equipe)
+  semNome           Boolean   @default(false) // posicao preenchida cujo nome nao foi informado (ex.: auxiliares Coopermoura/MRN)
   observacao        String?
   criadoEm          DateTime  @default(now())
 
@@ -127,6 +135,7 @@ model EfetivoCampanha {
   criadoEm      DateTime  @default(now())
 
   alocacoes EfetivoAlocacao[]
+  equipes   EfetivoEquipe[]
 
   @@index([inicio, fim])
   @@index([status])

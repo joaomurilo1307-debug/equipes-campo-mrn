@@ -51,6 +51,8 @@ export type VagaBase = {
   // livre a partir desta data; antes dela conta como ocupada, e o contrato aparece como motivo.
   contratoAtual?: string | null;
   disponivelAPartir?: Dia | null;
+  // posicao preenchida cujo nome nao foi informado (ex.: auxiliares Coopermoura/MRN): conta como gente da equipe, mas nao como vaga aberta
+  semNome?: boolean;
 };
 
 export type AusenciaBase = { id?: string; vagaId: string; tipo: string; inicio: Dia; fim: Dia };
@@ -104,7 +106,7 @@ export function temNome(v: Pick<VagaBase, "nome">): boolean {
 
 // ---------------------------------------------------------------- estado da pessoa
 
-export type SituacaoPessoa = "LIVRE" | "ALOCADA" | "AUSENTE" | "VAGA_ABERTA";
+export type SituacaoPessoa = "LIVRE" | "ALOCADA" | "AUSENTE" | "VAGA_ABERTA" | "SEM_NOME";
 
 export type EstadoVaga = {
   situacao: SituacaoPessoa;
@@ -137,6 +139,9 @@ export function indexar(dados: Pick<DadosEfetivos, "ausencias" | "alocacoes">, i
 
 /** Estado de uma vaga em um dia (ini=fim) ou ao longo de um periodo (qualquer dia do periodo conta). */
 export function estadoDaVaga(vaga: VagaBase, idx: Indice, ini: Dia, fim: Dia = ini): EstadoVaga {
+  if (!temNome(vaga) && vaga.semNome) {
+    return { situacao: "SEM_NOME", motivo: "Nome não informado", campanhaId: null, conflito: false };
+  }
   if (!temNome(vaga)) {
     return {
       situacao: "VAGA_ABERTA",
@@ -151,6 +156,11 @@ export function estadoDaVaga(vaga: VagaBase, idx: Indice, ini: Dia, fim: Dia = i
   }
   const aus = (idx.ausencias.get(vaga.id) ?? []).find((a) => intersecta(a.inicio, a.fim, ini, fim));
   if (aus) return { situacao: "AUSENTE", motivo: aus.tipo, campanhaId: aloc?.campanhaId ?? null, conflito: !!aloc };
+  // ocupada em outro contrato: ate a data de liberacao; sem data, continua ocupada ate alguem informar
+  if (vaga.contratoAtual && (!vaga.disponivelAPartir || ini < vaga.disponivelAPartir)) {
+    const ate = vaga.disponivelAPartir ? ` até ${somarDias(vaga.disponivelAPartir, -1)}` : "";
+    return { situacao: "ALOCADA", motivo: `Em ${vaga.contratoAtual}${ate}`, campanhaId: aloc?.campanhaId ?? null, conflito: false };
+  }
   if (vaga.disponivelAPartir && ini < vaga.disponivelAPartir) {
     return { situacao: "ALOCADA", motivo: `Em ${vaga.contratoAtual ?? "outro contrato"} até ${somarDias(vaga.disponivelAPartir, -1)}`, campanhaId: aloc?.campanhaId ?? null, conflito: false };
   }
@@ -174,7 +184,9 @@ export type Disponibilidade = "DISPONÍVEL" | "ALOCADA" | "INDISPONÍVEL";
 
 export type LinhaEquipe = EquipeBase & {
   vagasPrevistas: number;
-  nomesPreenchidos: number;
+  nomesPreenchidos: number; // posicoes com nome
+  semNome: number; // posicoes preenchidas sem nome informado
+  preenchidas: number; // com nome + sem nome: o que nao e vaga aberta
   ausentes: number;
   alocacoes: number; // pessoas da equipe alocadas no periodo
   livres: number; // pessoas da equipe livres no periodo
@@ -185,6 +197,7 @@ export type LinhaEquipe = EquipeBase & {
 
 export function avaliarEquipe(equipe: EquipeBase, vagas: VagaBase[], idx: Indice, ini: Dia, fim: Dia = ini): LinhaEquipe {
   let nomes = 0;
+  let semNome = 0;
   let ausentes = 0;
   let alocadas = 0;
   let livres = 0;
@@ -192,6 +205,7 @@ export function avaliarEquipe(equipe: EquipeBase, vagas: VagaBase[], idx: Indice
   for (const v of vagas) {
     const e = estadoDaVaga(v, idx, ini, fim);
     if (temNome(v)) nomes++;
+    else if (v.semNome) semNome++;
     if (e.situacao === "AUSENTE") ausentes++;
     if (e.situacao === "ALOCADA") alocadas++;
     if (e.situacao === "LIVRE") livres++;
@@ -199,13 +213,16 @@ export function avaliarEquipe(equipe: EquipeBase, vagas: VagaBase[], idx: Indice
   }
   const previstas = vagas.length;
   const ativa = equipe.status === "Ativa";
-  const situacaoRh: SituacaoRh = !ativa ? "EQUIPE NÃO ATIVA" : nomes < previstas ? "COM VAGAS" : ausentes > 0 ? "COM AUSÊNCIA" : "COMPLETA";
+  const preenchidas = nomes + semNome;
+  const situacaoRh: SituacaoRh = !ativa ? "EQUIPE NÃO ATIVA" : preenchidas < previstas ? "COM VAGAS" : ausentes > 0 ? "COM AUSÊNCIA" : "COMPLETA";
   const disponibilidade: Disponibilidade =
-    !ativa || nomes < previstas || ausentes > 0 ? "INDISPONÍVEL" : alocadas > 0 ? "ALOCADA" : "DISPONÍVEL";
+    !ativa || preenchidas < previstas || ausentes > 0 ? "INDISPONÍVEL" : alocadas > 0 ? "ALOCADA" : "DISPONÍVEL";
   return {
     ...equipe,
     vagasPrevistas: previstas,
     nomesPreenchidos: nomes,
+    semNome,
+    preenchidas,
     ausentes,
     alocacoes: alocadas,
     livres,
@@ -223,7 +240,7 @@ export type ResumoGrupo = {
   disponiveis: number;
   alocadas: number;
   indisponiveis: number;
-  pessoas: { vagas: number; preenchidas: number; livres: number; alocadas: number; ausentes: number; abertas: number };
+  pessoas: { vagas: number; preenchidas: number; semNome: number; livres: number; alocadas: number; ausentes: number; abertas: number };
 };
 
 export type Painel = {
@@ -252,7 +269,7 @@ export function ordenarGrupos(grupos: string[]): string[] {
 }
 
 function pessoasVazio(): ResumoGrupo["pessoas"] {
-  return { vagas: 0, preenchidas: 0, livres: 0, alocadas: 0, ausentes: 0, abertas: 0 };
+  return { vagas: 0, preenchidas: 0, semNome: 0, livres: 0, alocadas: 0, ausentes: 0, abertas: 0 };
 }
 
 export function montarPainel(dados: DadosEfetivos, ini: Dia, fim: Dia = ini): Painel {
@@ -292,6 +309,7 @@ export function montarPainel(dados: DadosEfetivos, ini: Dia, fim: Dia = ini): Pa
         if (e.situacao === "LIVRE") alvo.livres++;
         else if (e.situacao === "ALOCADA") alvo.alocadas++;
         else if (e.situacao === "AUSENTE") alvo.ausentes++;
+        else if (e.situacao === "SEM_NOME") alvo.semNome++;
         else alvo.abertas++;
       }
     }
@@ -305,6 +323,7 @@ export function montarPainel(dados: DadosEfetivos, ini: Dia, fim: Dia = ini): Pa
       if (s === "LIVRE") reserva.livres++;
       else if (s === "ALOCADA") reserva.alocadas++;
       else if (s === "AUSENTE") reserva.ausentes++;
+      else if (s === "SEM_NOME") reserva.semNome++;
       else reserva.abertas++;
     }
   }
@@ -406,7 +425,9 @@ export function bloqueiosNoPeriodo(vaga: VagaBase, idx: Indice, ini: Dia, fim: D
   for (const a of idx.ausencias.get(vaga.id) ?? []) {
     if (intersecta(a.inicio, a.fim, ini, fim)) out.push({ tipo: a.tipo, ...recorta(a.inicio, a.fim), origem: "ausencia" });
   }
-  if (vaga.disponivelAPartir && ini < vaga.disponivelAPartir) {
+  if (vaga.contratoAtual && !vaga.disponivelAPartir) {
+    out.push({ tipo: `Em ${vaga.contratoAtual}`, inicio: ini, fim, origem: "outro_contrato" });
+  } else if (vaga.disponivelAPartir && ini < vaga.disponivelAPartir) {
     out.push({ tipo: `Em ${vaga.contratoAtual ?? "outro contrato"}`, ...recorta(ini, somarDias(vaga.disponivelAPartir, -1)), origem: "outro_contrato" });
   }
   for (const a of idx.alocacoes.get(vaga.id) ?? []) {

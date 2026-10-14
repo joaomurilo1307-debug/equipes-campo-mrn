@@ -7,6 +7,7 @@
 
 import * as XLSX from "xlsx";
 import { dataValida, somarDias, type Dia } from "./disponibilidade";
+import { cruzarCadastroComDivisao, type PessoaCadastro, type PosicaoCadastro } from "./cruzarAbas";
 
 export type EquipeImportada = {
   codigo: string;
@@ -36,14 +37,22 @@ export type VagaImportada = {
   destino?: string | null;
   // viatura em que a pessoa vai (a coluna CARROS da planilha, mesclada por subgrupo)
   carroRef?: string | null;
+  // cadastro por contrato (primeira aba)
+  contrato?: string | null;
+  equipeContrato?: string | null;
+  grupo?: string | null;
+  // posicao preenchida, mas o nome nao foi informado (celula em branco; "Vago" e vaga aberta de verdade)
+  semNome?: boolean;
 };
+export type ContratoImportado = { codigo: string; gestor: string | null; cliente: string | null };
 // Viatura que a planilha cita para a equipe ("VL 01"); placa e contrato nao vem na planilha.
 export type VeiculoImportado = { ref: string; identificacao: string; equipeCodigo: string; ocupantes: number };
 export type ResultadoImportacao = {
-  formato: "painel" | "divisao" | "original";
+  formato: "painel" | "divisao" | "original" | "cruzado";
   equipes: EquipeImportada[];
   vagas: VagaImportada[];
   veiculos: VeiculoImportado[];
+  contratos: ContratoImportado[];
   avisos: string[];
 };
 export type OpcoesLeitura = { anoReferencia?: number };
@@ -225,12 +234,30 @@ export function lerPlanilhaEfetivos(dados: ArrayBuffer | Uint8Array | Buffer, op
       });
     }
     if (vagas.length === 0) throw new Error('A aba "Profissionais" não tem nenhuma vaga.');
-    return { formato: "painel", equipes: [...equipes.values()], vagas, veiculos: [], avisos };
+    return { formato: "painel", equipes: [...equipes.values()], vagas, veiculos: [], contratos: [], avisos };
   }
 
   // ---- formato C: "DIVISÃO DE EQUIPES" (semana 42): equipe na coluna ATIVIDADE, viaturas VL e direção 4x4
   const abaDivisao = wb.SheetNames.find((n) => normalizar(n) === "divisao de equipes");
-  if (abaDivisao) return lerDivisaoDeEquipes(wb, abaDivisao, opcoes);
+  if (abaDivisao) {
+    const divisao = lerDivisaoDeEquipes(wb, abaDivisao, opcoes);
+    // com a primeira aba (cadastro por contrato) visivel, as duas visoes se cruzam: cada pessoa uma vez so
+    const abaCadastro = wb.SheetNames.find((n) => n !== abaDivisao && abaVisivel(wb, n) && !!acharCabecalho(lerLinhas(wb.Sheets[n]), ["projeto", "grupo", "equipe / projeto"]));
+    if (!abaCadastro) return divisao;
+    const cadastro = lerCadastroPorContrato(wb.Sheets[abaCadastro]);
+    const x = cruzarCadastroComDivisao(divisao, cadastro.pessoas, cadastro.contratos, cadastro.semPessoa);
+    return {
+      formato: "cruzado",
+      equipes: x.equipes,
+      vagas: x.vagas,
+      veiculos: divisao.veiculos,
+      contratos: x.contratos.map((c) => ({ ...c, cliente: c.gestor ? "MRN" : null })),
+      avisos: [
+        ...divisao.avisos,
+        `Cadastro por contrato: ${cadastro.pessoas.length} pessoas com nome; ${x.resumo.ligadas} ligadas pelo nome às equipes de campo, ${x.resumo.encaixadas} encaixadas pela posição, ${x.resumo.extrasNaEquipe} a mais em equipes existentes e ${x.resumo.equipesDoCadastro} equipes que só existem no cadastro.`,
+      ],
+    };
+  }
 
   // ---- formato B: planilha original (primeira aba visivel com as colunas esperadas)
   const abaOriginal = wb.SheetNames.find((n) => abaVisivel(wb, n) && !!acharCabecalho(lerLinhas(wb.Sheets[n]), ["projeto", "grupo", "equipe / projeto"]));
@@ -303,9 +330,97 @@ export function lerPlanilhaEfetivos(dados: ArrayBuffer | Uint8Array | Buffer, op
     });
   }
   if (vagas.length === 0) throw new Error("A planilha não tem nenhuma vaga abaixo do cabeçalho.");
-  return { formato: "original", equipes, vagas, veiculos: [], avisos };
+  return { formato: "original", equipes, vagas, veiculos: [], contratos: [], avisos };
 }
 
+
+// ---------------------------------------------------------------- cadastro por contrato (primeira aba)
+
+const ATIVIDADE_DO_CADASTRO: Record<string, string> = { resgate: "Resgate", afugentamento: "Afugentamento", na: "Apoio" };
+
+/** Primeira aba: contrato, gestor, grupo, equipe do contrato, atividade, empresa, função, profissional e status. So le quem tem nome. */
+export function lerCadastroPorContrato(ws: XLSX.WorkSheet): { pessoas: PessoaCadastro[]; semPessoa: PosicaoCadastro[]; contratos: ContratoImportado[] } {
+  const linhas = lerLinhas(ws);
+  const ch = acharCabecalho(linhas, ["projeto", "grupo", "equipe / projeto"]);
+  if (!ch) throw new Error("A primeira aba não tem as colunas PROJETO, GRUPO e EQUIPE / PROJETO.");
+  const c = ch.cab;
+  const iProj = col(c, "projeto");
+  const iGestor = col(c, "gestor mrn");
+  const iGrupo = col(c, "grupo");
+  const iEquipe = col(c, "equipe / projeto");
+  const iAtiv = col(c, "resgate / afugentamento");
+  const iEmp = col(c, "empresa");
+  const iCargo = col(c, "carg / funcao", "cargo / funcao");
+  const iProfis = col(c, "profissionais", "profissional");
+  const iStatus = col(c, "status");
+  const pessoas: PessoaCadastro[] = [];
+  const semPessoa: PosicaoCadastro[] = [];
+  let ordem = 0;
+  const contratos = new Map<string, ContratoImportado>();
+  let projetoAnterior = "";
+  let equipeAtual = "";
+  for (const r of linhas.slice(ch.indice + 1)) {
+    const projeto = texto(r[iProj]);
+    const cargo = texto(r[iCargo]);
+    if (!projeto && !cargo) continue;
+    if (projeto) {
+      const ja = contratos.get(projeto) ?? { codigo: projeto, gestor: null, cliente: null };
+      if (!ja.gestor) ja.gestor = textoOuNulo(r[iGestor]);
+      contratos.set(projeto, ja);
+    }
+    // o nome da equipe so vem na 1a linha de cada bloco; as linhas seguintes herdam
+    if (projeto !== projetoAnterior) {
+      projetoAnterior = projeto;
+      equipeAtual = "";
+    }
+    const nomeEquipe = texto(r[iEquipe]);
+    if (nomeEquipe !== "") equipeAtual = nomeEquipe;
+    const bruto = texto(r[iProfis]);
+    const n = normalizar(bruto);
+    ordem++;
+    if (n === "" || n === "em contratacao" || n === "vago" || n === "vaga") {
+      // posicao sem pessoa: em contratacao = vaga aberta; em branco com status Vigente = preenchida sem nome informado
+      const contratando = n === "em contratacao" || normalizar(r[iStatus]) === "em contratacao" || n === "vago" || n === "vaga";
+      semPessoa.push({
+        contrato: projeto,
+        gestor: textoOuNulo(r[iGestor]),
+        grupo: textoOuNulo(r[iGrupo]),
+        equipeContrato: equipeAtual || null,
+        atividade: ATIVIDADE_DO_CADASTRO[normalizar(r[iAtiv])] ?? (texto(r[iAtiv]) || "Resgate"),
+        empresa: texto(r[iEmp]) || "—",
+        cargo: cargo || "—",
+        status: contratando ? "Em contratação" : interpretarStatus(r[iStatus], null, null).status,
+        tipo: contratando ? "contratacao" : "branco",
+        ordem,
+      });
+      continue;
+    }
+    // "Marcelo (Férias)": o parentese e status, nao parte do nome
+    const paren = /\(([^)]*)\)/.exec(bruto);
+    const nome = bruto.replace(/\([^)]*\)/g, "").replace(/\s+/g, " ").trim();
+    let st = interpretarStatus(r[iStatus], null, null);
+    if (paren) {
+      const dopar = interpretarStatus(paren[1], null, null);
+      if (dopar.status !== "Vigente") st = { ...dopar, observacao: dopar.observacao ?? paren[1] };
+    }
+    const grupo = textoOuNulo(r[iGrupo]);
+    const atividade = ATIVIDADE_DO_CADASTRO[normalizar(r[iAtiv])] ?? (texto(r[iAtiv]) || "Resgate");
+    pessoas.push({
+      nome,
+      contrato: projeto,
+      gestor: textoOuNulo(r[iGestor]),
+      grupo,
+      equipeContrato: equipeAtual || null,
+      atividade,
+      empresa: texto(r[iEmp]) || "—",
+      cargo: cargo || "—",
+      status: st.status,
+      observacao: st.observacao,
+      ordem,
+    });
+  }
+  return { pessoas, semPessoa, contratos: [...contratos.values()] };
+}
 
 // ---------------------------------------------------------------- formato "DIVISÃO DE EQUIPES"
 
@@ -313,9 +428,12 @@ const PROJETO_A_DEFINIR = "A definir";
 /** Codigo da reserva de pessoas vindas de outro contrato; nao e uma equipe de campo. */
 export const CODIGO_RESERVA = "APOIO";
 
-function ehVago(v: unknown): boolean {
+/** Na aba da divisao, "Vago" e vaga aberta; celula em BRANCO e posicao preenchida cujo nome nao foi informado (auxiliares Coopermoura/MRN). */
+function situacaoDoNome(v: unknown): { nome: string | null; semNome: boolean } {
   const n = normalizar(v);
-  return n === "" || n === "vago" || n === "vaga";
+  if (n === "vago" || n === "vaga") return { nome: null, semNome: false };
+  if (n === "") return { nome: null, semNome: true };
+  return { nome: texto(v), semNome: false };
 }
 
 /** "Acaba LT 10/10" -> data do ultimo dia (dd/mm do ano de referencia). */
@@ -374,7 +492,7 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
       carroAtual = { ref: `${atual.codigo}#${veiculos.length + 1}`, identificacao: placa, equipeCodigo: atual.codigo, ocupantes: 0 };
       veiculos.push(carroAtual);
     }
-    const nome = ehVago(r[iNome]) ? null : texto(r[iNome]);
+    const { nome, semNome } = situacaoDoNome(r[iNome]);
     const st = interpretarStatus(r[iStatus], null, null);
     if (st.aviso) avisos.push(`${atual.nome} (${cargo}): ${st.aviso}`);
     const dir = normalizar(r[i4x4]);
@@ -393,6 +511,7 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
       nivel: textoOuNulo(r[iNivel]),
       direcao4x4: dir === "sim" ? true : dir === "nao" ? false : null,
       carroRef: carroAtual?.ref ?? null,
+      semNome,
     });
   }
   if (vagas.length === 0) throw new Error('A aba "DIVISÃO DE EQUIPES" não tem nenhuma vaga.');
@@ -418,7 +537,7 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
         const prof = textoOuNulo(r[k.get("profissional")!]);
         if (!contrato || !prof) continue;
         if (!reserva) {
-          reserva = { codigo: CODIGO_RESERVA, projeto: PROJETO_A_DEFINIR, contratoConfirmado: true, gestor: null, grupo: "Apoio", nome: "RESERVA DE APOIO (A MOBILIZAR)", status: "Ativa" };
+          reserva = { codigo: CODIGO_RESERVA, projeto: PROJETO_A_DEFINIR, contratoConfirmado: true, gestor: null, grupo: "Apoio", nome: "FORA DAS EQUIPES DE CAMPO", status: "Ativa" };
           equipes.push(reserva);
         }
         const eq = reserva;
@@ -452,5 +571,5 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
       }
     }
   }
-  return { formato: "divisao", equipes, vagas, veiculos, avisos };
+  return { formato: "divisao", equipes, vagas, veiculos, contratos: [], avisos };
 }

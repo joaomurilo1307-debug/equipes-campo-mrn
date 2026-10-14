@@ -8,7 +8,7 @@
     "start": "next start -p 3000",
     "postinstall": "prisma generate",
     "seed": "tsx prisma/seed.ts",
-    "test": "tsx --test tests/efetivos-disponibilidade.test.ts tests/efetivos-importacao.test.ts tests/efetivos-veiculos.test.ts"
+    "test": "tsx --test tests/efetivos-disponibilidade.test.ts tests/efetivos-importacao.test.ts tests/efetivos-veiculos.test.ts tests/efetivos-cruzamento.test.ts tests/efetivos-vagas.test.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",

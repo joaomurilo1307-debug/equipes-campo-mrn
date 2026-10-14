@@ -34,7 +34,8 @@ export default function Contratos() {
     return ehSem ? !loc || loc.projeto === A_DEFINIR : loc?.projeto === atualCodigo;
   });
   const pessoas = equipes.reduce((s, e) => s + (vagasPorEquipe.get(e.id) ?? []).filter(temNome).length, 0);
-  const vagasTotal = equipes.reduce((s, e) => s + (vagasPorEquipe.get(e.id) ?? []).length, 0);
+  const semNome = equipes.reduce((s, e) => s + (vagasPorEquipe.get(e.id) ?? []).filter((v) => !temNome(v) && v.semNome).length, 0);
+  const vagasAbertas = equipes.reduce((s, e) => s + (vagasPorEquipe.get(e.id) ?? []).filter((v) => !temNome(v) && !v.semNome).length, 0);
 
   async function salvarCampo(campo: string, valor: string): Promise<string | null> {
     setErro(null);
@@ -131,7 +132,9 @@ export default function Contratos() {
                 )}
                 <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t border-line pt-3 text-[12px] text-gray-600">
                   <span><strong className="num text-ink">{equipes.length}</strong> equipe{equipes.length === 1 ? "" : "s"}</span>
-                  <span><strong className="num text-ink">{pessoas}</strong> de {vagasTotal} vagas preenchidas</span>
+                  <span><strong className="num text-ink">{pessoas}</strong> com nome</span>
+                  {semNome > 0 && <span><strong className="num text-ink">{semNome}</strong> sem nome informado</span>}
+                  <span><strong className="num" style={{ color: vagasAbertas > 0 ? "#B86E00" : undefined }}>{vagasAbertas}</strong> vagas abertas</span>
                   <span><strong className="num text-ink">{viaturasHoje.length}</strong> viatura{viaturasHoje.length === 1 ? "" : "s"} hoje</span>
                   <span><strong className="num text-ink">{campanhas.length}</strong> campanha{campanhas.length === 1 ? "" : "s"}</span>
                 </div>

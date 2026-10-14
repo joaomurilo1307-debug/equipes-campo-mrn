@@ -256,7 +256,7 @@ export default function Ferias() {
           </div>
 
           <div className="card overflow-hidden">
-            <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 330px)", minHeight: 320 }}>
+            <div className="overflow-auto" style={{ maxHeight: "calc(133.333vh - 400px)", minHeight: 320 }}>
               <div className="relative" style={{ minWidth: ESQ + largura }}>
                 <CabecalhoTempo
                   inicio={inicio}

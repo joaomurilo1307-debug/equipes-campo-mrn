@@ -8,8 +8,10 @@
 
 html {
   -webkit-font-smoothing: antialiased;
-  /* escala geral menor: telas de operacao, muita informacao, pouco espaco para fonte grande */
+  /* escala geral menor: telas de operacao, muita informacao, pouco espaco para fonte grande.
+     zoom 0.75 = como a pagina vista com o navegador em 75%, em tudo (texto, espacos, graficos) */
   font-size: 14px;
+  zoom: 0.75;
 }
 
 body {
@@ -93,6 +95,12 @@ h3 {
   }
   .tbl th {
     @apply px-3 py-2.5 text-left;
+  }
+  .tbl th.text-right {
+    text-align: right;
+  }
+  .tbl th.text-center {
+    text-align: center;
   }
   .tbl td {
     @apply px-3 py-2.5;

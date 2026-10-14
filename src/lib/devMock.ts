@@ -12,7 +12,7 @@ let cache: any = null;
 export function dadosMock(): any {
   if (cache) return cache;
   const lido = lerPlanilhaEfetivos(readFileSync(process.env.DEV_MOCK_XLSX!), { anoReferencia: 2026 });
-  const equipes = lido.equipes.map((e) => ({ id: e.codigo, codigo: e.codigo, nome: e.nome, projeto: e.projeto, contratoConfirmado: true, gestor: e.gestor, grupo: e.grupo, local: null as string | null, observacao: null as string | null, status: e.status }));
+  const equipes = lido.equipes.map((e) => ({ id: e.codigo, codigo: e.codigo, nome: e.nome, projeto: e.projeto, contratoConfirmado: true, gestor: e.gestor, grupo: e.grupo, local: null as string | null, observacao: null as string | null, status: e.status, inicio: null as string | null, fim: null as string | null, campanhaId: null as string | null }));
   const veiculos = lido.veiculos.map((v, i) => ({
     id: v.ref,
     codigo: `VEI-${String(i + 1).padStart(3, "0")}`,
@@ -39,6 +39,10 @@ export function dadosMock(): any {
     disponivelAPartir: v.disponivelAPartir ?? null,
     destino: v.destino ?? null,
     veiculoId: v.carroRef ?? null,
+    contrato: v.contrato ?? null,
+    equipeContrato: v.equipeContrato ?? null,
+    grupo: v.grupo ?? null,
+    semNome: !!v.semNome && !v.nome,
     observacao: v.observacao,
   }));
   const hoje = "2026-10-13";
@@ -62,7 +66,7 @@ export function dadosMock(): any {
     const eq = equipes.find((e) => e.codigo === v.equipeCodigo)!;
     return { id: `m${i + 1}`, veiculoId: v.ref, inicio: "2026-10-07", fim: null as string | null, projeto: eq.projeto, equipeId: eq.id, campanhaId: null as string | null, local: null as string | null, observacao: "Posição inicial segundo a planilha" };
   });
-  const contratos: { id: string; codigo: string; nome: string | null; cliente: string | null; gestor: string | null; local: string | null; observacao: string | null; ativo: boolean }[] = [];
+  const contratos = lido.contratos.map((c, i) => ({ id: `ct${i + 1}`, codigo: c.codigo, nome: null as string | null, cliente: c.cliente, gestor: c.gestor, local: null as string | null, observacao: null as string | null, ativo: true }));
   if (veiculos[1]) {
     veiculos[1].placa = "RTX-4B21";
     veiculos[1].modelo = "Hilux 4x4";

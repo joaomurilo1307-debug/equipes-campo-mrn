@@ -1,7 +1,20 @@
 // Tipos, formatadores, cores e chamadas de API compartilhados pelas telas.
 import { GRUPO_RESERVA, diferencaDias, somarDias, type Dia, type LinhaEquipe } from "@/lib/efetivos/disponibilidade";
 
-export type Equipe = { id: string; codigo: string; nome: string; projeto: string; gestor: string | null; grupo: string; local: string | null; observacao: string | null; status: string };
+export type Equipe = {
+  id: string;
+  codigo: string;
+  nome: string;
+  projeto: string;
+  gestor: string | null;
+  grupo: string;
+  local: string | null;
+  observacao: string | null;
+  status: string;
+  inicio: Dia | null;
+  fim: Dia | null;
+  campanhaId: string | null;
+};
 export type Contrato = { id: string; codigo: string; nome: string | null; cliente: string | null; gestor: string | null; local: string | null; observacao: string | null; ativo: boolean };
 export type Vaga = {
   id: string;
@@ -19,6 +32,10 @@ export type Vaga = {
   disponivelAPartir: Dia | null;
   destino: string | null;
   veiculoId: string | null;
+  contrato: string | null;
+  equipeContrato: string | null;
+  grupo: string | null;
+  semNome: boolean;
   observacao: string | null;
 };
 export type Ausencia = { id: string; vagaId: string; tipo: string; inicio: Dia; fim: Dia; observacao: string | null };

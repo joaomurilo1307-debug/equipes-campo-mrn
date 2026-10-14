@@ -4,6 +4,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { alocacoesQueSeguram, type Dia } from "./disponibilidade";
 import { dadosMock, modoMock } from "@/lib/devMock";
@@ -84,6 +85,9 @@ async function carregarDadosReal(editor: boolean) {
       local: e.local,
       observacao: e.observacao,
       status: e.status,
+      inicio: diaDe(e.inicio),
+      fim: diaDe(e.fim),
+      campanhaId: e.campanhaId,
     })),
     vagas: vagas.map((v) => ({
       id: v.id,
@@ -101,6 +105,10 @@ async function carregarDadosReal(editor: boolean) {
       disponivelAPartir: diaDe(v.disponivelAPartir),
       destino: v.destino,
       veiculoId: v.veiculoId,
+      contrato: v.contrato,
+      equipeContrato: v.equipeContrato,
+      grupo: v.grupo,
+      semNome: v.semNome,
       observacao: editor ? v.observacao : null,
     })),
     ausencias: ausencias.map((a) => ({
@@ -171,4 +179,17 @@ export async function dadosParaRegra() {
       alocacoes: alocacoesQueSeguram(d.alocacoes, d.campanhas),
     },
   };
+}
+
+/** A "reserva": equipe especial (código APOIO) onde ficam as pessoas que não estão em nenhuma equipe de campo. Criada na hora se não existir. */
+export async function obterReserva(tx: Prisma.TransactionClient) {
+  const existente = await tx.efetivoEquipe.findUnique({ where: { codigo: "APOIO" } });
+  if (existente) return existente;
+  const total = await tx.efetivoEquipe.count();
+  return tx.efetivoEquipe.create({ data: { codigo: "APOIO", nome: "FORA DAS EQUIPES DE CAMPO", projeto: "A definir", grupo: "Apoio", status: "Ativa", ordem: total + 1 } });
+}
+
+export async function proximoNumeroDeVaga(tx: Prisma.TransactionClient): Promise<number> {
+  const m = await tx.efetivoVaga.aggregate({ _max: { numero: true } });
+  return (m._max.numero ?? 0) + 1;
 }

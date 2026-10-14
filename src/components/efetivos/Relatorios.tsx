@@ -96,21 +96,22 @@ export default function Relatorios() {
   // ---------------------------------------------------------------- efetivo e vacâncias (na data inicial)
   const efetivo = useMemo(() => {
     const painel = montarPainel(regra, inicio);
-    const porEquipe = painel.equipes.map((l) => ({ nome: l.nome, codigo: l.codigo, vagas: l.vagasPrevistas, preenchidas: l.nomesPreenchidos }));
-    const porFuncao = new Map<string, { vagas: number; preenchidas: number; porEmpresa: Map<string, number> }>();
+    const porEquipe = painel.equipes.map((l) => ({ nome: l.nome, codigo: l.codigo, vagas: l.vagasPrevistas, preenchidas: l.nomesPreenchidos, semNome: l.semNome }));
+    const porFuncao = new Map<string, { vagas: number; preenchidas: number; semNome: number; porEmpresa: Map<string, number> }>();
     const empresasPessoas = new Map<string, number>();
     for (const v of dados.vagas) {
       if (!campo(v.equipeId)) continue;
-      const x = porFuncao.get(v.cargo) ?? { vagas: 0, preenchidas: 0, porEmpresa: new Map() };
+      const x = porFuncao.get(v.cargo) ?? { vagas: 0, preenchidas: 0, semNome: 0, porEmpresa: new Map() };
       x.vagas++;
       if (temNome(v)) {
         x.preenchidas++;
         empresasPessoas.set(v.empresa, (empresasPessoas.get(v.empresa) ?? 0) + 1);
-      } else x.porEmpresa.set(v.empresa, (x.porEmpresa.get(v.empresa) ?? 0) + 1);
+      } else if (v.semNome) x.semNome++;
+      else x.porEmpresa.set(v.empresa, (x.porEmpresa.get(v.empresa) ?? 0) + 1);
       porFuncao.set(v.cargo, x);
     }
     const empresasAbertas = Array.from(new Set([...porFuncao.values()].flatMap((x) => [...x.porEmpresa.keys()]))).sort();
-    const funcoes = [...porFuncao.entries()].map(([cargo, x]) => ({ cargo, ...x, abertas: x.vagas - x.preenchidas })).sort((a, b) => b.abertas - a.abertas || b.vagas - a.vagas || a.cargo.localeCompare(b.cargo, "pt-BR"));
+    const funcoes = [...porFuncao.entries()].map(([cargo, x]) => ({ cargo, ...x, abertas: x.vagas - x.preenchidas - x.semNome })).sort((a, b) => b.abertas - a.abertas || b.vagas - a.vagas || a.cargo.localeCompare(b.cargo, "pt-BR"));
 
     // falta para atender as campanhas em aberto no período, por função
     const faltas = new Map<string, { pedido: number; escalados: number; livres: number; semGente: number }>();
@@ -216,8 +217,8 @@ export default function Relatorios() {
   const tabelas: Tabela[] = useMemo(() => {
     if (qual === "efetivo")
       return [
-        { nome: "Por equipe", cabecalho: ["Equipe", "Código", "Vagas", "Com profissional", "Vagas abertas", "% preenchido"], linhas: efetivo.porEquipe.map((e) => [e.nome, e.codigo, e.vagas, e.preenchidas, e.vagas - e.preenchidas, e.vagas ? Math.round((e.preenchidas / e.vagas) * 100) : 0]) },
-        { nome: "Por função", cabecalho: ["Função", "Vagas", "Com profissional", "Vagas abertas"], linhas: efetivo.funcoes.map((f) => [f.cargo, f.vagas, f.preenchidas, f.abertas]) },
+        { nome: "Por equipe", cabecalho: ["Equipe", "Código", "Posições", "Com profissional", "Sem nome informado", "Vagas abertas", "% preenchido"], linhas: efetivo.porEquipe.map((e) => [e.nome, e.codigo, e.vagas, e.preenchidas, e.semNome, e.vagas - e.preenchidas - e.semNome, e.vagas ? Math.round(((e.preenchidas + e.semNome) / e.vagas) * 100) : 0]) },
+        { nome: "Por função", cabecalho: ["Função", "Posições", "Com profissional", "Sem nome informado", "Vagas abertas"], linhas: efetivo.funcoes.map((f) => [f.cargo, f.vagas, f.preenchidas, f.semNome, f.abertas]) },
         { nome: "Falta p campanhas", cabecalho: ["Função", "Pedido", "Na equipe", "Livres", "Sem ninguém livre"], linhas: efetivo.faltas.map((f) => [f.cargo, f.pedido, f.escalados, f.livres, f.semGente]) },
       ];
     if (qual === "disponibilidade" && disp)
@@ -317,13 +318,14 @@ export default function Relatorios() {
           <div className="grid items-start gap-5 xl:grid-cols-2">
             <Secao titulo="Vagas por equipe" sub="Com profissional e abertas, em cada uma das equipes.">
               <BarrasHorizontais
-                itens={efetivo.porEquipe.map((e) => ({ rotulo: e.nome, partes: [e.preenchidas, e.vagas - e.preenchidas], sub: `${e.vagas} vagas` }))}
+                itens={efetivo.porEquipe.map((e) => ({ rotulo: e.nome, partes: [e.preenchidas, e.semNome, e.vagas - e.preenchidas - e.semNome], sub: `${e.vagas} posições` }))}
                 series={[
                   { nome: "Com profissional", cor: COR.livre },
+                  { nome: "Sem nome informado", cor: "#9CC9BB" },
                   { nome: "Vaga aberta", cor: "#F2D48B", listrada: true },
                 ]}
               />
-              <Legenda className="mt-3" series={[{ nome: "Com profissional", cor: COR.livre }, { nome: "Vaga aberta", cor: "#F2D48B", listrada: true }]} />
+              <Legenda className="mt-3" series={[{ nome: "Com profissional", cor: COR.livre }, { nome: "Sem nome informado", cor: "#9CC9BB" }, { nome: "Vaga aberta", cor: "#F2D48B", listrada: true }]} />
             </Secao>
             <div className="space-y-5">
               <Secao titulo="Vagas abertas por função" sub="Onde falta profissional, por empresa.">

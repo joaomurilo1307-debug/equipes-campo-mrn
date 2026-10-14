@@ -21,6 +21,10 @@ const schema = z
     disponivelAPartir: dia.nullable(),
     destino: z.string().trim().max(120).nullable(),
     veiculoId: z.string().nullable(),
+    contrato: z.string().trim().max(60).nullable(),
+    equipeContrato: z.string().trim().max(120).nullable(),
+    grupo: z.string().trim().max(40).nullable(),
+    semNome: z.boolean(),
     observacao: z.string().trim().max(300).nullable(),
   })
   .partial();
@@ -39,7 +43,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     const nova = await prisma.efetivoEquipe.findUnique({ where: { id: parsed.data.equipeId } });
     if (!nova) return NextResponse.json({ error: "Equipe de destino não encontrada" }, { status: 404 });
   }
-  const { previsaoInicio, disponivelAPartir, nome, observacao, nivel, contratoAtual, destino, veiculoId, ...resto } = parsed.data;
+  const { previsaoInicio, disponivelAPartir, nome, observacao, nivel, contratoAtual, destino, veiculoId, contrato, equipeContrato, grupo, ...resto } = parsed.data;
   if (veiculoId && !(await prisma.efetivoVeiculo.findUnique({ where: { id: veiculoId } }))) return NextResponse.json({ error: "Veículo não encontrado" }, { status: 404 });
   const vaga = await prisma.efetivoVaga.update({
     where: { id: params.id },
@@ -51,6 +55,9 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       ...(contratoAtual !== undefined ? { contratoAtual: contratoAtual || null } : {}),
       ...(destino !== undefined ? { destino: destino || null } : {}),
       ...(veiculoId !== undefined ? { veiculoId: veiculoId || null } : {}),
+      ...(contrato !== undefined ? { contrato: contrato || null } : {}),
+      ...(equipeContrato !== undefined ? { equipeContrato: equipeContrato || null } : {}),
+      ...(grupo !== undefined ? { grupo: grupo || null } : {}),
       ...(previsaoInicio !== undefined ? { previsaoInicio: previsaoInicio ? dataDe(previsaoInicio) : null } : {}),
       ...(disponivelAPartir !== undefined ? { disponivelAPartir: disponivelAPartir ? dataDe(disponivelAPartir) : null } : {}),
     },
@@ -65,6 +72,8 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   if (disponivelAPartir !== undefined && diaDe(antes.disponivelAPartir) !== diaDe(vaga.disponivelAPartir)) partes.push(`livre a partir de ${diaDe(antes.disponivelAPartir) ?? "—"} → ${diaDe(vaga.disponivelAPartir) ?? "—"}`);
   if (destino !== undefined && (antes.destino ?? "") !== (vaga.destino ?? "")) partes.push(`destino previsto "${vaga.destino ?? ""}"`);
   if (parsed.data.direcao4x4 !== undefined && antes.direcao4x4 !== vaga.direcao4x4) partes.push("habilitação 4x4 alterada");
+  if (contrato !== undefined && (antes.contrato ?? "") !== (vaga.contrato ?? "")) partes.push(`contrato "${antes.contrato ?? ""}" → "${vaga.contrato ?? ""}"`);
+  if (equipeContrato !== undefined && (antes.equipeContrato ?? "") !== (vaga.equipeContrato ?? "")) partes.push(`equipe no contrato "${vaga.equipeContrato ?? ""}"`);
   if (partes.length) await registrar(a.userId, "VAGA_ALTERADA", "VAGA", vaga.id, `Vaga ${vaga.numero ?? ""} (${vaga.cargo}, ${vaga.equipe.codigo}): ${partes.join("; ")}`);
   // troca de profissional na vaga: as reservas ja feitas continuam na VAGA, entao avisa quantas existem
   let alocacoesFuturas = 0;

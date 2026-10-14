@@ -5,9 +5,10 @@ import { interpretarStatus, lerPlanilhaEfetivos, paraDia } from "../src/lib/efet
 
 // Planilhas montadas em memoria (sem arquivo do usuario): rodam com `tsx --test`.
 
-function xlsx(abas: Record<string, unknown[][]>): Buffer {
+function xlsx(abas: Record<string, unknown[][]>, ocultas: string[] = []): Buffer {
   const wb = XLSX.utils.book_new();
   for (const [nome, linhas] of Object.entries(abas)) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(linhas), nome);
+  if (ocultas.length) wb.Workbook = { Sheets: Object.keys(abas).map((name) => ({ name, Hidden: ocultas.includes(name) ? 1 : 0 })) };
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
 
@@ -127,13 +128,13 @@ test("Formato DIVISAO DE EQUIPES (semana 42): equipe e viatura mescladas, 4x4, v
       ["4362 LT", "CONSULTOR AMBIENTAL", "EVA TESTE", "Sim", "Sim", "Treinamento dia 29/09", "FELINOS", "Acaba LT 10/10"],
       ["4362 LT", "CONSULTOR AMBIENTAL", "FABIO TESTE", "Sim", "Não", "", "PMBA", "indefinido"],
     ],
-  });
+  }, ["AFUG ANTIGA (oculta)"]);
   const r = lerPlanilhaEfetivos(buf, { anoReferencia: 2026 });
   assert.equal(r.formato, "divisao"); // ignora a aba antiga mesmo vindo primeiro no arquivo
   assert.deepEqual(r.equipes.map((e) => [e.codigo, e.nome, e.projeto, e.grupo]), [
     ["EQ-01", "FLANCO NORTE - EQUIPE 01", "A definir", "Fauna"],
     ["EQ-02", "LAVRA - EQUIPE 01", "A definir", "Flora"], // cargo de flora -> grupo Flora
-    ["APOIO", "RESERVA DE APOIO (A MOBILIZAR)", "A definir", "Apoio"],
+    ["APOIO", "FORA DAS EQUIPES DE CAMPO", "A definir", "Apoio"],
   ]);
   const doNorte = r.vagas.filter((v) => v.equipeCodigo === "EQ-01");
   assert.equal(doNorte.length, 4);

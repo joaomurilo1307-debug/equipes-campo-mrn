@@ -1,10 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { STATUS_EQUIPE, STATUS_VAGA, estadoDaVaga, ordenarGrupos, temNome } from "@/lib/efetivos/disponibilidade";
 import { localizacaoNoDia } from "@/lib/efetivos/veiculos";
 import { useDados } from "./DadosContext";
-import { A_DEFINIR, CHIP_VEICULO, SEM_CONTRATO, chamar, ehReserva, contratosConhecidos, corDoContrato, fmtDia, rotuloContrato, type Equipe, type Vaga, type Veiculo } from "./comum";
+import { A_DEFINIR, CHIP_VEICULO, SEM_CONTRATO, chamar, ehReserva, nomeDaEquipeDaCampanha, contratosConhecidos, corDoContrato, fmtDia, rotuloContrato, type Equipe, type Vaga, type Veiculo } from "./comum";
 import { IcBusca, IcCalendario, IcLapis, IcMais } from "./icones";
 import { CampoInline } from "./inline";
 import ImportarPlanilha from "./ImportarPlanilha";
@@ -12,11 +13,12 @@ import ModalAusencias from "./modais/ModalAusencias";
 import ModalEquipe from "./modais/ModalEquipe";
 import ModalOcupantes from "./modais/ModalOcupantes";
 import ModalVaga from "./modais/ModalVaga";
+import { ModalAbrirVaga, ModalDesmobilizar, ModalPuxar } from "./modais/ModaisVagas";
 import { ModalHistoricoVeiculo, ModalMover, ModalVeiculo } from "./modais/ModaisVeiculo";
 import { Aviso, CabecalhoPagina, Modal, PontoContrato, Vazio } from "./ui";
 
-const CHIP_SITUACAO: Record<string, string> = { LIVRE: "chip-ok", ALOCADA: "chip-info", AUSENTE: "chip-bad", VAGA_ABERTA: "chip-warn" };
-const ROTULO_SITUACAO: Record<string, string> = { LIVRE: "Livre", ALOCADA: "Escalada", AUSENTE: "Ausente", VAGA_ABERTA: "Aberta" };
+const CHIP_SITUACAO: Record<string, string> = { LIVRE: "chip-ok", ALOCADA: "chip-info", AUSENTE: "chip-bad", VAGA_ABERTA: "chip-warn", SEM_NOME: "chip-mute" };
+const ROTULO_SITUACAO: Record<string, string> = { LIVRE: "Livre", ALOCADA: "Escalada", AUSENTE: "Ausente", VAGA_ABERTA: "Aberta", SEM_NOME: "Sem nome" };
 
 export default function EquipesPessoas() {
   const { dados, vagasPorEquipe, equipesCampo } = useDados();
@@ -24,7 +26,6 @@ export default function EquipesPessoas() {
   const [sel, setSel] = useState<string | null>(null);
   const [filtroGrupo, setFiltroGrupo] = useState("");
   const [busca, setBusca] = useState("");
-  const [nova, setNova] = useState(false);
   const [importar, setImportar] = useState(false);
 
   // abre na equipe pedida (?equipe=ID) ou na primeira
@@ -64,9 +65,9 @@ export default function EquipesPessoas() {
               <button onClick={() => setImportar(true)} className="btn-ghost">
                 Importar planilha
               </button>
-              <button onClick={() => setNova(true)} className="btn-primary">
+              <Link href="/equipes/nova" className="btn-primary">
                 <IcMais tam={16} /> Nova equipe
-              </button>
+              </Link>
             </>
           )
         }
@@ -90,7 +91,7 @@ export default function EquipesPessoas() {
                 ))}
               </select>
             </div>
-            <div className="max-h-[calc(100vh-230px)] space-y-3 overflow-y-auto pr-0.5">
+            <div className="max-h-[calc(133.333vh-300px)] space-y-3 overflow-y-auto pr-0.5">
               {porContrato.map(([projeto, equipes]) => (
                 <div key={projeto}>
                   <div className="mb-1 flex items-center gap-1.5 px-1 text-[10.5px] font-semibold uppercase tracking-wider text-gray-500">
@@ -154,15 +155,6 @@ export default function EquipesPessoas() {
         </div>
       </div>
 
-      {nova && (
-        <ModalEquipe
-          onFechar={() => setNova(false)}
-          onSalvo={(id) => {
-            setNova(false);
-            if (id) setSel(id);
-          }}
-        />
-      )}
       {importar && (
         <Modal titulo="Importar planilha" onFechar={() => setImportar(false)}>
           <ImportarPlanilha onConcluido={() => setImportar(false)} />
@@ -181,6 +173,9 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
   const podeEditar = dados.podeEditar;
   const [editar, setEditar] = useState(false);
   const [novaVaga, setNovaVaga] = useState(false);
+  const [abrirVaga, setAbrirVaga] = useState(false);
+  const [puxar, setPuxar] = useState<{ vaga: Vaga | null } | null>(null);
+  const [desmobilizar, setDesmobilizar] = useState<Vaga | null>(null);
   const [detalhes, setDetalhes] = useState<Vaga | null>(null);
   const [ausenciasDe, setAusenciasDe] = useState<Vaga | null>(null);
   const [ocupantes, setOcupantes] = useState<Veiculo | null>(null);
@@ -191,12 +186,13 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
   const viaturas = veiculosPorEquipe.get(equipe.id) ?? [];
 
   const contagem = useMemo(() => {
-    const c = { livres: 0, escaladas: 0, ausentes: 0, abertas: 0 };
+    const c = { livres: 0, escaladas: 0, ausentes: 0, abertas: 0, semNome: 0 };
     for (const v of vagas) {
       const s = estadoDaVaga(v, idx, hoje).situacao;
       if (s === "LIVRE") c.livres++;
       else if (s === "ALOCADA") c.escaladas++;
       else if (s === "AUSENTE") c.ausentes++;
+      else if (s === "SEM_NOME") c.semNome++;
       else c.abertas++;
     }
     return c;
@@ -277,12 +273,36 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
             </select>
           </label>
           <CampoInline rotulo="Grupo" valor={equipe.grupo} lista={grupos} onSalvar={salvarEquipe("grupo")} desabilitado={campoEquipe} />
-          <CampoInline rotulo="Observações" valor={equipe.observacao ?? ""} linhas={1} onSalvar={salvarEquipe("observacao")} desabilitado={campoEquipe} className="sm:col-span-1 xl:col-span-3" />
+          <label className="block">
+            <span className="text-[11px] font-medium text-gray-500">Período da equipe — início</span>
+            <input type="date" disabled={!podeEditar} value={equipe.inicio ?? ""} onChange={(e) => salvarEquipe("inicio")(e.target.value)} className="mt-1 block w-full rounded-md border border-line bg-white px-2.5 py-1.5 text-[13px] focus:border-brand focus:outline-none disabled:bg-gray-50" />
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-medium text-gray-500">Período da equipe — fim</span>
+            <input type="date" disabled={!podeEditar} value={equipe.fim ?? ""} min={equipe.inicio ?? undefined} onChange={(e) => salvarEquipe("fim")(e.target.value)} className="mt-1 block w-full rounded-md border border-line bg-white px-2.5 py-1.5 text-[13px] focus:border-brand focus:outline-none disabled:bg-gray-50" />
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-medium text-gray-500">Campanha associada</span>
+            <select disabled={!podeEditar} value={equipe.campanhaId ?? ""} onChange={(e) => salvarEquipe("campanhaId")(e.target.value)} className="mt-1 block w-full rounded-md border border-line bg-white px-2.5 py-1.5 text-[13px] focus:border-brand focus:outline-none disabled:bg-gray-50">
+              <option value="">Sem campanha</option>
+              {dados.campanhas.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.codigo} · {nomeDaEquipeDaCampanha(c)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <CampoInline rotulo="Observações" valor={equipe.observacao ?? ""} linhas={1} onSalvar={salvarEquipe("observacao")} desabilitado={campoEquipe} className="sm:col-span-2 xl:col-span-4" />
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-line pt-3 text-[12px] text-gray-600">
           <span>
-            <strong className="num text-ink">{vagas.filter(temNome).length}</strong>/{vagas.length} vagas preenchidas
+            <strong className="num text-ink">{vagas.filter((v) => temNome(v) || v.semNome).length}</strong>/{vagas.length} vagas preenchidas
           </span>
+          {contagem.semNome > 0 && (
+            <span className="text-gray-500">
+              <strong className="num text-ink">{contagem.semNome}</strong> sem nome informado
+            </span>
+          )}
           <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-ok" /> <strong className="num">{contagem.livres}</strong> livres hoje</span>
           <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-info" /> <strong className="num">{contagem.escaladas}</strong> escaladas</span>
           <span className="inline-flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-bad" /> <strong className="num">{contagem.ausentes}</strong> ausentes</span>
@@ -298,9 +318,17 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
         <div className="card-h !py-2.5">
           <h3 className="card-t">Composição da equipe</h3>
           {podeEditar && (
-            <button onClick={() => setNovaVaga(true)} className="btn-ghost btn-sm">
-              <IcMais tam={13} /> Pessoa
-            </button>
+            <div className="flex flex-wrap gap-1.5">
+              <button onClick={() => setPuxar({ vaga: null })} className="btn-ghost btn-sm" title="Puxar alguém já cadastrado para esta equipe">
+                Puxar colaborador
+              </button>
+              <button onClick={() => setAbrirVaga(true)} className="btn-ghost btn-sm" title="Aumentar a equipe: abrir vaga(s)">
+                <IcMais tam={13} /> Abrir vaga
+              </button>
+              <button onClick={() => setNovaVaga(true)} className="btn-ghost btn-sm" title="Cadastrar uma pessoa nova direto nesta equipe">
+                <IcMais tam={13} /> Cadastrar pessoa
+              </button>
+            </div>
           )}
         </div>
         <div className="overflow-x-auto">
@@ -337,7 +365,7 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
                         <input
                           key={`${v.id}-${v.nome ?? ""}`}
                           defaultValue={v.nome ?? ""}
-                          placeholder="vaga aberta"
+                          placeholder={v.semNome ? "nome não informado" : "vaga aberta"}
                           onBlur={(ev) => {
                             const novo = ev.target.value.trim();
                             if (novo !== (v.nome ?? "")) alterarVaga(v, { nome: novo || null });
@@ -346,7 +374,7 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
                           className="w-full min-w-[170px] rounded-md border border-transparent bg-transparent px-2 py-1 text-[12.5px] font-medium text-ink placeholder:font-normal placeholder:italic placeholder:text-gray-300 hover:border-line focus:border-brand focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand/20"
                         />
                       ) : (
-                        <span className={temNome(v) ? "font-medium text-ink" : "italic text-gray-300"}>{temNome(v) ? nomeDe(v) : "vaga aberta"}</span>
+                        <span className={temNome(v) ? "font-medium text-ink" : "italic text-gray-300"}>{temNome(v) ? nomeDe(v) : v.semNome ? "nome não informado" : "vaga aberta"}</span>
                       )}
                       {v.contratoAtual && v.disponivelAPartir && v.disponivelAPartir > hoje && <div className="px-2 text-[10.5px] text-info">em {v.contratoAtual} até {fmtDia(v.disponivelAPartir)}</div>}
                       {v.destino && <div className="px-2 text-[10.5px] text-gray-400">vai para: {v.destino}</div>}
@@ -396,6 +424,16 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
                         <IcCalendario tam={15} />
                         {nAus > 0 && <span className="num absolute -right-0.5 -top-0.5 rounded-full bg-info px-1 text-[9px] font-bold leading-3 text-white">{nAus}</span>}
                       </button>
+                      {podeEditar && !temNome(v) && (
+                        <button onClick={() => setPuxar({ vaga: v })} className="rounded-md px-1.5 py-1 text-[11px] font-semibold text-brand-dark hover:bg-brand-soft" title="Colocar um colaborador cadastrado nesta vaga">
+                          preencher
+                        </button>
+                      )}
+                      {podeEditar && temNome(v) && (
+                        <button onClick={() => setDesmobilizar(v)} className="rounded-md px-1.5 py-1 text-[11px] font-semibold text-gray-500 hover:bg-bad-soft hover:text-bad" title="Tirar da equipe e abrir a vaga">
+                          desmobilizar
+                        </button>
+                      )}
                       {podeEditar && (
                         <button onClick={() => setDetalhes(v)} className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-brand-dark" title="Todos os detalhes" aria-label="Detalhes">
                           <IcLapis tam={15} />
@@ -507,6 +545,9 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
         />
       )}
       {novaVaga && <ModalVaga equipe={equipe} onFechar={() => setNovaVaga(false)} onSalvo={() => setNovaVaga(false)} />}
+      {abrirVaga && <ModalAbrirVaga equipe={equipe} onFechar={() => setAbrirVaga(false)} />}
+      {puxar && <ModalPuxar equipe={equipe} vagaPreSelecionada={puxar.vaga} onFechar={() => setPuxar(null)} />}
+      {desmobilizar && <ModalDesmobilizar vaga={desmobilizar} onFechar={() => setDesmobilizar(null)} />}
       {detalhes && (
         <ModalVaga
           vaga={detalhes}

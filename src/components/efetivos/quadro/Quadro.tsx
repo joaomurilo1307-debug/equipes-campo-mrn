@@ -129,12 +129,14 @@ export default function Quadro() {
   const equipesVisiveis = useMemo(() => equipesCampo.filter((e) => (!grupo || e.grupo === grupo) && (!contrato || e.projeto === contrato)), [equipesCampo, grupo, contrato]);
   const porContrato = useMemo(() => {
     const m = new Map<string, Equipe[]>();
+    // todo contrato cadastrado aparece, mesmo sem equipe ainda (para criar a primeira)
+    if (!grupo) for (const c of dados.contratos.filter((x) => x.ativo && (!contrato || x.codigo === contrato))) m.set(c.codigo, []);
     for (const e of equipesVisiveis) {
       if (!m.has(e.projeto)) m.set(e.projeto, []);
       m.get(e.projeto)!.push(e);
     }
-    return [...m.entries()].sort(([a], [b]) => (a === A_DEFINIR ? 1 : b === A_DEFINIR ? -1 : a.localeCompare(b)));
-  }, [equipesVisiveis]);
+    return [...m.entries()].sort(([a], [b]) => (a === A_DEFINIR ? 1 : b === A_DEFINIR ? -1 : a.localeCompare(b, "pt-BR", { numeric: true })));
+  }, [equipesVisiveis, dados.contratos, grupo, contrato]);
 
   // ---- estado da equipe dia a dia (a faixa fina embaixo de cada linha)
   const faixasEquipe = useMemo(() => {
@@ -295,7 +297,7 @@ export default function Quadro() {
     <div>
       <CabecalhoPagina
         titulo="Quadro de equipes"
-        subtitulo="Cada linha é uma equipe, por contrato. A faixa fina mostra, dia a dia, se ela está disponível, alocada, incompleta ou com ausência."
+        subtitulo="Contrato, equipe e pessoa. A faixa fina de cada equipe mostra, dia a dia, se ela está disponível, alocada, incompleta ou com ausência."
         acoes={
           podeEditar ? (
             <>
@@ -305,9 +307,9 @@ export default function Quadro() {
               <Link href={`/montar?inicio=${hoje}&fim=${somarDias(hoje, 27)}`} className="btn-primary">
                 <IcMais tam={16} /> Campanha
               </Link>
-              <button onClick={() => setModal({ t: "equipe" })} className="btn-ghost">
+              <Link href="/equipes/nova" className="btn-ghost">
                 <IcMais tam={16} /> Equipe
-              </button>
+              </Link>
               <button onClick={() => setModal({ t: "veiculo" })} className="btn-ghost">
                 <IcMais tam={16} /> Veículo
               </button>
@@ -372,7 +374,7 @@ export default function Quadro() {
       </div>
 
       <div className="card overflow-hidden">
-        <div className="overflow-auto" style={{ maxHeight: "calc(100vh - 290px)", minHeight: 360 }}>
+        <div className="overflow-auto" style={{ maxHeight: "calc(133.333vh - 330px)", minHeight: 360 }}>
           <div className="relative" style={{ minWidth: ESQ + largura }}>
             {/* cabeçalho do tempo */}
             <div className="sticky top-0 z-20 flex border-b border-line bg-white">
@@ -428,54 +430,15 @@ export default function Quadro() {
               </Lane>
             </div>
 
-            {/* CAMPANHAS */}
-            <TituloSecao rotulo="Campanhas" n={campanhasVisiveis.length} aberto={!fechadas.has("campanhas")} onAlternar={() => alternar(fechadas, "campanhas", setFechadas)} extra={podeEditar ? "Clique numa barra para ver a equipe escalada." : undefined} />
-            {!fechadas.has("campanhas") &&
-              campanhasVisiveis.map((c) => {
-                const membros = membrosDe(c);
-                const lista = membros.slice(0, 3).map(nomeDe).join(", ");
-                const barra: Barra = {
-                  id: c.id,
-                  inicio: c.inicio,
-                  fim: c.fim,
-                  rotulo: `${c.atividade}${membros.length ? ` · ${membros.length} pessoas` : ""}`,
-                  cor: STATUS_CAMPANHA_QUE_LIBERAM.includes(c.status) ? "#CBD4CE" : COR_STATUS_CAMPANHA[c.status] ?? "#0A9E7F",
-                  corTexto: STATUS_CAMPANHA_QUE_LIBERAM.includes(c.status) ? "#3E4A45" : undefined,
-                  dica: `${c.codigo} — ${rotuloContrato(c.projeto)}${c.local ? ` (${c.local})` : ""}\n${fmtDia(c.inicio)} a ${fmtDia(c.fim)} · ${c.status}\n${membros.length ? membros.map(nomeDe).join(", ") : "Equipe ainda não montada"}`,
-                  listrada: membros.length === 0 && !STATUS_CAMPANHA_QUE_LIBERAM.includes(c.status),
-                  onClick: () => setDrawer({ t: "campanha", id: c.id }),
-                };
-                return (
-                  <div key={c.id} className="flex border-b border-gray-100 hover:bg-gray-50/50">
-                    <Esq className="px-4 py-2" altura={72}>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[12px] font-semibold">{c.codigo}</span>
-                        <span className={CHIP_STATUS_CAMPANHA[c.status]}>{c.status}</span>
-                      </div>
-                      <div className="mt-0.5 flex items-center gap-1.5 truncate text-[12px] font-medium text-ink">
-                        <PontoContrato cor={corDoContrato(c.projeto)} tam={8} />
-                        {rotuloContrato(c.projeto)} <span className="font-normal text-gray-500">· {c.grupo}</span>
-                      </div>
-                      <div className="truncate text-[11px] text-gray-500">{membros.length ? `${lista}${membros.length > 3 ? ` +${membros.length - 3}` : ""}` : "equipe ainda não montada"}</div>
-                    </Esq>
-                    <Lane inicio={inicio} totalDias={totalDias} dw={dw} altura={72} barras={distribuir([barra])} topoBarras={23} />
-                  </div>
-                );
-              })}
-            {!fechadas.has("campanhas") && campanhasVisiveis.length === 0 && (
-              <div className="flex border-b border-gray-100">
-                <Esq className="px-4 py-3 text-sm text-gray-400">Nenhuma campanha{podeEditar ? "" : " em andamento"}.</Esq>
-                <div className="flex flex-1 items-center px-4 text-xs text-gray-400">{podeEditar ? "Arraste sobre a linha de uma equipe, ali embaixo, para criar a primeira." : ""}</div>
-              </div>
-            )}
-
             {/* EQUIPES por contrato */}
-            <TituloSecao rotulo="Equipes" n={equipesVisiveis.length} aberto={!fechadas.has("equipes")} onAlternar={() => alternar(fechadas, "equipes", setFechadas)} extra={podeEditar ? "Arraste sobre a linha de uma equipe para criar uma campanha com a equipe." : undefined} />
+            <TituloSecao rotulo="Contratos e equipes" n={equipesVisiveis.length} aberto={!fechadas.has("equipes")} onAlternar={() => alternar(fechadas, "equipes", setFechadas)} extra={podeEditar ? "Contrato, depois equipe, depois pessoa. Arraste sobre a linha de uma equipe para criar uma campanha com ela." : undefined} />
             {!fechadas.has("equipes") &&
               porContrato.map(([projeto, equipes]) => {
                 const cor = corDoContrato(projeto);
                 const pessoas = equipes.reduce((s, e) => s + (vagasPorEquipe.get(e.id) ?? []).filter(temNome).length, 0);
                 const viaturas = dados.veiculos.filter((v) => localizacaoNoDia(dados.movimentos.filter((m) => m.veiculoId === v.id), hoje)?.projeto === projeto).length;
+                const vagasAbertas = equipes.reduce((s, e) => s + (vagasPorEquipe.get(e.id) ?? []).filter((v) => !temNome(v) && !v.semNome).length, 0);
+                const gestorContrato = dados.contratos.find((c) => c.codigo === projeto)?.gestor ?? null;
                 return (
                   <div key={projeto}>
                     <div className="flex border-b border-line bg-white">
@@ -491,11 +454,13 @@ export default function Quadro() {
                       <div className="flex flex-1 items-center gap-4 px-3 text-xs text-gray-500" style={{ background: `${cor}0F` }}>
                         <span><strong className="num text-ink">{equipes.length}</strong> equipe{equipes.length === 1 ? "" : "s"}</span>
                         <span><strong className="num text-ink">{pessoas}</strong> pessoas</span>
+                        {vagasAbertas > 0 && <span><strong className="num" style={{ color: "#B86E00" }}>{vagasAbertas}</strong> vagas abertas</span>}
                         <span><strong className="num text-ink">{viaturas}</strong> viatura{viaturas === 1 ? "" : "s"} hoje</span>
+                        {gestorContrato && <span>gestor {gestorContrato}</span>}
                         {podeEditar && (
-                          <button onClick={() => setModal({ t: "equipe", projeto: projeto === A_DEFINIR ? "" : projeto })} className="ml-auto inline-flex items-center gap-1 font-semibold text-brand-dark hover:underline">
+                          <Link href={`/equipes/nova${projeto === A_DEFINIR ? "" : `?contrato=${encodeURIComponent(projeto)}`}`} className="ml-auto inline-flex items-center gap-1 font-semibold text-brand-dark hover:underline">
                             <IcMais tam={13} /> equipe neste contrato
-                          </button>
+                          </Link>
                         )}
                       </div>
                     </div>

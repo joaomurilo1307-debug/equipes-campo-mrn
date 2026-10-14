@@ -170,7 +170,7 @@ export default function ModalAusencia({
                 ))}
               </select>
             </div>
-            <div className="max-h-[38vh] space-y-3 overflow-y-auto rounded-xl border border-line p-3">
+            <div className="max-h-[50vh] space-y-3 overflow-y-auto rounded-xl border border-line p-3">
               {porEquipe.map(([eqId, lista]) => {
                 const eq = equipePorId.get(eqId)!;
                 const ids = lista.map((v) => v.id);

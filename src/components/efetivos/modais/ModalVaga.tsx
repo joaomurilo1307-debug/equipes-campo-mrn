@@ -2,13 +2,14 @@
 
 import { useMemo, useState } from "react";
 import { useDados } from "../DadosContext";
-import { chamar, contratosConhecidos, valoresUsados, type Equipe, type Vaga } from "../comum";
+import { chamar, contratosConhecidos, ehReserva, rotuloContrato, rotuloEquipe, valoresUsados, type Equipe, type Vaga } from "../comum";
 import { IcLixo } from "../icones";
 import { Aviso, Campo, Modal, RodapeModal } from "../ui";
 
 /** Nova pessoa (vaga) na equipe, ou todos os detalhes de uma existente: equipe, função, 4x4, carro, outro contrato… */
 export default function ModalVaga({ equipe, vaga, onFechar, onSalvo }: { equipe?: Equipe; vaga?: Vaga; onFechar: () => void; onSalvo: (aviso?: string) => void | Promise<void> }) {
   const { dados, recarregar, equipePorId, veiculosPorEquipe } = useDados();
+  const reserva = dados.equipes.find(ehReserva);
   const equipeInicial = vaga ? equipePorId.get(vaga.equipeId) : equipe;
   const cargos = useMemo(() => valoresUsados(dados.vagas, "cargo"), [dados.vagas]);
   const empresas = useMemo(() => valoresUsados(dados.vagas, "empresa"), [dados.vagas]);
@@ -16,7 +17,7 @@ export default function ModalVaga({ equipe, vaga, onFechar, onSalvo }: { equipe?
   const contratos = useMemo(() => contratosConhecidos(dados), [dados]);
 
   const [v, setV] = useState({
-    equipeId: vaga?.equipeId ?? equipe?.id ?? "",
+    equipeId: vaga?.equipeId ?? equipe?.id ?? reserva?.id ?? "",
     nome: vaga?.nome ?? "",
     cargo: vaga?.cargo ?? "",
     empresa: vaga?.empresa ?? "Consominas",
@@ -28,6 +29,10 @@ export default function ModalVaga({ equipe, vaga, onFechar, onSalvo }: { equipe?
     disponivelAPartir: vaga?.disponivelAPartir ?? "",
     destino: vaga?.destino ?? "",
     previsaoInicio: vaga?.previsaoInicio ?? "",
+    contrato: vaga?.contrato ?? "",
+    equipeContrato: vaga?.equipeContrato ?? "",
+    grupo: vaga?.grupo ?? "",
+    semNome: vaga?.semNome ? "sim" : "",
     observacao: vaga?.observacao ?? "",
   });
   const [erro, setErro] = useState<string | null>(null);
@@ -57,6 +62,10 @@ export default function ModalVaga({ equipe, vaga, onFechar, onSalvo }: { equipe?
       disponivelAPartir: v.disponivelAPartir || null,
       destino: v.destino || null,
       previsaoInicio: v.previsaoInicio || null,
+      contrato: v.contrato || null,
+      equipeContrato: v.equipeContrato || null,
+      grupo: v.grupo || null,
+      semNome: !v.nome.trim() && v.semNome === "sim",
       observacao: v.observacao || null,
     };
     const r = vaga ? await chamar("PATCH", `/api/efetivos/vagas/${vaga.id}`, { ...base, equipeId: v.equipeId }) : await chamar("POST", "/api/efetivos/vagas", { ...base, equipeId: v.equipeId });
@@ -78,22 +87,35 @@ export default function ModalVaga({ equipe, vaga, onFechar, onSalvo }: { equipe?
   }
 
   return (
-    <Modal titulo={vaga ? `Detalhes — ${vaga.nome ?? vaga.cargo}` : `Nova pessoa — ${equipeInicial?.codigo ?? ""}`} subtitulo={equipeInicial?.nome} onFechar={onFechar}>
+    <Modal titulo={vaga ? `Detalhes — ${vaga.nome ?? vaga.cargo}` : equipe ? `Nova pessoa — ${equipeInicial?.codigo ?? ""}` : "Novo colaborador"} subtitulo={equipeInicial ? rotuloEquipe(equipeInicial) : "Fica disponível (sem equipe) até ser puxado para uma equipe"} onFechar={onFechar}>
       <div className="grid gap-4 px-6 py-5 sm:grid-cols-2">
-        {vaga && (
-          <Campo rotulo="Equipe (mudar aqui move a pessoa de equipe)" className="sm:col-span-2">
+        {(vaga || !equipe) && (
+          <Campo rotulo={vaga ? "Equipe (mudar aqui move a pessoa de equipe)" : "Equipe"} className="sm:col-span-2">
             <select value={v.equipeId} onChange={(e) => set("equipeId", e.target.value)} className="field">
-              {dados.equipes.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.codigo} · {e.nome}
-                </option>
+              {[...new Set(dados.equipes.filter((e) => !ehReserva(e)).map((e) => e.projeto))].sort().map((p) => (
+                <optgroup key={p} label={rotuloContrato(p)}>
+                  {dados.equipes
+                    .filter((e) => !ehReserva(e) && e.projeto === p)
+                    .map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.nome}
+                      </option>
+                    ))}
+                </optgroup>
               ))}
+              {reserva && <option value={reserva.id}>Sem equipe (disponível)</option>}
             </select>
           </Campo>
         )}
         <Campo rotulo="Profissional" dica="Em branco = vaga aberta." className="sm:col-span-2">
           <input value={v.nome} onChange={(e) => set("nome", e.target.value)} className="field" autoFocus={!vaga} />
         </Campo>
+        {!v.nome.trim() && (
+          <label className="flex items-center gap-2 text-xs text-gray-600 sm:col-span-2">
+            <input type="checkbox" checked={v.semNome === "sim"} onChange={(e) => set("semNome", e.target.checked ? "sim" : "")} className="accent-[#0A9E7F]" />
+            Posição já preenchida, mas o nome não foi informado (não conta como vaga aberta)
+          </label>
+        )}
         <Campo rotulo="Cargo / função">
           <input list="lista-cargos" value={v.cargo} onChange={(e) => set("cargo", e.target.value)} className="field" />
           <datalist id="lista-cargos">
@@ -146,6 +168,19 @@ export default function ModalVaga({ equipe, vaga, onFechar, onSalvo }: { equipe?
         </Campo>
         <Campo rotulo="Previsão de início" dica="Para vaga em contratação.">
           <input type="date" value={v.previsaoInicio} onChange={(e) => set("previsaoInicio", e.target.value)} className="field" />
+        </Campo>
+        <Campo rotulo="Contrato">
+          <input list="lista-contratos-vaga" value={v.contrato} onChange={(e) => set("contrato", e.target.value)} className="field" placeholder="ex.: 3636 PNM" />
+        </Campo>
+        <Campo rotulo="Equipe no contrato">
+          <input value={v.equipeContrato} onChange={(e) => set("equipeContrato", e.target.value)} className="field" />
+        </Campo>
+        <Campo rotulo="Grupo">
+          <select value={v.grupo} onChange={(e) => set("grupo", e.target.value)} className="field">
+            <option value="">—</option>
+            <option>Fauna</option>
+            <option>Flora</option>
+          </select>
         </Campo>
         <div className="rounded-xl border border-line bg-gray-50 p-4 sm:col-span-2">
           <div className="mb-2 text-[13px] font-semibold text-gray-700">Ainda em outro contrato (reforço que vai migrar)</div>

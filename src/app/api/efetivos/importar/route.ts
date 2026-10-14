@@ -76,7 +76,9 @@ export async function POST(req: Request) {
     equipesJaExistentes: lido.equipes.length - equipesNovas.length,
     vagasNovas: vagasNovas.length,
     vagasPreenchidas: vagasNovas.filter((v) => v.nome).length,
-    vagasAbertas: vagasNovas.filter((v) => !v.nome).length,
+    vagasSemNome: vagasNovas.filter((v) => !v.nome && v.semNome).length,
+    vagasAbertas: vagasNovas.filter((v) => !v.nome && !v.semNome).length,
+    contratos: lido.contratos.length,
     veiculosNovos: veiculosNovos.length,
     apoioDeOutroContrato: vagasNovas.filter((v) => v.contratoAtual).length,
     avisos: lido.avisos,
@@ -113,6 +115,12 @@ export async function POST(req: Request) {
         });
       }
 
+      // contratos que a planilha cita (so os que ainda nao existem; nunca sobrescreve o que foi preenchido no sistema)
+      for (const c of lido.contratos) {
+        const ja = await tx.efetivoContrato.findUnique({ where: { codigo: c.codigo } });
+        if (!ja) await tx.efetivoContrato.create({ data: { codigo: c.codigo, gestor: c.gestor, cliente: c.cliente } });
+      }
+
       let numero = vagaMax;
       for (const v of vagasNovas) {
         const vaga = await tx.efetivoVaga.create({
@@ -130,6 +138,10 @@ export async function POST(req: Request) {
             disponivelAPartir: v.disponivelAPartir ? dataDe(v.disponivelAPartir) : null,
             destino: v.destino ?? null,
             veiculoId: v.carroRef ? veiculoPorRef.get(v.carroRef) ?? null : null,
+            contrato: v.contrato ?? null,
+            equipeContrato: v.equipeContrato ?? null,
+            grupo: v.grupo ?? null,
+            semNome: !!v.semNome && !v.nome,
             observacao: v.observacao,
           },
         });

@@ -104,7 +104,7 @@ test("Resumo por grupo: total/disponiveis/alocadas/indisponiveis e contagem de p
   assert.deepEqual([fauna.total, fauna.disponiveis, fauna.alocadas, fauna.indisponiveis], [4, 1, 1, 2]); // a livre, b alocada (Caio), c e d indisponiveis
   assert.deepEqual([flora.total, flora.disponiveis, flora.alocadas, flora.indisponiveis], [2, 1, 0, 1]);
   // pessoas da Fauna: 8 vagas, 7 com nome, livres Ana,Bia,Davi,Eli,Fabio = 5, alocada Caio = 1, ausente Gil = 1, aberta 1
-  assert.deepEqual(fauna.pessoas, { vagas: 8, preenchidas: 7, livres: 5, alocadas: 1, ausentes: 1, abertas: 1 });
+  assert.deepEqual(fauna.pessoas, { vagas: 8, preenchidas: 7, semNome: 0, livres: 5, alocadas: 1, ausentes: 1, abertas: 1 });
   assert.equal(p.totais.equipes, 6);
   assert.equal(p.totais.disponiveis + p.totais.alocadas + p.totais.indisponiveis, 6);
 });

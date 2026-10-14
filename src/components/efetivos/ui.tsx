@@ -129,9 +129,9 @@ export function PontoContrato({ cor, tam = 10 }: { cor: string; tam?: number }) 
 }
 
 /** Bloco da página: faixa de título (com ações à direita) e corpo. */
-export function Secao({ titulo, sub, direita, children, semPadding }: { titulo: string; sub?: string; direita?: ReactNode; children: ReactNode; semPadding?: boolean }) {
+export function Secao({ titulo, sub, direita, children, semPadding, cheio }: { titulo: string; sub?: string; direita?: ReactNode; children: ReactNode; semPadding?: boolean; cheio?: boolean }) {
   return (
-    <section className="card">
+    <section className={cheio ? "card flex h-full flex-col" : "card"}>
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-2.5">
         <div className="min-w-0">
           <h2 className="font-display text-[14px] font-semibold tracking-tight text-ink">{titulo}</h2>
@@ -139,7 +139,7 @@ export function Secao({ titulo, sub, direita, children, semPadding }: { titulo: 
         </div>
         {direita}
       </div>
-      <div className={semPadding ? "" : "p-4"}>{children}</div>
+      <div className={`${semPadding ? "" : "p-4"} ${cheio ? "flex-1" : ""}`}>{children}</div>
     </section>
   );
 }

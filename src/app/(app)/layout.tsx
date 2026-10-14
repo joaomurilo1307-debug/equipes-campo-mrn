@@ -14,7 +14,8 @@ const ITENS: Item[] = [
   { href: "/painel", rotulo: "Painel", icone: IcPainel },
   { href: "/quadro", rotulo: "Quadro de equipes", icone: IcQuadro },
   { href: "/campanhas", rotulo: "Campanhas", icone: IcCampanha },
-  { href: "/equipes", rotulo: "Equipes e pessoas", icone: IcEquipe },
+  { href: "/colaboradores", rotulo: "Colaboradores", icone: IcUsuarios },
+  { href: "/equipes", rotulo: "Equipes", icone: IcEquipe },
   { href: "/contratos", rotulo: "Contratos", icone: IcContrato },
   { href: "/ferias", rotulo: "Férias e ausências", icone: IcFerias },
   { href: "/frota", rotulo: "Frota", icone: IcCarro },
@@ -111,7 +112,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
-        <main className="mx-auto max-w-[1500px] px-5 py-7 sm:px-8">
+        <main className="px-6 py-6 sm:px-8">
           <DadosGate>{children}</DadosGate>
         </main>
       </div>

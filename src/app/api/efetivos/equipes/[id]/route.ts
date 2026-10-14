@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { exigir, registrar } from "@/lib/efetivos/servidor";
-import { STATUS_EQUIPE } from "@/lib/efetivos/disponibilidade";
+import { STATUS_EQUIPE, dataValida } from "@/lib/efetivos/disponibilidade";
+import { dataDe } from "@/lib/efetivos/servidor";
+
+const dia = z.string().refine(dataValida, "Data inválida (AAAA-MM-DD)");
 
 const schema = z
   .object({
@@ -15,6 +18,9 @@ const schema = z
     status: z.enum(STATUS_EQUIPE),
     // true = a pessoa responsavel conferiu o contrato da equipe
     contratoConfirmado: z.boolean(),
+    inicio: dia.nullable(),
+    fim: dia.nullable(),
+    campanhaId: z.string().nullable(),
   })
   .partial();
 
@@ -28,7 +34,14 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   const antes = await prisma.efetivoEquipe.findUnique({ where: { id: params.id } });
   if (!antes) return NextResponse.json({ error: "Equipe não encontrada" }, { status: 404 });
   // mudar o contrato (ou conferi-lo) tira o "a confirmar" da equipe
-  const data = { ...parsed.data, ...(parsed.data.projeto || parsed.data.contratoConfirmado ? { contratoConfirmado: true } : {}) };
+  const { inicio, fim, campanhaId, ...basico } = parsed.data;
+  const data = {
+    ...basico,
+    ...(parsed.data.projeto || parsed.data.contratoConfirmado ? { contratoConfirmado: true } : {}),
+    ...(inicio !== undefined ? { inicio: inicio ? dataDe(inicio) : null } : {}),
+    ...(fim !== undefined ? { fim: fim ? dataDe(fim) : null } : {}),
+    ...(campanhaId !== undefined ? { campanhaId: campanhaId || null } : {}),
+  };
   const equipe = await prisma.efetivoEquipe.update({ where: { id: params.id }, data });
   // viaturas que estao com esta equipe (passagem aberta no contrato antigo) acompanham o novo contrato
   if (parsed.data.projeto && antes.projeto !== equipe.projeto) {
