@@ -39,11 +39,15 @@ export type PosicaoCadastro = {
 const CODIGO_FORA = "APOIO"; // a "reserva": quem não está em nenhuma equipe (apoio de outro contrato, desmobilizados, disponíveis)
 const PROJETO_A_DEFINIR = "A definir";
 
-/** Contratos informados por quem conhece a operação (João, 14/10/2026) para equipes que a planilha não liga a nenhum contrato. */
+/**
+ * Contratos informados por quem conhece a operação (João, 14/10/2026). São 2 contratos além dos 4 da primeira aba:
+ * o 3686 (equipes Felinos e Meliponário) e o 3687 (equipe Fauna Atropelada). São contratos novos, DIFERENTES de
+ * "3686 LAVRA" e "3687 LT"; a planilha não os traz.
+ */
 const CONTRATO_INFORMADO: Record<string, string> = {
-  "equipe de felinos": "3686 LAVRA",
-  "fauna atropelada": "3687 LT",
-  meliponario: "3686 LAVRA",
+  "equipe de felinos": "3686",
+  meliponario: "3686",
+  "fauna atropelada": "3687",
 };
 
 const norm = (t: unknown) =>
@@ -407,6 +411,7 @@ export function cruzarCadastroComDivisao(
   // 6) contrato de cada equipe de campo: o escrito na primeira aba ao lado da equipe de mesmo nome.
   //    Primeiro pelas pessoas em comum; depois pelo nome da equipe (ex.: "LAVRA - EQUIPE 02" ~ "EQUIPE LAVRA 02").
   let comContrato = 0;
+  const contratosInformados = new Set<string>();
   for (const e of equipes) {
     if (e.codigo === CODIGO_FORA) continue;
     let contrato: string | null = null;
@@ -430,7 +435,10 @@ export function cruzarCadastroComDivisao(
       const contratos = new Set(melhores.map((x) => x.k.split("|")[0]));
       if (contratos.size === 1) contrato = [...contratos][0];
     }
-    if (!contrato) contrato = CONTRATO_INFORMADO[norm(e.nome).trim()] ?? null;
+    if (!contrato) {
+      contrato = CONTRATO_INFORMADO[norm(e.nome).trim()] ?? null;
+      if (contrato) contratosInformados.add(contrato);
+    }
     e.projeto = contrato ?? PROJETO_A_DEFINIR;
     if (contrato) {
       comContrato++;
@@ -440,8 +448,9 @@ export function cruzarCadastroComDivisao(
     }
   }
 
-  // 7) contratos conhecidos pela planilha
+  // 7) contratos: os da primeira aba e os informados
   const contratos = new Map<string, ContratoImportado>(contratosDoCadastro.map((c) => [c.codigo, { ...c }]));
+  for (const codigo of contratosInformados) if (!contratos.has(codigo)) contratos.set(codigo, { codigo, gestor: null, cliente: null });
   for (const p of pessoas) {
     const c = contratos.get(p.contrato) ?? { codigo: p.contrato, gestor: null, cliente: null };
     if (!c.gestor && p.gestor) c.gestor = p.gestor;

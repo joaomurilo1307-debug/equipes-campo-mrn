@@ -105,7 +105,7 @@ test("Cadastro + divisão: hierarquia contrato -> equipe -> pessoa, cada pessoa 
   assert.equal(reserva[0].contrato ?? null, null); // sem contrato cadastrado: fica disponível
 });
 
-test("Contrato informado pelo João para equipes que a planilha não liga a contrato (Felinos, Fauna Atropelada, Meliponário)", () => {
+test("Contratos novos informados pelo João: 3686 (Felinos e Meliponário) e 3687 (Fauna Atropelada), diferentes de 3686 LAVRA e 3687 LT", () => {
   const div = [
     DIVISAO[0],
     ["EQUIPE DE FELINOS", "Consominas", "Resgate", "Superior", "Médico Veterinário", "Fulana Teste", "Sim", "VL 01", ""],
@@ -115,12 +115,16 @@ test("Contrato informado pelo João para equipes que a planilha não liga a cont
   ];
   const r = lerPlanilhaEfetivos(xlsx({ "AFUG E RESG - SETEMBRO": CADASTRO, "DIVISÃO DE EQUIPES": div }), { anoReferencia: 2026 });
   const contratoDe = (nome: string) => r.equipes.find((e) => e.nome === nome)?.projeto;
-  assert.equal(contratoDe("EQUIPE DE FELINOS"), "3686 LAVRA");
-  assert.equal(contratoDe("FAUNA ATROPELADA"), "3687 LT");
-  assert.equal(contratoDe("MELIPONÁRIO"), "3686 LAVRA");
+  assert.equal(contratoDe("EQUIPE DE FELINOS"), "3686");
+  assert.equal(contratoDe("MELIPONÁRIO"), "3686");
+  assert.equal(contratoDe("FAUNA ATROPELADA"), "3687");
+  // são cadastrados como contratos novos, sem confundir com os da planilha
+  const codigos = r.contratos.map((c) => c.codigo);
+  assert.ok(codigos.includes("3686") && codigos.includes("3687"));
+  assert.ok(codigos.includes("3687 LT") && !codigos.includes("3686 LAVRA")); // o 3686 LAVRA só existe se a planilha o traz (aqui não traz)
   // as posições da equipe herdam o contrato (também a que está sem nome)
   const felinos = r.equipes.find((e) => e.nome === "EQUIPE DE FELINOS")!;
-  assert.ok(r.vagas.filter((v) => v.equipeCodigo === felinos.codigo).every((v) => v.contrato === "3686 LAVRA"));
+  assert.ok(r.vagas.filter((v) => v.equipeCodigo === felinos.codigo).every((v) => v.contrato === "3686"));
 });
 
 test("Sem a primeira aba (ou oculta) continua valendo a divisão sozinha, sem contrato inventado", () => {
