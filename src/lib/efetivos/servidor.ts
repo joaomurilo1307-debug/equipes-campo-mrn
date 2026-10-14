@@ -13,6 +13,12 @@ export type NivelEfetivos = "ADMIN" | "EDITOR" | "DASHBOARD";
 export const diaDe = (d: Date | null | undefined): Dia | null => (d ? d.toISOString().slice(0, 10) : null);
 export const dataDe = (dia: Dia): Date => new Date(`${dia}T00:00:00.000Z`);
 
+/** A necessidade fica em JSON no banco; aqui so passa o que tem o formato certo. */
+export function lerNecessidade(v: unknown): { cargo: string; qtd: number }[] {
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is { cargo: string; qtd: number } => !!x && typeof x.cargo === "string" && Number.isInteger(x.qtd) && x.qtd > 0);
+}
+
 const NIVEL_POR_PAPEL: Record<string, NivelEfetivos> = { ADMIN: "ADMIN", EDITOR: "EDITOR", VISUALIZADOR: "DASHBOARD" };
 
 export const podeEditar = (n: NivelEfetivos | null) => n === "ADMIN" || n === "EDITOR";
@@ -114,6 +120,8 @@ async function carregarDadosReal(editor: boolean) {
       grupo: c.grupo,
       atividade: c.atividade,
       local: c.local,
+      equipeNome: c.equipeNome,
+      necessidade: lerNecessidade(c.necessidade),
       inicio: diaDe(c.inicio)!,
       fim: diaDe(c.fim)!,
       qtdEquipes: c.qtdEquipes,

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   alocacoesQueSeguram,
   bloqueiosNoPeriodo,
+  conferirNecessidade,
   indexar,
   trechosLivres,
   atendimentoDaCampanha,
@@ -291,4 +292,33 @@ test("Validar alocacao com periodo proprio: so vale dentro da campanha e respeit
   assert.equal(validarAlocacao(dados, "k", [id("Ana")], "2026-11-01", "2026-11-30", { [id("Ana")]: { inicio: "2026-11-25", fim: "2026-11-22" } })[0].motivo, "PERIODO_INVALIDO");
   // o trecho ainda pode colidir com a ferias
   assert.equal(validarAlocacao(dados, "k", [id("Ana")], "2026-11-01", "2026-11-30", { [id("Ana")]: { inicio: "2026-11-15", fim: "2026-11-30" } })[0].motivo, "AUSENTE");
+});
+
+test("necessidade da campanha: falta, vacancia (sem ninguem livre) e funcoes extras", () => {
+  const bio = { cargo: "Biólogo de Fauna" };
+  const aux = { cargo: "Auxiliar" };
+  const r = conferirNecessidade(
+    [
+      { cargo: "Biólogo de Fauna", qtd: 3 },
+      { cargo: "Auxiliar", qtd: 4 },
+      { cargo: "Motorista", qtd: 1 },
+    ],
+    [bio, aux, aux, { cargo: "Veterinário" }],
+    [bio, aux, aux, aux]
+  );
+  const por = Object.fromEntries(r.linhas.map((l) => [l.cargo, l]));
+  // pediu 3 biologos, tem 1 escalado e 1 livre: faltam 2, mas so 1 pode ser coberto -> 1 sem gente
+  assert.deepEqual(por["Biólogo de Fauna"], { cargo: "Biólogo de Fauna", pedido: 3, escalados: 1, livresRestantes: 1, falta: 2, semGente: 1 });
+  // pediu 4 auxiliares, tem 2 e ha 3 livres: falta 2, cobertura sobra
+  assert.deepEqual(por["Auxiliar"], { cargo: "Auxiliar", pedido: 4, escalados: 2, livresRestantes: 3, falta: 2, semGente: 0 });
+  // ninguem escalado nem livre: toda a falta e vacancia
+  assert.equal(por["Motorista"].semGente, 1);
+  assert.equal(r.falta, 5);
+  assert.equal(r.semGente, 2);
+  // quem foi escalado sem ter sido pedido aparece como extra e nao zera a falta de outras funcoes
+  assert.deepEqual(r.extras, [{ cargo: "Veterinário", n: 1 }]);
+  // escalar mais do que o pedido nao gera falta negativa
+  assert.equal(conferirNecessidade([{ cargo: "Auxiliar", qtd: 1 }], [aux, aux], []).falta, 0);
+  // sem necessidade informada: nada a conferir
+  assert.deepEqual(conferirNecessidade([], [aux], [aux]), { linhas: [], extras: [{ cargo: "Auxiliar", n: 1 }], falta: 0, semGente: 0 });
 });

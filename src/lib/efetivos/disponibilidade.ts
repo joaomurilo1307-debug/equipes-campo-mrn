@@ -23,6 +23,9 @@ export const STATUS_CAMPANHA = ["Nova", "Em análise", "Planejada", "Confirmada"
 export const STATUS_QUE_TRABALHAM: readonly string[] = ["Vigente"];
 
 // Campanha cancelada ou concluida nao segura mais ninguem.
+/** Grupo da reserva de pessoas vindas de outro contrato (aba de apoio): guarda gente, nao e equipe de campo. */
+export const GRUPO_RESERVA = "Apoio";
+
 export const STATUS_CAMPANHA_QUE_LIBERAM: readonly string[] = ["Cancelada", "Concluída"];
 
 export type EquipeBase = {
@@ -226,7 +229,10 @@ export type ResumoGrupo = {
 export type Painel = {
   inicio: Dia;
   fim: Dia;
+  /** So equipes de campo: a reserva de apoio nao entra aqui. */
   equipes: LinhaEquipe[];
+  /** Pessoas da reserva de apoio na data (livres, ocupadas, ausentes). */
+  reserva: ResumoGrupo["pessoas"];
   grupos: ResumoGrupo[];
   totais: {
     equipes: number;
@@ -256,9 +262,10 @@ export function montarPainel(dados: DadosEfetivos, ini: Dia, fim: Dia = ini): Pa
     if (!vagasPorEquipe.has(v.equipeId)) vagasPorEquipe.set(v.equipeId, []);
     vagasPorEquipe.get(v.equipeId)!.push(v);
   }
-  const linhas = dados.equipes.map((e) => avaliarEquipe(e, vagasPorEquipe.get(e.id) ?? [], idx, ini, fim));
+  const equipesDeCampo = dados.equipes.filter((e) => e.grupo !== GRUPO_RESERVA);
+  const linhas = equipesDeCampo.map((e) => avaliarEquipe(e, vagasPorEquipe.get(e.id) ?? [], idx, ini, fim));
 
-  const grupos: ResumoGrupo[] = ordenarGrupos(dados.equipes.map((e) => e.grupo)).map((g) => ({
+  const grupos: ResumoGrupo[] = ordenarGrupos(equipesDeCampo.map((e) => e.grupo)).map((g) => ({
     grupo: g,
     total: 0,
     disponiveis: 0,
@@ -289,7 +296,19 @@ export function montarPainel(dados: DadosEfetivos, ini: Dia, fim: Dia = ini): Pa
       }
     }
   }
-  return { inicio: ini, fim, equipes: linhas, grupos, totais };
+  const reserva = pessoasVazio();
+  for (const e of dados.equipes.filter((x) => x.grupo === GRUPO_RESERVA)) {
+    for (const v of vagasPorEquipe.get(e.id) ?? []) {
+      const s = estadoDaVaga(v, idx, ini, fim).situacao;
+      reserva.vagas++;
+      if (temNome(v)) reserva.preenchidas++;
+      if (s === "LIVRE") reserva.livres++;
+      else if (s === "ALOCADA") reserva.alocadas++;
+      else if (s === "AUSENTE") reserva.ausentes++;
+      else reserva.abertas++;
+    }
+  }
+  return { inicio: ini, fim, equipes: linhas, reserva, grupos, totais };
 }
 
 // ---------------------------------------------------------------- quem esta livre (montar equipe)
@@ -505,4 +524,45 @@ export function balancoCapacidade(dados: DadosEfetivos, campanhas: CampanhaBase[
       .reduce((s, c) => s + c.qtdEquipes, 0);
     return { grupo, demandaEquipes: demanda, equipesCompletas: completas, vagasAbertas: abertas, saldo: completas - demanda };
   });
+}
+
+// ---------------------------------------------------------------- necessidade da campanha x quem existe (vacancia)
+
+export type ItemNecessidade = { cargo: string; qtd: number };
+export type LinhaNecessidade = {
+  cargo: string;
+  pedido: number; // o que a campanha pede
+  escalados: number; // ja na equipe
+  livresRestantes: number; // livres no periodo e ainda fora da equipe
+  falta: number; // pedido - escalados (nunca negativo)
+  semGente: number; // quanto da falta nao tem ninguem livre para cobrir: contratar ou realocar
+};
+
+/**
+ * Compara o que a campanha pede, por funcao, com a equipe escalada e com quem esta livre no periodo.
+ * "semGente" e a vacancia de verdade: falta profissional e nao ha ninguem livre da funcao.
+ * Funcoes escaladas que a campanha nao pediu entram em `extras`.
+ */
+export function conferirNecessidade(
+  necessidade: ItemNecessidade[],
+  escalados: { cargo: string }[],
+  livresRestantes: { cargo: string }[]
+): { linhas: LinhaNecessidade[]; extras: { cargo: string; n: number }[]; falta: number; semGente: number } {
+  const contar = (xs: { cargo: string }[]) => {
+    const m = new Map<string, number>();
+    for (const x of xs) m.set(x.cargo, (m.get(x.cargo) ?? 0) + 1);
+    return m;
+  };
+  const esc = contar(escalados);
+  const liv = contar(livresRestantes);
+  const pedidos = new Map<string, number>();
+  for (const n of necessidade) pedidos.set(n.cargo, (pedidos.get(n.cargo) ?? 0) + n.qtd);
+  const linhas: LinhaNecessidade[] = [...pedidos.entries()].map(([cargo, pedido]) => {
+    const e = esc.get(cargo) ?? 0;
+    const l = liv.get(cargo) ?? 0;
+    const falta = Math.max(0, pedido - e);
+    return { cargo, pedido, escalados: e, livresRestantes: l, falta, semGente: Math.max(0, falta - l) };
+  });
+  const extras = [...esc.entries()].filter(([c]) => !pedidos.has(c)).map(([cargo, n]) => ({ cargo, n }));
+  return { linhas, extras, falta: linhas.reduce((s, l) => s + l.falta, 0), semGente: linhas.reduce((s, l) => s + l.semGente, 0) };
 }

@@ -1,5 +1,5 @@
 // Tipos, formatadores, cores e chamadas de API compartilhados pelas telas.
-import { diferencaDias, somarDias, type Dia, type LinhaEquipe } from "@/lib/efetivos/disponibilidade";
+import { GRUPO_RESERVA, diferencaDias, somarDias, type Dia, type LinhaEquipe } from "@/lib/efetivos/disponibilidade";
 
 export type Equipe = { id: string; codigo: string; nome: string; projeto: string; gestor: string | null; grupo: string; local: string | null; observacao: string | null; status: string };
 export type Contrato = { id: string; codigo: string; nome: string | null; cliente: string | null; gestor: string | null; local: string | null; observacao: string | null; ativo: boolean };
@@ -31,6 +31,8 @@ export type Campanha = {
   grupo: string;
   atividade: string;
   local: string | null;
+  equipeNome: string | null;
+  necessidade: { cargo: string; qtd: number }[];
   inicio: Dia;
   fim: Dia;
   qtdEquipes: number;
@@ -74,6 +76,13 @@ export type DadosTela = {
 };
 
 export const A_DEFINIR = "A definir";
+
+/** A reserva de apoio guarda pessoas vindas de outro contrato; nao e uma equipe de campo (a planilha tem 11). */
+export const ehReserva = (e: { grupo: string }) => e.grupo === GRUPO_RESERVA;
+export const rotuloEquipe = (e: { codigo: string; nome: string; grupo: string }) => (ehReserva(e) ? "Reserva de apoio" : `${e.codigo} · ${e.nome}`);
+
+/** Nome da equipe montada para a campanha (a equipe sempre pertence a uma campanha). */
+export const nomeDaEquipeDaCampanha = (c: { codigo: string; equipeNome: string | null }) => c.equipeNome?.trim() || `Equipe ${c.codigo}`;
 
 // ---------------------------------------------------------------- datas
 
@@ -225,6 +234,8 @@ export function campanhaDeApi(c: any): Campanha {
     grupo: c.grupo,
     atividade: c.atividade,
     local: c.local ?? null,
+    equipeNome: c.equipeNome ?? null,
+    necessidade: Array.isArray(c.necessidade) ? c.necessidade : [],
     inicio: dia10(c.inicio)!,
     fim: dia10(c.fim)!,
     qtdEquipes: c.qtdEquipes,

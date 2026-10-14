@@ -10,14 +10,14 @@ import { CampoInline } from "./inline";
 import { Aviso, CabecalhoPagina, Campo, Modal, PontoContrato, RodapeModal, Vazio } from "./ui";
 
 export default function Contratos() {
-  const { dados, hoje, recarregar, vagasPorEquipe, veiculosPorEquipe } = useDados();
+  const { dados, hoje, recarregar, vagasPorEquipe, veiculosPorEquipe, equipesCampo } = useDados();
   const [sel, setSel] = useState<string>("");
   const [novo, setNovo] = useState(false);
   const [adicionar, setAdicionar] = useState("");
   const [erro, setErro] = useState<string | null>(null);
 
   const codigos = useMemo(() => contratosConhecidos(dados), [dados]);
-  const semContratoEquipes = dados.equipes.filter((e) => !e.projeto || e.projeto === A_DEFINIR);
+  const semContratoEquipes = equipesCampo.filter((e) => !e.projeto || e.projeto === A_DEFINIR);
   const itens = useMemo(() => {
     const lista = codigos.map((c) => ({ codigo: c, contrato: dados.contratos.find((x) => x.codigo === c) ?? null }));
     return semContratoEquipes.length > 0 || codigos.length === 0 ? [...lista, { codigo: A_DEFINIR, contrato: null as Contrato | null }] : lista;
@@ -27,7 +27,7 @@ export default function Contratos() {
   const atual = itens.find((i) => i.codigo === atualCodigo);
   const ehSem = atualCodigo === A_DEFINIR;
 
-  const equipes = dados.equipes.filter((e) => (ehSem ? !e.projeto || e.projeto === A_DEFINIR : e.projeto === atualCodigo));
+  const equipes = equipesCampo.filter((e) => (ehSem ? !e.projeto || e.projeto === A_DEFINIR : e.projeto === atualCodigo));
   const campanhas = dados.campanhas.filter((c) => c.projeto === atualCodigo);
   const viaturasHoje = dados.veiculos.filter((v) => {
     const loc = localizacaoNoDia(dados.movimentos.filter((m) => m.veiculoId === v.id), hoje);
@@ -62,7 +62,7 @@ export default function Contratos() {
   }
 
   const podeEditar = dados.podeEditar;
-  const naoEstaAqui = dados.equipes.filter((e) => !equipes.some((x) => x.id === e.id));
+  const naoEstaAqui = equipesCampo.filter((e) => !equipes.some((x) => x.id === e.id));
 
   return (
     <div>
@@ -83,7 +83,7 @@ export default function Contratos() {
           <ul className="space-y-0.5">
             {itens.map((i) => {
               const ativo = i.codigo === atualCodigo;
-              const nEq = dados.equipes.filter((e) => (i.codigo === A_DEFINIR ? !e.projeto || e.projeto === A_DEFINIR : e.projeto === i.codigo)).length;
+              const nEq = equipesCampo.filter((e) => (i.codigo === A_DEFINIR ? !e.projeto || e.projeto === A_DEFINIR : e.projeto === i.codigo)).length;
               return (
                 <li key={i.codigo}>
                   <button onClick={() => setSel(i.codigo)} className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left ${ativo ? "bg-brand-soft" : "hover:bg-gray-50"}`}>

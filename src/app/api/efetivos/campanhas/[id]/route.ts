@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { dataDe, dadosParaRegra, diaDe, exigir, registrar } from "@/lib/efetivos/servidor";
 import { campanhaSchema } from "@/lib/efetivos/esquemas";
@@ -47,7 +48,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     }
   }
 
-  const { inicio, fim, recebidaEm, solicitante, local, observacao, ...resto } = d;
+  const { inicio, fim, recebidaEm, solicitante, local, equipeNome, necessidade, observacao, ...resto } = d;
   const campanha = await prisma.$transaction(async (tx) => {
     const c = await tx.efetivoCampanha.update({
       where: { id: params.id },
@@ -58,6 +59,8 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
         ...(recebidaEm !== undefined ? { recebidaEm: recebidaEm ? dataDe(recebidaEm) : null } : {}),
         ...(solicitante !== undefined ? { solicitante: solicitante || null } : {}),
         ...(local !== undefined ? { local: local || null } : {}),
+        ...(equipeNome !== undefined ? { equipeNome: equipeNome || null } : {}),
+        ...(necessidade !== undefined ? { necessidade: necessidade?.length ? necessidade : Prisma.DbNull } : {}),
         ...(observacao !== undefined ? { observacao: observacao || null } : {}),
       },
     });

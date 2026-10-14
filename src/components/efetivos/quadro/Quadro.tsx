@@ -1,9 +1,12 @@
 "use client";
 
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
   STATUS_CAMPANHA_QUE_LIBERAM,
   avaliarEquipe,
+  conferirNecessidade,
   diferencaDias,
   montarPainel,
   ordenarGrupos,
@@ -38,9 +41,7 @@ import {
 import { IcBaixo, IcBusca, IcDir, IcEsq, IcMais } from "../icones";
 import ModalAusencia from "../modais/ModalAusencia";
 import ModalAusencias from "../modais/ModalAusencias";
-import ModalCampanha, { type PadraoCampanha } from "../modais/ModalCampanha";
 import ModalEquipe from "../modais/ModalEquipe";
-import ModalMontarEquipe from "../modais/ModalMontarEquipe";
 import { ModalHistoricoVeiculo, ModalMover, ModalVeiculo } from "../modais/ModaisVeiculo";
 import ModalVaga from "../modais/ModalVaga";
 import { Aviso, CabecalhoPagina, PontoContrato, Segmentado } from "../ui";
@@ -54,8 +55,6 @@ const SEMANAS: Record<Zoom, number> = { dia: 8, semana: 20, mes: 52 };
 const SEM_LOCAL = "Sem localização";
 
 type ModalEstado =
-  | { t: "campanha"; campanha?: Campanha; padrao?: PadraoCampanha; equipeId?: string }
-  | { t: "montar"; campanha: Campanha; equipeId?: string }
   | { t: "equipe"; equipe?: Equipe; projeto?: string }
   | { t: "vaga"; equipe?: Equipe; vaga?: Vaga }
   | { t: "ausencias"; vaga: Vaga }
@@ -95,8 +94,9 @@ function TituloSecao({ rotulo, n, aberto, onAlternar, extra }: { rotulo: string;
 // ---------------------------------------------------------------- tela
 
 export default function Quadro() {
-  const { dados, regra, idx, hoje, vagasPorEquipe, equipePorId, campanhaPorId, vagaPorId, veiculoPorId, nomeDe } = useDados();
+  const { dados, regra, idx, hoje, vagasPorEquipe, equipesCampo, equipePorId, campanhaPorId, vagaPorId, veiculoPorId, nomeDe } = useDados();
   const podeEditar = dados.podeEditar;
+  const router = useRouter();
 
   const [zoom, setZoom] = useState<Zoom>("semana");
   const [inicio, setInicio] = useState<Dia>(() => segundaDaSemana(somarDias(hoje, -14)));
@@ -123,10 +123,10 @@ export default function Quadro() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const grupos = useMemo(() => ordenarGrupos(dados.equipes.map((e) => e.grupo)), [dados.equipes]);
-  const contratos = useMemo(() => Array.from(new Set(dados.equipes.map((e) => e.projeto))).sort((a, b) => (a === A_DEFINIR ? 1 : b === A_DEFINIR ? -1 : a.localeCompare(b))), [dados.equipes]);
+  const grupos = useMemo(() => ordenarGrupos(equipesCampo.map((e) => e.grupo)), [equipesCampo]);
+  const contratos = useMemo(() => Array.from(new Set(equipesCampo.map((e) => e.projeto))).sort((a, b) => (a === A_DEFINIR ? 1 : b === A_DEFINIR ? -1 : a.localeCompare(b))), [equipesCampo]);
 
-  const equipesVisiveis = useMemo(() => dados.equipes.filter((e) => (!grupo || e.grupo === grupo) && (!contrato || e.projeto === contrato)), [dados.equipes, grupo, contrato]);
+  const equipesVisiveis = useMemo(() => equipesCampo.filter((e) => (!grupo || e.grupo === grupo) && (!contrato || e.projeto === contrato)), [equipesCampo, grupo, contrato]);
   const porContrato = useMemo(() => {
     const m = new Map<string, Equipe[]>();
     for (const e of equipesVisiveis) {
@@ -249,20 +249,21 @@ export default function Quadro() {
     return [...m.entries()].sort(([a], [b]) => (a === SEM_LOCAL ? 1 : b === SEM_LOCAL ? -1 : a === A_DEFINIR ? 1 : b === A_DEFINIR ? -1 : a.localeCompare(b)));
   }, [frota]);
 
-  // ---- faixa "equipes livres × pedidas" por semana
+  // ---- faixa "pessoas livres × faltam" por semana: livres na segunda-feira da semana e o que ainda falta nas campanhas do período
   const semanas = useMemo(() => Array.from({ length: SEMANAS[zoom] }, (_, k) => somarDias(inicio, k * 7)), [inicio, zoom]);
   const saldoSemanal = useMemo(
     () =>
       semanas.map((seg) => {
         const p = montarPainel(regra, seg);
-        const disp = p.grupos.filter((g) => !grupo || g.grupo === grupo).reduce((s, g) => s + g.disponiveis, 0);
+        const livres = p.grupos.filter((g) => !grupo || g.grupo === grupo).reduce((s, g) => s + g.pessoas.livres, 0) + (grupo ? 0 : p.reserva.livres);
         const fimSem = somarDias(seg, 6);
-        const dem = dados.campanhas
-          .filter((c) => !STATUS_CAMPANHA_QUE_LIBERAM.includes(c.status) && (!grupo || c.grupo === grupo) && c.inicio <= fimSem && c.fim >= seg)
-          .reduce((s, c) => s + c.qtdEquipes, 0);
-        return { seg, disp, dem };
+        const falta = dados.campanhas
+          .filter((c) => !STATUS_CAMPANHA_QUE_LIBERAM.includes(c.status) && (!grupo || c.grupo === grupo) && c.inicio <= fimSem && c.fim >= seg && c.necessidade.length > 0)
+          .reduce((s, c) => s + conferirNecessidade(c.necessidade, membrosDe(c), []).falta, 0);
+        return { seg, livres, falta };
       }),
-    [semanas, regra, dados.campanhas, grupo]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [semanas, regra, dados.campanhas, dados.alocacoes, grupo]
   );
 
   // ---- navegação
@@ -285,8 +286,7 @@ export default function Quadro() {
     return blocos;
   }, [dias]);
 
-  const criarCampanhaDaEquipe = (e: Equipe, ini: Dia, fim: Dia) =>
-    setModal({ t: "campanha", equipeId: e.id, padrao: { projeto: e.projeto === A_DEFINIR ? "" : e.projeto, grupo: e.grupo === "Apoio" ? "Fauna" : e.grupo, inicio: ini, fim } });
+  const criarCampanhaDaEquipe = (e: Equipe, ini: Dia, fim: Dia) => router.push(`/montar?inicio=${ini}&fim=${fim}&grupo=${encodeURIComponent(e.grupo)}&equipe=${e.id}`);
 
   const campanhaAberta = drawer?.t === "campanha" ? campanhaPorId.get(drawer.id) : undefined;
   const veiculoAberto = drawer?.t === "veiculo" ? veiculoPorId.get(drawer.id) : undefined;
@@ -302,9 +302,9 @@ export default function Quadro() {
               <button onClick={() => setDrawer({ t: "consulta", inicio: hoje, fim: somarDias(hoje, 27) })} className="btn-ghost">
                 <IcBusca tam={16} /> Consultar período
               </button>
-              <button onClick={() => setModal({ t: "campanha", padrao: { inicio: hoje, fim: somarDias(hoje, 27) } })} className="btn-primary">
+              <Link href={`/montar?inicio=${hoje}&fim=${somarDias(hoje, 27)}`} className="btn-primary">
                 <IcMais tam={16} /> Campanha
-              </button>
+              </Link>
               <button onClick={() => setModal({ t: "equipe" })} className="btn-ghost">
                 <IcMais tam={16} /> Equipe
               </button>
@@ -412,16 +412,16 @@ export default function Quadro() {
             {/* faixa: equipes livres x pedidas */}
             <div className="flex border-b border-line">
               <Esq className="flex flex-col justify-center px-4" altura={44}>
-                <div className="text-[13px] font-semibold text-ink">Equipes livres × pedidas</div>
+                <div className="text-[13px] font-semibold text-ink">Pessoas livres × faltam</div>
                 <div className="text-[10px] text-gray-500">arraste para consultar o período</div>
               </Esq>
               <Lane inicio={inicio} totalDias={totalDias} dw={dw} altura={44} onSelecionar={(a, b) => setDrawer({ t: "consulta", inicio: a, fim: b })} umDia={zoom === "dia"} dica="Arraste para ver quem está livre neste período">
-                {saldoSemanal.map(({ seg, disp, dem }, k) => {
-                  const cls = dem === 0 ? "bg-gray-100 text-gray-500" : dem > disp ? "bg-bad-soft text-bad" : "bg-ok-soft text-ok";
+                {saldoSemanal.map(({ seg, livres, falta }, k) => {
+                  const cls = falta === 0 ? "bg-gray-100 text-gray-600" : falta > livres ? "bg-bad-soft text-bad" : "bg-ok-soft text-ok";
                   return (
-                    <div key={seg} className={`absolute top-1.5 flex flex-col items-center justify-center rounded-md ${cls}`} style={{ left: k * 7 * dw + 2, width: 7 * dw - 4, height: 32 }} title={`Semana de ${fmtDia(seg)}: ${disp} equipe(s) livre(s) · ${dem} pedida(s)`}>
-                      <span className="num text-[12px] font-bold leading-none">{disp}<span className="font-medium opacity-70"> / {dem}</span></span>
-                      {7 * dw > 60 && <span className="mt-0.5 text-[9px] leading-none opacity-70">livres / pedidas</span>}
+                    <div key={seg} className={`absolute top-1.5 flex flex-col items-center justify-center rounded-md ${cls}`} style={{ left: k * 7 * dw + 2, width: 7 * dw - 4, height: 32 }} title={`Semana de ${fmtDia(seg)}: ${livres} pessoa(s) livre(s) · ${falta} ainda faltando nas campanhas`}>
+                      <span className="num text-[12px] font-bold leading-none">{livres}<span className="font-medium opacity-70"> / {falta}</span></span>
+                      {7 * dw > 60 && <span className="mt-0.5 text-[9px] leading-none opacity-70">livres / faltam</span>}
                     </div>
                   );
                 })}
@@ -689,21 +689,6 @@ export default function Quadro() {
       </div>
 
       {/* modais */}
-      {modal?.t === "campanha" && (
-        <ModalCampanha
-          campanha={modal.campanha}
-          padrao={modal.padrao}
-          onFechar={() => setModal(null)}
-          onSalvo={(c) => {
-            if (!modal.campanha && modal.equipeId) setModal({ t: "montar", campanha: c, equipeId: modal.equipeId });
-            else if (!modal.campanha) {
-              setModal(null);
-              setDrawer({ t: "campanha", id: c.id });
-            } else setModal(null);
-          }}
-        />
-      )}
-      {modal?.t === "montar" && <ModalMontarEquipe campanha={modal.campanha} preselecionarEquipeId={modal.equipeId} onFechar={() => setModal(null)} onSalvo={() => { setModal(null); setDrawer({ t: "campanha", id: modal.campanha.id }); }} />}
       {modal?.t === "equipe" && <ModalEquipe equipe={modal.equipe} projetoPadrao={modal.projeto} onFechar={() => setModal(null)} onSalvo={() => setModal(null)} />}
       {modal?.t === "vaga" && (
         <ModalVaga
@@ -723,14 +708,7 @@ export default function Quadro() {
       {modal?.t === "historico" && <ModalHistoricoVeiculo veiculo={modal.veiculo} onFechar={() => setModal(null)} />}
 
       {/* painéis laterais */}
-      {campanhaAberta && (
-        <DrawerCampanha
-          campanha={campanhaAberta}
-          onFechar={() => setDrawer(null)}
-          onEditar={() => setModal({ t: "campanha", campanha: campanhaAberta })}
-          onMontar={() => setModal({ t: "montar", campanha: campanhaAberta })}
-        />
-      )}
+      {campanhaAberta && <DrawerCampanha campanha={campanhaAberta} onFechar={() => setDrawer(null)} />}
       {veiculoAberto && (
         <DrawerVeiculo
           veiculo={veiculoAberto}
@@ -747,7 +725,7 @@ export default function Quadro() {
           onFechar={() => setDrawer(null)}
           onCriarCampanha={(ini, fim, g) => {
             setDrawer(null);
-            if (podeEditar) setModal({ t: "campanha", padrao: { inicio: ini, fim, grupo: g || undefined } });
+            if (podeEditar) router.push(`/montar?inicio=${ini}&fim=${fim}${g ? `&grupo=${encodeURIComponent(g)}` : ""}`);
           }}
         />
       )}

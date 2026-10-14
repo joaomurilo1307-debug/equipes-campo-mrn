@@ -115,6 +115,8 @@ model EfetivoCampanha {
   grupo         String // Fauna | Flora
   atividade     String // Afugentamento | Resgate | Afugentamento e Resgate | Apoio / Coordenação
   local         String?
+  equipeNome    String? // nome da equipe montada para esta campanha (opcional; padrao: "Equipe CAM-001")
+  necessidade   Json? // o que a campanha pede por funcao: [{ cargo, qtd }]; base da analise de vacancia
   inicio        DateTime
   fim           DateTime
   qtdEquipes    Int       @default(1)

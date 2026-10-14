@@ -12,10 +12,18 @@ export const campanhaSchema = z.object({
   grupo: z.string().trim().min(1).max(40),
   atividade: z.enum(ATIVIDADES),
   local: z.string().trim().max(160).nullable().optional(),
+  equipeNome: z.string().trim().max(120).nullable().optional(),
+  necessidade: z.array(z.object({ cargo: z.string().trim().min(1).max(120), qtd: z.number().int().min(1).max(500) })).max(40).nullable().optional(),
   inicio: dia,
   fim: dia,
   qtdEquipes: z.number().int().min(1).max(100).default(1),
   prioridade: z.enum(PRIORIDADES).default("Média"),
   status: z.enum(STATUS_CAMPANHA).default("Nova"),
   observacao: z.string().trim().max(500).nullable().optional(),
+});
+
+// Criar a campanha ja com a equipe: as pessoas escolhidas (e o trecho proprio de quem so entra em parte do periodo).
+export const campanhaComEquipeSchema = campanhaSchema.extend({
+  vagaIds: z.array(z.string().min(1)).max(300).default([]),
+  periodos: z.record(z.object({ inicio: dia, fim: dia })).optional(),
 });

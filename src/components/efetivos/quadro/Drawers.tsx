@@ -1,10 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import {
   STATUS_CAMPANHA_QUE_LIBERAM,
-  atendimentoDaCampanha,
   avaliarEquipe,
+  conferirNecessidade,
   diferencaDias,
   livresNoPeriodo,
   ordenarGrupos,
@@ -12,7 +13,7 @@ import {
 } from "@/lib/efetivos/disponibilidade";
 import { localizacaoNoDia, proximoMovimento, type MovimentoBase } from "@/lib/efetivos/veiculos";
 import { useDados } from "../DadosContext";
-import { CHIP_ATENDIMENTO, CHIP_STATUS_CAMPANHA, CHIP_VEICULO, chamar, corDoContrato, fmtDia, rotuloContrato, type Campanha, type Veiculo } from "../comum";
+import { CHIP_STATUS_CAMPANHA, CHIP_VEICULO, chamar, corDoContrato, fmtDia, nomeDaEquipeDaCampanha, rotuloContrato, type Alocacao, type Campanha, type Vaga, type Veiculo } from "../comum";
 import { Aviso, Campo, Drawer, PontoContrato } from "../ui";
 
 function Fato({ rotulo, children }: { rotulo: string; children: React.ReactNode }) {
@@ -26,25 +27,36 @@ function Fato({ rotulo, children }: { rotulo: string; children: React.ReactNode 
 
 // ---------------------------------------------------------------- campanha
 
-export function DrawerCampanha({ campanha, onFechar, onEditar, onMontar }: { campanha: Campanha; onFechar: () => void; onEditar: () => void; onMontar: () => void }) {
-  const { dados, regra, recarregar, vagaPorId, equipePorId, nomeDe } = useDados();
+export function DrawerCampanha({ campanha, onFechar }: { campanha: Campanha; onFechar: () => void }) {
+  const { dados, regra, recarregar, vagaPorId, nomeDe } = useDados();
   const [erro, setErro] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const segura = !STATUS_CAMPANHA_QUE_LIBERAM.includes(campanha.status);
-  const at = useMemo(() => (segura ? atendimentoDaCampanha(regra, campanha) : null), [regra, campanha, segura]);
-  const membros = dados.alocacoes.filter((a) => a.campanhaId === campanha.id).map((a) => vagaPorId.get(a.vagaId)).filter((v): v is NonNullable<typeof v> => !!v);
-  const porEquipe = useMemo(() => {
+  const membros = useMemo(
+    () =>
+      dados.alocacoes
+        .filter((a) => a.campanhaId === campanha.id)
+        .map((a) => ({ a, v: vagaPorId.get(a.vagaId) }))
+        .filter((x): x is { a: Alocacao; v: Vaga } => !!x.v),
+    [dados.alocacoes, campanha.id, vagaPorId]
+  );
+  const porFuncao = useMemo(() => {
     const m = new Map<string, typeof membros>();
-    for (const v of membros) {
-      if (!m.has(v.equipeId)) m.set(v.equipeId, []);
-      m.get(v.equipeId)!.push(v);
+    for (const x of membros) {
+      if (!m.has(x.v.cargo)) m.set(x.v.cargo, []);
+      m.get(x.v.cargo)!.push(x);
     }
-    return [...m.entries()];
+    return [...m.entries()].sort((a, b) => b[1].length - a[1].length || a[0].localeCompare(b[0], "pt-BR"));
   }, [membros]);
+  const conf = useMemo(() => {
+    if (campanha.necessidade.length === 0) return null;
+    const livres = segura ? livresNoPeriodo(regra, campanha.inicio, campanha.fim, { ignorarCampanhaId: campanha.id }).livres.filter((p) => !membros.some((m) => m.v.id === p.id)) : [];
+    return conferirNecessidade(campanha.necessidade, membros.map((m) => m.v), livres);
+  }, [campanha, regra, segura, membros]);
   const dias = diferencaDias(campanha.inicio, campanha.fim) + 1;
 
   async function mudarStatus(status: string) {
-    if (!window.confirm(`Marcar ${campanha.codigo} como ${status.toLowerCase()}? ${STATUS_CAMPANHA_QUE_LIBERAM.includes(status) ? "As pessoas escaladas ficam livres." : ""}`)) return;
+    if (!window.confirm(`Marcar ${campanha.codigo} como ${status.toLowerCase()}? ${STATUS_CAMPANHA_QUE_LIBERAM.includes(status) ? "As pessoas da equipe ficam livres." : ""}`)) return;
     setOcupado(true);
     setErro(null);
     const r = await chamar("PATCH", `/api/efetivos/campanhas/${campanha.id}`, { status });
@@ -56,26 +68,22 @@ export function DrawerCampanha({ campanha, onFechar, onEditar, onMontar }: { cam
 
   return (
     <Drawer
-      titulo={
+      titulo={nomeDaEquipeDaCampanha(campanha)}
+      subtitulo={
         <span className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-base">{campanha.codigo}</span>
+          <span className="font-mono">{campanha.codigo}</span>
           <span className={CHIP_STATUS_CAMPANHA[campanha.status]}>{campanha.status}</span>
+          <span>
+            {campanha.atividade} · {campanha.grupo}
+          </span>
         </span>
       }
-      subtitulo={`${campanha.atividade} · ${campanha.grupo}`}
       onFechar={onFechar}
       rodape={
         dados.podeEditar ? (
-          <div className="flex flex-wrap gap-2">
-            {segura && (
-              <button onClick={onMontar} className="btn-primary flex-1">
-                {membros.length > 0 ? "Editar equipe" : "Montar equipe"}
-              </button>
-            )}
-            <button onClick={onEditar} className="btn-ghost">
-              Editar dados
-            </button>
-          </div>
+          <Link href={`/montar?campanha=${campanha.id}`} className="btn-primary w-full">
+            Editar campanha e equipe
+          </Link>
         ) : undefined
       }
     >
@@ -91,52 +99,66 @@ export function DrawerCampanha({ campanha, onFechar, onEditar, onMontar }: { cam
           {fmtDia(campanha.inicio)} a {fmtDia(campanha.fim)}
           <span className="block text-[11px] text-gray-500">{dias} dias</span>
         </Fato>
-        <Fato rotulo="Equipes pedidas">{campanha.qtdEquipes}</Fato>
-        <Fato rotulo="Solicitante">{campanha.solicitante ?? "—"}</Fato>
         <Fato rotulo="Prioridade">{campanha.prioridade}</Fato>
+        <Fato rotulo="Solicitante">{campanha.solicitante ?? "—"}</Fato>
       </dl>
       {campanha.observacao && <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-sm text-gray-600">{campanha.observacao}</p>}
 
-      {at && (
-        <div className="mt-5 rounded-xl border border-line p-4">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-sm font-semibold">Capacidade no período</span>
-            <span className={CHIP_ATENDIMENTO[at.atendimento]}>{at.atendimento}</span>
-          </div>
-          <p className="mt-1.5 text-xs text-gray-500">
-            {at.equipesDisponiveis} equipe{at.equipesDisponiveis === 1 ? "" : "s"} completa{at.equipesDisponiveis === 1 ? "" : "s"} e livre{at.equipesDisponiveis === 1 ? "" : "s"} · {at.pessoasLivresNoGrupo} pessoas livres no grupo {campanha.grupo}
-          </p>
+      {conf && (
+        <div className="mt-5 rounded-xl border border-line p-3.5">
+          <div className="text-sm font-semibold">Pedido da campanha</div>
+          <ul className="mt-2 space-y-2">
+            {conf.linhas.map((l) => (
+              <li key={l.cargo}>
+                <div className="flex items-baseline justify-between gap-2 text-xs">
+                  <span className="truncate font-medium text-ink">{l.cargo}</span>
+                  <span className="num shrink-0 text-gray-600">
+                    {l.escalados}/{l.pedido}
+                  </span>
+                </div>
+                <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-gray-100">
+                  <div className="h-full rounded-full" style={{ width: `${Math.min(100, (l.escalados / l.pedido) * 100)}%`, background: l.falta === 0 ? "#0E8F63" : "#1D6FB8" }} />
+                </div>
+                {l.semGente > 0 && <div className="mt-0.5 text-[11px] font-medium text-warn">faltam {l.semGente} — sem ninguém livre no período</div>}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
       <h4 className="mt-6 flex items-baseline justify-between font-display text-base font-semibold">
-        Equipe escalada
-        <span className="num text-sm font-medium text-gray-500">{membros.length} pessoa{membros.length === 1 ? "" : "s"}</span>
+        Equipe
+        <span className="num text-sm font-medium text-gray-500">
+          {membros.length} pessoa{membros.length === 1 ? "" : "s"}
+        </span>
       </h4>
       {membros.length === 0 ? (
-        <p className="mt-2 rounded-xl border border-dashed border-line px-4 py-6 text-center text-sm text-gray-500">Ninguém escalado ainda.{dados.podeEditar && segura ? " Use “Montar equipe” para escolher entre quem está livre." : ""}</p>
+        <p className="mt-2 rounded-xl border border-dashed border-line px-4 py-6 text-center text-sm text-gray-500">Ninguém na equipe ainda.{dados.podeEditar && segura ? " Use “Editar campanha e equipe” para escolher entre quem está livre." : ""}</p>
       ) : (
         <div className="mt-2 space-y-3">
-          {porEquipe.map(([eqId, pessoas]) => {
-            const eq = equipePorId.get(eqId);
-            return (
-              <div key={eqId}>
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">{eq ? `${eq.codigo} · ${eq.nome}` : "Equipe"}</div>
-                <ul className="divide-y divide-line rounded-xl border border-line">
-                  {pessoas.map((p) => (
-                    <li key={p.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                      <span className="truncate font-medium">{nomeDe(p)}</span>
-                      <span className="shrink-0 text-xs text-gray-500">{p.cargo}</span>
-                    </li>
-                  ))}
-                </ul>
+          {porFuncao.map(([cargo, pessoas]) => (
+            <div key={cargo}>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+                {cargo} <span className="num font-normal text-gray-400">{pessoas.length}</span>
               </div>
-            );
-          })}
+              <ul className="divide-y divide-line rounded-xl border border-line">
+                {pessoas.map(({ a, v }) => (
+                  <li key={v.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
+                    <span className="truncate font-medium">{nomeDe(v)}</span>
+                    <span className="shrink-0 text-xs text-gray-500">{a.inicio !== campanha.inicio || a.fim !== campanha.fim ? `só ${fmtDia(a.inicio).slice(0, 5)}–${fmtDia(a.fim).slice(0, 5)}` : v.empresa}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
         </div>
       )}
 
-      {erro && <div className="mt-4"><Aviso tipo="erro">{erro}</Aviso></div>}
+      {erro && (
+        <div className="mt-4">
+          <Aviso tipo="erro">{erro}</Aviso>
+        </div>
+      )}
       {dados.podeEditar && (
         <div className="mt-6 flex flex-wrap gap-2 border-t border-line pt-4">
           {segura && campanha.status !== "Concluída" && (
@@ -248,8 +270,8 @@ export function DrawerVeiculo({ veiculo, onFechar, onMover, onEditar, onHistoric
 
 /** "Quem está livre de X a Y?": equipes, pessoas e veículos para montar uma campanha. */
 export function DrawerConsulta({ inicio: ini0, fim: fim0, onFechar, onCriarCampanha }: { inicio: Dia; fim: Dia; onFechar: () => void; onCriarCampanha: (inicio: Dia, fim: Dia, grupo: string) => void }) {
-  const { dados, regra, vagasPorEquipe, idx } = useDados();
-  const grupos = ordenarGrupos(dados.equipes.map((e) => e.grupo));
+  const { dados, regra, vagasPorEquipe, idx, equipesCampo } = useDados();
+  const grupos = ordenarGrupos(equipesCampo.map((e) => e.grupo));
   const [inicio, setInicio] = useState(ini0);
   const [fim, setFim] = useState(fim0);
   const [grupo, setGrupo] = useState("Fauna");
@@ -257,10 +279,10 @@ export function DrawerConsulta({ inicio: ini0, fim: fim0, onFechar, onCriarCampa
 
   const equipes = useMemo(() => {
     if (!valido) return [];
-    return dados.equipes
+    return equipesCampo
       .filter((e) => (!grupo || e.grupo === grupo) && e.status !== "Inativa")
       .map((e) => avaliarEquipe(e, vagasPorEquipe.get(e.id) ?? [], idx, inicio, fim));
-  }, [dados.equipes, vagasPorEquipe, idx, inicio, fim, grupo, valido]);
+  }, [equipesCampo, vagasPorEquipe, idx, inicio, fim, grupo, valido]);
   const completas = equipes.filter((l) => l.disponibilidade === "DISPONÍVEL");
   const comLivres = equipes.filter((l) => l.disponibilidade !== "DISPONÍVEL" && l.livres > 0).sort((a, b) => b.livres - a.livres);
 

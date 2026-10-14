@@ -157,3 +157,10 @@ export const IcContrato = (p: P) => (
     <path d="M14 3v4h4M9 12h6M9 16h6M9 8.5h2" />
   </Svg>
 );
+
+export const IcRelatorio = (p: P) => (
+  <Svg {...p}>
+    <path d="M5 4h14v16H5z" />
+    <path d="M8.5 15.5v-3M12 15.5V9M15.5 15.5v-5" />
+  </Svg>
+);

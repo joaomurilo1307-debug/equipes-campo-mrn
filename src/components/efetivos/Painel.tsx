@@ -1,592 +1,392 @@
 "use client";
 
+// Painel: a situação das 11 equipes da planilha, hoje e nas próximas semanas, em uma tela só.
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import {
-  STATUS_CAMPANHA_QUE_LIBERAM,
-  atendimentoDaCampanha,
-  balancoCapacidade,
-  estadoDaVaga,
-  montarPainel,
-  serieDisponibilidade,
-  somarDias,
-  temNome,
-  type LinhaEquipe,
-} from "@/lib/efetivos/disponibilidade";
-import { localizacaoNoDia, resumoPorContrato } from "@/lib/efetivos/veiculos";
+import { STATUS_CAMPANHA_QUE_LIBERAM, conferirNecessidade, estadoDaVaga, montarPainel, somarDias, temNome } from "@/lib/efetivos/disponibilidade";
 import { useDados } from "./DadosContext";
-import { A_DEFINIR, CHIP_ATENDIMENTO, CHIP_STATUS_CAMPANHA, ESTADO_VISUAL, corDoContrato, estadoVisual, fmtDia, fmtDiaCurto, rotuloContrato, segundaDaSemana, type EstadoVisual } from "./comum";
-import { IcAlerta, IcCalendario, IcCarro } from "./icones";
-import { Aviso, CabecalhoPagina, PontoContrato, Segmentado } from "./ui";
+import { BarraPartes, BarrasHorizontais, ColunasEmpilhadas, Legenda, type Coluna, type Serie } from "./graficos";
+import { CHIP_STATUS_CAMPANHA, ESTADO_VISUAL, estadoVisual, fmtDia, fmtDiaCurto, nomeDaEquipeDaCampanha, rotuloContrato, segundaDaSemana } from "./comum";
+import { IcCalendario, IcMais } from "./icones";
+import { CabecalhoPagina, Secao } from "./ui";
 
-const COR_GRUPO: Record<string, string> = { Fauna: "#0A9E7F", Flora: "#6B8E23", Apoio: "#5B7083" };
-const corGrupo = (g: string) => COR_GRUPO[g] ?? "#5B7083";
+const COR = { livre: "#0E8F63", alocada: "#1D6FB8", ausente: "#E63329", aberta: "#E0A100", reserva: "#7CCDB4" };
+const SEMANAS_NO_GRAFICO = 16;
 
-// ---------------------------------------------------------------- peças
-
-function Kpi({ rotulo, valor, sub, cor, children }: { rotulo: string; valor: number | string; sub?: string; cor?: string; children?: React.ReactNode }) {
+function Indicador({ rotulo, valor, sub, cor }: { rotulo: string; valor: number | string; sub?: string; cor?: string }) {
   return (
-    <div className="card p-4">
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{rotulo}</div>
-      <div className="num mt-2 font-display text-[28px] font-semibold leading-none" style={{ color: cor ?? "#101B17" }}>
+    <div className="min-w-0 px-4 py-3">
+      <div className="truncate text-[11px] font-semibold uppercase tracking-wider text-gray-500">{rotulo}</div>
+      <div className="num mt-0.5 font-display text-[22px] font-semibold leading-tight" style={{ color: cor ?? "#101B17" }}>
         {valor}
       </div>
-      {sub && <div className="mt-1.5 text-xs text-gray-500">{sub}</div>}
-      {children}
+      {sub && <div className="truncate text-[11.5px] text-gray-500">{sub}</div>}
     </div>
   );
 }
-
-/** Barra de proporções (cada parte com a sua cor). */
-function BarraPartes({ partes, alto = 8, listrada }: { partes: { n: number; cor: string; rotulo: string; listrada?: boolean }[]; alto?: number; listrada?: boolean }) {
-  const total = partes.reduce((s, p) => s + p.n, 0) || 1;
-  return (
-    <div className="flex w-full overflow-hidden rounded-full bg-gray-100" style={{ height: alto }} role="img" aria-label={partes.map((p) => `${p.n} ${p.rotulo}`).join(", ")}>
-      {partes
-        .filter((p) => p.n > 0)
-        .map((p) => (
-          <div key={p.rotulo} className={p.listrada ? "listrado" : ""} style={{ width: `${(p.n / total) * 100}%`, background: p.cor }} title={`${p.n} ${p.rotulo}`} />
-        ))}
-    </div>
-  );
-}
-
-function Legenda({ itens }: { itens: { cor: string; rotulo: string; n?: number }[] }) {
-  return (
-    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-gray-500">
-      {itens.map((i) => (
-        <span key={i.rotulo} className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-2 w-2 rounded-sm" style={{ background: i.cor }} />
-          {i.n !== undefined && <strong className="num text-gray-700">{i.n}</strong>} {i.rotulo}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-const COR = { livre: "#0E8F63", alocada: "#1D6FB8", ausente: "#E63329", aberta: "#E0A100" };
-
-// ---------------------------------------------------------------- tela
 
 export default function Painel() {
-  const { dados, regra, idx, hoje, vagasPorEquipe, equipePorId } = useDados();
+  const { dados, regra, idx, hoje, vagasPorEquipe, equipePorId, vagaPorId, nomeDe } = useDados();
+  const router = useRouter();
   const [dataRef, setDataRef] = useState(hoje);
-  const [visao, setVisao] = useState<"cards" | "tabela">("cards");
-
   const painel = useMemo(() => montarPainel(regra, dataRef), [regra, dataRef]);
+  const t = painel.totais.pessoas;
 
-  // composição de cada equipe na data: livres / alocadas / ausentes / vagas abertas
+  // composição de cada equipe na data de referência
   const composicao = useMemo(() => {
-    const m = new Map<string, { livres: number; alocadas: number; ausentes: number; abertas: number; total: number }>();
-    for (const e of dados.equipes) {
-      const c = { livres: 0, alocadas: 0, ausentes: 0, abertas: 0, total: 0 };
-      for (const v of vagasPorEquipe.get(e.id) ?? []) {
+    const m = new Map<string, { livres: number; alocadas: number; ausentes: number; abertas: number }>();
+    for (const l of painel.equipes) {
+      const c = { livres: 0, alocadas: 0, ausentes: 0, abertas: 0 };
+      for (const v of vagasPorEquipe.get(l.id) ?? []) {
         const s = estadoDaVaga(v, idx, dataRef).situacao;
-        c.total++;
         if (s === "LIVRE") c.livres++;
         else if (s === "ALOCADA") c.alocadas++;
         else if (s === "AUSENTE") c.ausentes++;
         else c.abertas++;
       }
-      m.set(e.id, c);
+      m.set(l.id, c);
     }
     return m;
-  }, [dados.equipes, vagasPorEquipe, idx, dataRef]);
+  }, [painel.equipes, vagasPorEquipe, idx, dataRef]);
+
+  // campanhas em que cada equipe tem gente na data
+  const campanhasDaEquipe = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    for (const a of regra.alocacoes) {
+      if (a.inicio > dataRef || a.fim < dataRef) continue;
+      const v = vagaPorId.get(a.vagaId);
+      const c = dados.campanhas.find((x) => x.id === a.campanhaId);
+      if (!v || !c) continue;
+      if (!m.has(v.equipeId)) m.set(v.equipeId, new Set());
+      m.get(v.equipeId)!.add(c.codigo);
+    }
+    return m;
+  }, [regra.alocacoes, dataRef, vagaPorId, dados.campanhas]);
 
   const viaturasPorEquipe = useMemo(() => {
     const m = new Map<string, number>();
     for (const v of dados.veiculos) {
-      const loc = localizacaoNoDia(dados.movimentos.filter((x) => x.veiculoId === v.id), dataRef);
+      const movs = dados.movimentos.filter((x) => x.veiculoId === v.id && x.inicio <= dataRef && (!x.fim || x.fim >= dataRef));
+      const loc = movs.sort((a, b) => b.inicio.localeCompare(a.inicio))[0];
       if (loc?.equipeId) m.set(loc.equipeId, (m.get(loc.equipeId) ?? 0) + 1);
     }
     return m;
   }, [dados.veiculos, dados.movimentos, dataRef]);
 
-  // agora e depois
-  const marcos = useMemo(() => [0, 7, 15, 30, 60, 90].map((n) => ({ n, dia: somarDias(hoje, n) })), [hoje]);
-  const serie = useMemo(() => serieDisponibilidade(regra, marcos.map((m) => m.dia)), [regra, marcos]);
-  const semanas = useMemo(() => Array.from({ length: 16 }, (_, k) => somarDias(segundaDaSemana(hoje), k * 7)), [hoje]);
-  const serieSemanal = useMemo(() => serieDisponibilidade(regra, semanas), [regra, semanas]);
-  const grupos = painel.grupos.map((g) => g.grupo);
-  const maxLivres = Math.max(1, ...serieSemanal.flatMap((p) => grupos.map((g) => p.porGrupo[g]?.livres ?? 0)));
-  const balancos = useMemo(
-    () => [0, 30, 60, 90].map((n) => ({ n, dia: somarDias(hoje, n), linhas: balancoCapacidade(regra, dados.campanhas, somarDias(hoje, n)) })),
-    [regra, dados.campanhas, hoje]
+  // pessoas nas próximas semanas: livres, em campanha, ausentes + reserva de apoio já livre
+  const semanas = useMemo(() => Array.from({ length: SEMANAS_NO_GRAFICO }, (_, k) => somarDias(segundaDaSemana(hoje), k * 7)), [hoje]);
+  const colunas: Coluna[] = useMemo(
+    () =>
+      semanas.map((seg, k) => {
+        const p = montarPainel(regra, seg);
+        const q = p.totais.pessoas;
+        return {
+          rotulo: fmtDiaCurto(seg),
+          dica: `Semana de ${fmtDia(seg)}`,
+          destaque: k === 0,
+          valores: [q.livres, q.alocadas, q.ausentes, p.reserva.livres],
+        };
+      }),
+    [semanas, regra]
   );
+  const series: Serie[] = [
+    { nome: "Livres", cor: COR.livre },
+    { nome: "Em campanha", cor: COR.alocada },
+    { nome: "Ausentes", cor: COR.ausente },
+    { nome: "Reserva de apoio livre", cor: COR.reserva, listrada: true },
+  ];
 
-  // vagas abertas por cargo (decisão de contratar)
-  const abertasPorCargo = useMemo(() => {
-    const m = new Map<string, { cargo: string; total: number; porEmpresa: Map<string, number>; emContratacao: number }>();
+  // vagas abertas por função e empresa (base para decidir contratação)
+  const abertas = useMemo(() => {
+    const porCargo = new Map<string, Map<string, number>>();
     for (const v of dados.vagas) {
       if (temNome(v)) continue;
       const eq = equipePorId.get(v.equipeId);
       if (!eq || eq.status === "Inativa") continue;
-      const x = m.get(v.cargo) ?? { cargo: v.cargo, total: 0, porEmpresa: new Map(), emContratacao: 0 };
-      x.total++;
-      x.porEmpresa.set(v.empresa, (x.porEmpresa.get(v.empresa) ?? 0) + 1);
-      if (v.status === "Em contratação") x.emContratacao++;
-      m.set(v.cargo, x);
+      if (!porCargo.has(v.cargo)) porCargo.set(v.cargo, new Map());
+      const e = porCargo.get(v.cargo)!;
+      e.set(v.empresa, (e.get(v.empresa) ?? 0) + 1);
     }
-    return [...m.values()].sort((a, b) => b.total - a.total);
+    const empresas = Array.from(new Set([...porCargo.values()].flatMap((m) => [...m.keys()]))).sort();
+    const itens = [...porCargo.entries()]
+      .map(([cargo, m]) => ({ cargo, partes: empresas.map((e) => m.get(e) ?? 0), total: [...m.values()].reduce((s, n) => s + n, 0) }))
+      .sort((a, b) => b.total - a.total || a.cargo.localeCompare(b.cargo, "pt-BR"));
+    return { empresas, itens, total: itens.reduce((s, i) => s + i.total, 0) };
   }, [dados.vagas, equipePorId]);
-  const empresas = useMemo(() => Array.from(new Set(abertasPorCargo.flatMap((c) => [...c.porEmpresa.keys()]))).sort(), [abertasPorCargo]);
-  const totalAbertas = abertasPorCargo.reduce((s, c) => s + c.total, 0);
+  const coresEmpresa = ["#0A9E7F", "#2F6FDE", "#B86E00", "#7C5CD6"];
 
-  const resumoFrota = useMemo(() => resumoPorContrato(dados.veiculos, dados.movimentos, dataRef), [dados.veiculos, dados.movimentos, dataRef]);
+  // campanhas em aberto (as mais próximas primeiro)
+  const campanhas = useMemo(
+    () =>
+      dados.campanhas
+        .filter((c) => !STATUS_CAMPANHA_QUE_LIBERAM.includes(c.status) && c.fim >= hoje)
+        .sort((a, b) => a.inicio.localeCompare(b.inicio))
+        .map((c) => {
+          const membros = dados.alocacoes.filter((a) => a.campanhaId === c.id).map((a) => vagaPorId.get(a.vagaId)).filter((v): v is NonNullable<typeof v> => !!v);
+          return { c, membros, conf: c.necessidade.length ? conferirNecessidade(c.necessidade, membros, []) : null };
+        }),
+    [dados.campanhas, dados.alocacoes, vagaPorId, hoje]
+  );
 
-  const pendentes = useMemo(() => {
-    const alocs = regra.alocacoes;
-    return dados.campanhas
-      .filter((c) => !STATUS_CAMPANHA_QUE_LIBERAM.includes(c.status) && c.fim >= hoje)
-      .map((c) => ({ c, at: atendimentoDaCampanha({ ...regra, alocacoes: alocs }, c) }))
-      .filter((x) => x.at.pessoasAlocadas === 0 && x.at.atendimento !== "CAPACIDADE SUFICIENTE");
-  }, [dados.campanhas, regra, hoje]);
-
-  const t = painel.totais;
-
-  // equipes por contrato (gráfico de capacidade), nos cinco estados
-  const porContrato = useMemo(() => {
-    const m = new Map<string, { projeto: string; n: Record<EstadoVisual, number>; total: number }>();
-    for (const l of painel.equipes) {
-      const x = m.get(l.projeto) ?? { projeto: l.projeto, n: { disponivel: 0, alocada: 0, incompleta: 0, ausencia: 0, inativa: 0 }, total: 0 };
-      x.n[estadoVisual(l)]++;
-      x.total++;
-      m.set(l.projeto, x);
-    }
-    return [...m.values()].sort((a, b) => (a.projeto === A_DEFINIR ? 1 : b.projeto === A_DEFINIR ? -1 : a.projeto.localeCompare(b.projeto)));
-  }, [painel.equipes]);
+  const reserva = useMemo(() => dados.vagas.filter((v) => equipePorId.get(v.equipeId)?.grupo === "Apoio"), [dados.vagas, equipePorId]);
+  const temContrato = painel.equipes.some((l) => l.projeto && l.projeto !== "A definir");
+  const totalViaturas = dados.veiculos.length;
+  const pct = (n: number, d: number) => (d > 0 ? `${Math.round((n / d) * 100)}%` : "0%");
 
   return (
-    <div className="space-y-7">
+    <div className="space-y-5">
       <CabecalhoPagina
         titulo="Painel"
-        subtitulo={`Situação das equipes de campo em ${fmtDia(dataRef)}${dataRef === hoje ? " (hoje)" : ""}.`}
+        subtitulo={`As ${painel.totais.equipes} equipes de campo em ${fmtDia(dataRef)}${dataRef === hoje ? " (hoje)" : ""}.`}
         acoes={
           <>
             <label className="flex items-center gap-2 rounded-lg border border-line bg-white px-3 py-1.5 text-sm text-gray-600">
               <IcCalendario tam={16} />
-              <span className="text-xs font-medium">Data de referência</span>
+              <span className="text-xs font-medium">Data</span>
               <input type="date" value={dataRef} onChange={(e) => e.target.value && setDataRef(e.target.value)} className="bg-transparent text-sm font-medium text-ink focus:outline-none" />
             </label>
-            {dataRef !== hoje && (
-              <button onClick={() => setDataRef(hoje)} className="btn-ghost">
-                Voltar para hoje
+            {[7, 30, 60].map((n) => (
+              <button key={n} onClick={() => setDataRef(somarDias(hoje, n))} className={`btn-ghost btn-sm ${dataRef === somarDias(hoje, n) ? "!border-brand !text-brand-dark" : ""}`}>
+                +{n} dias
               </button>
+            ))}
+            {dataRef !== hoje && (
+              <button onClick={() => setDataRef(hoje)} className="btn-ghost btn-sm">
+                Hoje
+              </button>
+            )}
+            {dados.podeEditar && (
+              <Link href="/montar" className="btn-primary">
+                <IcMais tam={16} /> Nova campanha
+              </Link>
             )}
           </>
         }
       />
 
-      {/* indicadores */}
-      <section className="grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-6" aria-label="Indicadores">
-        <Kpi rotulo="Equipes" valor={t.equipes} sub={`${t.pessoas.vagas} vagas no total`} />
-        <Kpi rotulo="Disponíveis" valor={t.disponiveis} cor={COR.livre} sub="completas e livres" />
-        <Kpi rotulo="Alocadas" valor={t.alocadas} cor={COR.alocada} sub="em campanha" />
-        <Kpi rotulo="Indisponíveis" valor={t.indisponiveis} cor={COR.ausente} sub="incompletas ou com ausência" />
-        <Kpi rotulo="Pessoas livres" valor={t.pessoas.livres} cor={COR.livre} sub={`de ${t.pessoas.preenchidas} com profissional`} />
-        <Kpi rotulo="Vagas abertas" valor={t.pessoas.abertas} cor={COR.aberta} sub="sem profissional" />
-      </section>
-
-      {/* resumo por grupo */}
-      <section aria-label="Resumo por grupo">
-        <h2 className="mb-2.5 font-display text-[15px] font-semibold tracking-tight">Resumo por grupo</h2>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {painel.grupos.map((g) => (
-            <article key={g.grupo} className="card p-5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <span className="h-3 w-3 rotate-45 rounded-[3px]" style={{ background: corGrupo(g.grupo) }} />
-                  <h3 className="font-display text-[17px] font-semibold tracking-tight">{g.grupo}</h3>
-                </div>
-                <span className="chip-mute">
-                  {g.total} equipe{g.total === 1 ? "" : "s"}
-                </span>
-              </div>
-
-              <div className="mt-4 grid grid-cols-3 gap-3 text-center">
-                <div>
-                  <div className="num font-display text-2xl font-semibold" style={{ color: COR.livre }}>{g.disponiveis}</div>
-                  <div className="text-[11px] font-medium text-gray-500">Disponíveis</div>
-                </div>
-                <div>
-                  <div className="num font-display text-2xl font-semibold" style={{ color: COR.alocada }}>{g.alocadas}</div>
-                  <div className="text-[11px] font-medium text-gray-500">Alocadas</div>
-                </div>
-                <div>
-                  <div className="num font-display text-2xl font-semibold" style={{ color: COR.ausente }}>{g.indisponiveis}</div>
-                  <div className="text-[11px] font-medium text-gray-500">Indisponíveis</div>
-                </div>
-              </div>
-              <div className="mt-4">
-                <BarraPartes
-                  partes={[
-                    { n: g.disponiveis, cor: COR.livre, rotulo: "disponíveis" },
-                    { n: g.alocadas, cor: COR.alocada, rotulo: "alocadas" },
-                    { n: g.indisponiveis, cor: COR.ausente, rotulo: "indisponíveis" },
-                  ]}
-                />
-              </div>
-
-              <div className="mt-5 border-t border-line pt-4">
-                <div className="mb-2 flex items-baseline justify-between text-xs text-gray-500">
-                  <span>Pessoas</span>
-                  <span>
-                    <strong className="num text-ink">{g.pessoas.preenchidas}</strong> de {g.pessoas.vagas} vagas preenchidas
-                  </span>
-                </div>
-                <BarraPartes
-                  alto={10}
-                  partes={[
-                    { n: g.pessoas.livres, cor: COR.livre, rotulo: "livres" },
-                    { n: g.pessoas.alocadas, cor: COR.alocada, rotulo: "alocadas" },
-                    { n: g.pessoas.ausentes, cor: COR.ausente, rotulo: "ausentes" },
-                    { n: g.pessoas.abertas, cor: "#F2D48B", rotulo: "vagas abertas", listrada: true },
-                  ]}
-                />
-                <div className="mt-2">
-                  <Legenda
-                    itens={[
-                      { cor: COR.livre, rotulo: "livres", n: g.pessoas.livres },
-                      { cor: COR.alocada, rotulo: "alocadas", n: g.pessoas.alocadas },
-                      { cor: COR.ausente, rotulo: "ausentes", n: g.pessoas.ausentes },
-                      { cor: "#F2D48B", rotulo: "abertas", n: g.pessoas.abertas },
-                    ]}
-                  />
-                </div>
-              </div>
-            </article>
-          ))}
+      {/* resumo */}
+      <section className="card overflow-hidden" aria-label="Resumo">
+        <div className="grid grid-cols-2 divide-x divide-y divide-line sm:grid-cols-3 lg:grid-cols-6 lg:divide-y-0">
+          <Indicador rotulo="Equipes" valor={painel.totais.equipes} sub={`${t.vagas} vagas · ${totalViaturas} viaturas`} />
+          <Indicador rotulo="Com profissional" valor={t.preenchidas} sub={`${pct(t.preenchidas, t.vagas)} das vagas`} />
+          <Indicador rotulo="Livres" valor={t.livres} sub="podem ser escaladas" cor={COR.livre} />
+          <Indicador rotulo="Em campanha" valor={t.alocadas} sub={`${campanhas.length} campanha${campanhas.length === 1 ? "" : "s"} em aberto`} cor={COR.alocada} />
+          <Indicador rotulo="Ausentes" valor={t.ausentes} sub="férias, atestado, afastamento" cor={COR.ausente} />
+          <Indicador rotulo="Vagas abertas" valor={t.abertas} sub="sem profissional" cor={COR.aberta} />
         </div>
-      </section>
-
-      {/* situação das equipes */}
-      <section aria-label="Situação das equipes">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="font-display text-[15px] font-semibold tracking-tight">Situação das equipes</h2>
-          <Segmentado valor={visao} onChange={setVisao} opcoes={[{ id: "cards", rotulo: "Cartões" }, { id: "tabela", rotulo: "Tabela" }]} />
-        </div>
-
-        {visao === "cards" ? (
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {painel.equipes.map((l) => (
-              <CartaoEquipe key={l.id} l={l} cor={corDoContrato(l.projeto)} comp={composicao.get(l.id)!} viaturas={viaturasPorEquipe.get(l.id) ?? 0} />
-            ))}
-          </div>
-        ) : (
-          <div className="card overflow-x-auto">
-            <table className="tbl">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Contrato</th>
-                  <th>Grupo</th>
-                  <th>Equipe / base</th>
-                  <th>Status da equipe</th>
-                  <th>Situação RH</th>
-                  <th className="text-right">Preenchidas</th>
-                  <th className="text-right">Alocações</th>
-                  <th>Disponibilidade</th>
-                </tr>
-              </thead>
-              <tbody>
-                {painel.equipes.map((l) => {
-                  const ev = ESTADO_VISUAL[estadoVisual(l)];
-                  return (
-                    <tr key={l.id}>
-                      <td className="font-mono text-[13px] font-medium">{l.codigo}</td>
-                      <td>
-                        <span className="inline-flex items-center gap-2">
-                          <PontoContrato cor={corDoContrato(l.projeto)} />
-                          {rotuloContrato(l.projeto)}
-                        </span>
-                      </td>
-                      <td className="text-gray-600">{l.grupo}</td>
-                      <td className="font-medium">{l.nome}</td>
-                      <td className="text-gray-600">{l.status}</td>
-                      <td className="text-gray-600">{l.situacaoRh}</td>
-                      <td className="num text-right">
-                        {l.nomesPreenchidos}/{l.vagasPrevistas}
-                      </td>
-                      <td className="num text-right">{l.alocacoes}</td>
-                      <td>
-                        <span className={ev.chip}>{l.disponibilidade}</span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {/* gráficos */}
-      <section className="grid gap-4 lg:grid-cols-2" aria-label="Capacidade">
-        <div className="card p-5">
-          <h3 className="card-t">Capacidade das equipes por contrato</h3>
-          <p className="mb-4 text-xs text-gray-500">Equipes disponíveis, alocadas e indisponíveis em cada contrato.</p>
-          <div className="space-y-3">
-            {porContrato.map((c) => (
-              <div key={c.projeto}>
-                <div className="mb-1 flex items-center justify-between text-sm">
-                  <span className="inline-flex items-center gap-2 font-medium">
-                    <PontoContrato cor={corDoContrato(c.projeto)} />
-                    {rotuloContrato(c.projeto)}
-                  </span>
-                  <span className="num text-xs text-gray-500">{c.total} equipe{c.total === 1 ? "" : "s"}</span>
-                </div>
-                <BarraPartes alto={14} partes={(Object.keys(ESTADO_VISUAL) as EstadoVisual[]).map((k) => ({ n: c.n[k], cor: ESTADO_VISUAL[k].cor, rotulo: ESTADO_VISUAL[k].rotulo.toLowerCase() }))} />
-              </div>
-            ))}
-          </div>
-          <div className="mt-4">
-            <Legenda itens={(Object.keys(ESTADO_VISUAL) as EstadoVisual[]).filter((k) => k !== "inativa").map((k) => ({ cor: ESTADO_VISUAL[k].cor, rotulo: ESTADO_VISUAL[k].rotulo.toLowerCase() }))} />
-          </div>
-        </div>
-
-        <div className="card p-5">
-          <h3 className="card-t">Pessoas livres nas próximas 16 semanas</h3>
-          <p className="mb-3 text-xs text-gray-500">Considera férias, atestados, campanhas já escaladas e quem ainda está em outro contrato.</p>
-          <div className="flex h-44 items-end gap-1" role="img" aria-label="Pessoas livres por semana">
-            {serieSemanal.map((p) => (
-              <div key={p.data} className="flex min-w-0 flex-1 flex-col items-center">
-                <div className="flex h-36 w-full items-end justify-center gap-[2px]">
-                  {grupos.map((g) => {
-                    const v = p.porGrupo[g]?.livres ?? 0;
-                    return <div key={g} title={`${g}: ${v} livres na semana de ${fmtDia(p.data)}`} className="w-full max-w-[14px] rounded-t" style={{ height: `${(v / maxLivres) * 100}%`, minHeight: v > 0 ? 3 : 0, background: corGrupo(g) }} />;
-                  })}
-                </div>
-                <div className="num mt-1.5 text-[10px] text-gray-400">{fmtDiaCurto(p.data)}</div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-2 flex gap-4 text-[11px] text-gray-500">
-            {grupos.map((g) => (
-              <span key={g} className="inline-flex items-center gap-1.5">
-                <span className="inline-block h-2 w-2 rounded-sm" style={{ background: corGrupo(g) }} />
-                {g}
+        <div className="border-t border-line px-4 py-3">
+          <BarraPartes
+            alto={10}
+            partes={[
+              { n: t.livres, cor: COR.livre, rotulo: "livres" },
+              { n: t.alocadas, cor: COR.alocada, rotulo: "em campanha" },
+              { n: t.ausentes, cor: COR.ausente, rotulo: "ausentes" },
+              { n: t.abertas, cor: "#F2D48B", rotulo: "vagas abertas", listrada: true },
+            ]}
+          />
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <Legenda
+              series={[
+                { nome: `${t.livres} livres`, cor: COR.livre },
+                { nome: `${t.alocadas} em campanha`, cor: COR.alocada },
+                { nome: `${t.ausentes} ausentes`, cor: COR.ausente },
+                { nome: `${t.abertas} vagas abertas`, cor: "#F2D48B", listrada: true },
+              ]}
+            />
+            {painel.reserva.vagas > 0 && (
+              <span className="text-[11.5px] text-gray-500">
+                + {painel.reserva.vagas} na reserva de apoio ({painel.reserva.livres} livre{painel.reserva.livres === 1 ? "" : "s"} em {fmtDiaCurto(dataRef)})
               </span>
-            ))}
-            <span className="ml-auto">máx. {maxLivres}</span>
+            )}
           </div>
         </div>
       </section>
 
-      <section className="card" aria-label="Agora e depois">
-        <div className="card-h">
-          <div>
-            <h3 className="card-t">Disponibilidade agora e depois</h3>
-            <p className="text-xs text-gray-500">Equipes disponíveis e pessoas livres em cada data, com as campanhas e ausências já lançadas.</p>
-          </div>
-        </div>
+      {/* disponibilidade ao longo do tempo + vagas abertas */}
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+        <Secao titulo="Disponibilidade nas próximas 16 semanas" sub="Pessoas livres, em campanha e ausentes a cada segunda-feira. Clique numa semana para ver quem está livre.">
+          <ColunasEmpilhadas colunas={colunas} series={series} altura={230} rotuloEixo="Pessoas por situação a cada semana" aoClicar={(i) => router.push(`/montar?inicio=${semanas[i]}&fim=${somarDias(semanas[i], 6)}`)} />
+          <Legenda series={series} className="mt-2" />
+        </Secao>
+
+        <Secao titulo="Vagas abertas por função" sub={`${abertas.total} vagas sem profissional — onde contratar ou remanejar.`}>
+          {abertas.itens.length === 0 ? (
+            <p className="text-sm text-gray-400">Todas as vagas têm profissional.</p>
+          ) : (
+            <>
+              <BarrasHorizontais
+                itens={abertas.itens.slice(0, 8).map((i) => ({ rotulo: i.cargo, partes: i.partes }))}
+                series={abertas.empresas.map((e, k) => ({ nome: e, cor: coresEmpresa[k % coresEmpresa.length] }))}
+              />
+              {abertas.itens.length > 8 && <p className="mt-2 text-[11px] text-gray-400">+ {abertas.itens.length - 8} outras funções</p>}
+              <Legenda className="mt-3" series={abertas.empresas.map((e, k) => ({ nome: e, cor: coresEmpresa[k % coresEmpresa.length] }))} />
+            </>
+          )}
+        </Secao>
+      </div>
+
+      {/* equipes */}
+      <Secao
+        titulo="Equipes"
+        sub={`Situação de cada equipe em ${fmtDia(dataRef)}.`}
+        semPadding
+        direita={
+          <Link href="/equipes" className="text-xs font-semibold text-brand-dark hover:underline">
+            ver composição
+          </Link>
+        }
+      >
         <div className="overflow-x-auto">
           <table className="tbl">
             <thead>
               <tr>
-                <th>Grupo</th>
-                {marcos.map((m) => (
-                  <th key={m.n} className="text-right">
-                    {m.n === 0 ? "Hoje" : `+${m.n} dias`}
-                    <div className="font-normal normal-case text-gray-400">{fmtDiaCurto(m.dia)}</div>
-                  </th>
-                ))}
+                <th>Equipe</th>
+                {temContrato && <th>Contrato</th>}
+                <th className="w-[260px]">Pessoas</th>
+                <th className="text-right">Livres</th>
+                <th className="text-right">Viaturas</th>
+                <th>Em campanha / situação</th>
+                <th />
               </tr>
             </thead>
             <tbody>
-              {grupos.map((g) => (
-                <tr key={g}>
-                  <td className="font-medium">
-                    <span className="inline-flex items-center gap-2">
-                      <span className="h-2.5 w-2.5 rotate-45 rounded-[2px]" style={{ background: corGrupo(g) }} />
-                      {g}
-                    </span>
-                  </td>
-                  {serie.map((p) => (
-                    <td key={p.data} className="num text-right">
-                      <span className="font-semibold" style={{ color: COR.livre }}>{p.porGrupo[g].equipesDisponiveis}</span>
-                      <span className="text-gray-400">{p.porGrupo[g].equipesDisponiveis === 1 ? " equipe · " : " equipes · "}</span>
-                      <span className="font-semibold">{p.porGrupo[g].livres}</span>
-                      <span className="text-gray-400"> livres</span>
+              {painel.equipes.map((l) => {
+                const c = composicao.get(l.id)!;
+                const ev = ESTADO_VISUAL[estadoVisual(l)];
+                const codigos = [...(campanhasDaEquipe.get(l.id) ?? [])];
+                return (
+                  <tr key={l.id}>
+                    <td className="py-2">
+                      <div className="text-[13px] font-medium text-ink">{l.nome}</div>
+                      <div className="font-mono text-[10.5px] text-gray-400">{l.codigo}</div>
                     </td>
-                  ))}
-                </tr>
-              ))}
+                    {temContrato && <td className="py-2 text-[13px] text-gray-600">{rotuloContrato(l.projeto)}</td>}
+                    <td className="py-2">
+                      <div className="flex items-center gap-3">
+                        <div className="w-36 shrink-0">
+                          <BarraPartes
+                            alto={8}
+                            partes={[
+                              { n: c.livres, cor: COR.livre, rotulo: "livres" },
+                              { n: c.alocadas, cor: COR.alocada, rotulo: "em campanha" },
+                              { n: c.ausentes, cor: COR.ausente, rotulo: "ausentes" },
+                              { n: c.abertas, cor: "#F2D48B", rotulo: "vagas abertas", listrada: true },
+                            ]}
+                          />
+                        </div>
+                        <span className="num whitespace-nowrap text-[12px] text-gray-600">
+                          <strong className="text-ink">{l.nomesPreenchidos}</strong>/{l.vagasPrevistas} vagas
+                        </span>
+                      </div>
+                    </td>
+                    <td className="num py-2 text-right text-[13px] font-semibold" style={{ color: c.livres > 0 ? COR.livre : undefined }}>
+                      {c.livres}
+                    </td>
+                    <td className="num py-2 text-right text-[13px]">{viaturasPorEquipe.get(l.id) ?? 0}</td>
+                    <td className="py-2">
+                      {codigos.length > 0 ? (
+                        <span className="chip-info font-mono">{codigos.join(", ")}</span>
+                      ) : estadoVisual(l) !== "incompleta" ? (
+                        <span className={ev.chip} title={ev.dica}>
+                          {ev.rotulo}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right">
+                      <Link href={`/quadro?equipe=${l.id}`} className="text-xs font-semibold text-brand-dark hover:underline">
+                        quadro
+                      </Link>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
+            <tfoot>
+              <tr className="border-t border-line bg-gray-50 text-[12px] font-semibold text-gray-700">
+                <td className="px-3 py-2">{painel.totais.equipes} equipes</td>
+                {temContrato && <td />}
+                <td className="num px-3 py-2">
+                  {t.preenchidas}/{t.vagas} vagas com profissional
+                </td>
+                <td className="num px-3 py-2 text-right">{t.livres}</td>
+                <td className="num px-3 py-2 text-right">{[...viaturasPorEquipe.values()].reduce((s, n) => s + n, 0)}</td>
+                <td colSpan={2} />
+              </tr>
+            </tfoot>
           </table>
         </div>
-      </section>
+      </Secao>
 
-      <section className="grid gap-4 lg:grid-cols-2" aria-label="Contratar ou realocar">
-        <div className="card p-5">
-          <h3 className="card-t">Capacidade × demanda</h3>
-          <p className="mb-3 text-xs text-gray-500">Equipes completas contra as equipes pedidas pelas campanhas em andamento: dá para ver se falta gente.</p>
-          <div className="space-y-4">
-            {grupos.map((g) => (
-              <div key={g}>
-                <div className="mb-1.5 flex items-center gap-2 text-sm font-semibold">
-                  <span className="h-2.5 w-2.5 rotate-45 rounded-[2px]" style={{ background: corGrupo(g) }} />
-                  {g}
-                </div>
-                <div className="grid grid-cols-4 gap-2">
-                  {balancos.map((b) => {
-                    const l = b.linhas.find((x) => x.grupo === g);
-                    if (!l) return <div key={b.n} />;
-                    const cls = l.saldo < 0 ? "bg-bad-soft text-bad" : l.saldo === 0 ? "bg-warn-soft text-warn" : "bg-ok-soft text-ok";
-                    return (
-                      <div key={b.n} className={`rounded-xl px-3 py-2 ${cls}`}>
-                        <div className="text-[10px] font-semibold uppercase tracking-wide opacity-80">{b.n === 0 ? "Hoje" : `+${b.n} dias`}</div>
-                        <div className="num font-display text-xl font-semibold leading-tight">{l.saldo > 0 ? `+${l.saldo}` : l.saldo}</div>
-                        <div className="text-[10px] opacity-80">
-                          {l.equipesCompletas} completas · {l.demandaEquipes} pedidas
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="card p-5">
-          <div className="flex items-baseline justify-between">
-            <h3 className="card-t">Vagas abertas por cargo</h3>
-            <span className="num text-sm font-semibold text-warn">{totalAbertas} vagas</span>
-          </div>
-          <p className="mb-3 text-xs text-gray-500">Onde falta profissional — base para decidir contratação.</p>
-          <div className="space-y-2.5">
-            {abertasPorCargo.slice(0, 8).map((c) => (
-              <div key={c.cargo}>
-                <div className="mb-1 flex items-baseline justify-between gap-3 text-sm">
-                  <span className="truncate font-medium" title={c.cargo}>{c.cargo}</span>
-                  <span className="num shrink-0 font-semibold">{c.total}</span>
-                </div>
-                <div className="flex h-2 w-full overflow-hidden rounded-full bg-gray-100">
-                  {empresas.map((e, i) => (
-                    <div key={e} title={`${e}: ${c.porEmpresa.get(e) ?? 0}`} style={{ width: `${((c.porEmpresa.get(e) ?? 0) / (abertasPorCargo[0]?.total || 1)) * 100}%`, background: i === 0 ? "#0A9E7F" : "#2F6FDE" }} />
-                  ))}
-                </div>
-                <div className="mt-0.5 text-[11px] text-gray-400">
-                  {empresas.filter((e) => c.porEmpresa.get(e)).map((e) => `${e}: ${c.porEmpresa.get(e)}`).join(" · ")}
-                  {c.emContratacao > 0 && ` · ${c.emContratacao} em contratação`}
-                </div>
-              </div>
-            ))}
-            {abertasPorCargo.length === 0 && <p className="text-sm text-gray-400">Todas as vagas têm profissional.</p>}
-          </div>
-        </div>
-      </section>
-
-      <section className="card" aria-label="Frota por contrato">
-        <div className="card-h">
-          <div>
-            <h3 className="card-t">Frota por contrato em {fmtDia(dataRef)}</h3>
-            <p className="text-xs text-gray-500">Onde cada veículo está agora.</p>
-          </div>
-          <Link href="/frota" className="btn-ghost btn-sm">
-            <IcCarro tam={15} /> Abrir frota
-          </Link>
-        </div>
-        <div className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-4">
-          {resumoFrota.map((r) => (
-            <div key={r.projeto} className="rounded-xl border border-line p-3.5">
-              <div className="flex items-center gap-2 text-sm font-semibold">
-                <PontoContrato cor={r.projeto === "Sem localização" ? "#9AA8A1" : corDoContrato(r.projeto)} />
-                {r.projeto === "Sem localização" ? r.projeto : rotuloContrato(r.projeto)}
-              </div>
-              <div className="num mt-1 font-display text-2xl font-semibold">{r.total}</div>
-              <div className="text-[11px] text-gray-500">{Object.entries(r.porStatus).map(([s, n]) => `${n} ${s.toLowerCase()}`).join(" · ")}</div>
+      <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+        <Secao
+          titulo="Campanhas em aberto"
+          sub="Cada campanha com a sua equipe."
+          semPadding
+          direita={
+            <Link href="/campanhas" className="text-xs font-semibold text-brand-dark hover:underline">
+              ver todas
+            </Link>
+          }
+        >
+          {campanhas.length === 0 ? (
+            <div className="flex flex-col items-center gap-2 px-6 py-8 text-center">
+              <p className="text-sm text-gray-500">Nenhuma campanha em aberto.</p>
+              {dados.podeEditar && (
+                <Link href="/montar" className="btn-primary btn-sm">
+                  <IcMais tam={14} /> Criar campanha
+                </Link>
+              )}
             </div>
-          ))}
-          {resumoFrota.length === 0 && <p className="text-sm text-gray-400">Nenhum veículo cadastrado.</p>}
-        </div>
-      </section>
+          ) : (
+            <ul className="divide-y divide-line">
+              {campanhas.slice(0, 7).map(({ c, membros, conf }) => (
+                <li key={c.id}>
+                  <Link href={`/montar?campanha=${c.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 hover:bg-gray-50">
+                    <div className="min-w-[180px] flex-1">
+                      <div className="text-[13px] font-medium text-ink">{nomeDaEquipeDaCampanha(c)}</div>
+                      <div className="text-[11px] text-gray-500">
+                        <span className="font-mono">{c.codigo}</span> · {rotuloContrato(c.projeto)} · {c.atividade}
+                      </div>
+                    </div>
+                    <div className="num text-[12px] text-gray-600">
+                      {fmtDiaCurto(c.inicio)} a {fmtDiaCurto(c.fim)}
+                    </div>
+                    <div className="num w-24 text-[12px] text-gray-600">
+                      <strong className="text-ink">{membros.length}</strong> pessoa{membros.length === 1 ? "" : "s"}
+                      {conf && conf.falta > 0 && <span className="block text-[11px] text-warn">faltam {conf.falta}</span>}
+                    </div>
+                    <span className={CHIP_STATUS_CAMPANHA[c.status]}>{c.status}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Secao>
 
-      {pendentes.length > 0 && (
-        <section className="card p-5" aria-label="Campanhas aguardando equipe">
-          <h3 className="card-t">Campanhas aguardando equipe</h3>
-          <ul className="mt-3 divide-y divide-line">
-            {pendentes.map(({ c, at }) => (
-              <li key={c.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm">
-                <span className="font-mono text-[13px] font-semibold">{c.codigo}</span>
-                <span className="text-gray-600">
-                  {c.projeto} · {c.grupo} · {fmtDia(c.inicio)} a {fmtDia(c.fim)} · pede {c.qtdEquipes} equipe{c.qtdEquipes > 1 ? "s" : ""}
-                </span>
-                <span className={CHIP_STATUS_CAMPANHA[c.status]}>{c.status}</span>
-                <span className={CHIP_ATENDIMENTO[at.atendimento]}>{at.atendimento}</span>
-                <span className="text-xs text-gray-500">{at.pessoasLivresNoGrupo} pessoas livres no período</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+        <Secao titulo="Reserva de apoio" sub="Pessoas de outro contrato que ficam livres: podem entrar em qualquer campanha." semPadding>
+          {reserva.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-gray-400">Sem pessoas na reserva.</p>
+          ) : (
+            <ul className="divide-y divide-line">
+              {reserva.map((v) => (
+                <li key={v.id} className="px-4 py-2">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="truncate text-[13px] font-medium text-ink">{nomeDe(v)}</span>
+                    <span className="num shrink-0 text-[11.5px] text-gray-500">{v.disponivelAPartir ? `livre desde ${fmtDiaCurto(v.disponivelAPartir)}` : "livre"}</span>
+                  </div>
+                  <div className="truncate text-[11px] text-gray-500">
+                    {v.cargo}
+                    {v.destino ? ` · vai para ${v.destino.toLowerCase()}` : ""}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Secao>
+      </div>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------- cartão de equipe
-
-function CartaoEquipe({ l, cor, comp, viaturas }: { l: LinhaEquipe; cor: string; comp: { livres: number; alocadas: number; ausentes: number; abertas: number; total: number }; viaturas: number }) {
-  const ev = ESTADO_VISUAL[estadoVisual(l)];
-  return (
-    <article className="card flex flex-col p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="font-mono text-[12px] font-medium text-gray-500">{l.codigo}</span>
-            <span className="text-gray-300">·</span>
-            <span className="text-[12px] text-gray-500">{l.grupo}</span>
-          </div>
-          <h3 className="mt-0.5 font-display text-[14.5px] font-semibold leading-snug tracking-tight">{l.nome}</h3>
-        </div>
-        <span className={ev.chip} title={ev.dica}>{ev.rotulo}</span>
-      </div>
-
-      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-        <span className="inline-flex items-center gap-1.5 rounded-md bg-gray-100 px-2 py-1 font-medium text-gray-700">
-          <PontoContrato cor={cor} tam={9} />
-          {rotuloContrato(l.projeto)}
-        </span>
-        {l.gestor && <span className="text-gray-500">gestor {l.gestor}</span>}
-      </div>
-
-      <div className="mt-4">
-        <div className="mb-1.5 flex items-baseline justify-between text-xs text-gray-500">
-          <span>
-            <strong className="num text-base font-semibold text-ink">{l.nomesPreenchidos}</strong>/{l.vagasPrevistas} vagas preenchidas
-          </span>
-          <span className="num">{Math.round((l.nomesPreenchidos / Math.max(1, l.vagasPrevistas)) * 100)}%</span>
-        </div>
-        <BarraPartes
-          alto={10}
-          partes={[
-            { n: comp.livres, cor: COR.livre, rotulo: "livres" },
-            { n: comp.alocadas, cor: COR.alocada, rotulo: "alocadas" },
-            { n: comp.ausentes, cor: COR.ausente, rotulo: "ausentes" },
-            { n: comp.abertas, cor: "#F2D48B", rotulo: "vagas abertas", listrada: true },
-          ]}
-        />
-        <div className="mt-2">
-          <Legenda
-            itens={[
-              { cor: COR.livre, rotulo: "livres", n: comp.livres },
-              { cor: COR.alocada, rotulo: "aloc.", n: comp.alocadas },
-              { cor: COR.ausente, rotulo: "aus.", n: comp.ausentes },
-              { cor: "#F2D48B", rotulo: "abertas", n: comp.abertas },
-            ]}
-          />
-        </div>
-      </div>
-
-      <div className="mt-auto flex items-center justify-between border-t border-line pt-3 text-xs text-gray-500">
-        <span className="inline-flex items-center gap-1.5">
-          <IcCarro tam={15} />
-          {viaturas} viatura{viaturas === 1 ? "" : "s"}
-        </span>
-        <Link href={`/quadro?equipe=${l.id}`} className="font-semibold text-brand-dark hover:underline">
-          Ver no quadro
-        </Link>
-      </div>
-    </article>
   );
 }

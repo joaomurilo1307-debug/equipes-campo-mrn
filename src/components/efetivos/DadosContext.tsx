@@ -5,7 +5,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { alocacoesQueSeguram, indexar, type DadosEfetivos, type Indice } from "@/lib/efetivos/disponibilidade";
 import { localizacaoNoDia, type MovimentoBase } from "@/lib/efetivos/veiculos";
-import { chamar, hojeBr, type Campanha, type DadosTela, type Equipe, type Vaga, type Veiculo } from "./comum";
+import { chamar, ehReserva, hojeBr, type Campanha, type DadosTela, type Equipe, type Vaga, type Veiculo } from "./comum";
 
 type Ctx = {
   dados: DadosTela;
@@ -15,6 +15,8 @@ type Ctx = {
   recarregar: () => Promise<void>;
   ocultarNomes: boolean;
   setOcultarNomes: (v: boolean) => void;
+  /** As equipes de campo (sem a reserva de apoio). */
+  equipesCampo: Equipe[];
   equipePorId: Map<string, Equipe>;
   vagaPorId: Map<string, Vaga>;
   campanhaPorId: Map<string, Campanha>;
@@ -109,6 +111,7 @@ export function DadosProvider({ children }: { children: ReactNode }) {
       idx: indexar(regra),
       veiculosPorEquipe,
       ocupantesPorVeiculo,
+      equipesCampo: dados.equipes.filter((e) => !ehReserva(e)),
       equipePorId: new Map(dados.equipes.map((e) => [e.id, e])),
       vagaPorId: new Map(dados.vagas.map((v) => [v.id, v])),
       campanhaPorId: new Map(dados.campanhas.map((c) => [c.id, c])),

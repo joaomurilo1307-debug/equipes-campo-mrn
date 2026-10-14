@@ -46,8 +46,8 @@ export function dadosMock(): any {
   const n1 = nomeadas("EQ-01");
   const n3 = nomeadas("EQ-03");
   const campanhas = [
-    { id: "c1", codigo: "CAM-001", recebidaEm: "2026-10-02", solicitante: "MRN — Meio Ambiente", projeto: "3636 PNM", grupo: "Fauna", atividade: "Resgate", local: "Flanco Norte · Trecho 4", inicio: "2026-10-19", fim: "2026-11-20", qtdEquipes: 1, prioridade: "Alta", status: "Confirmada", observacao: null },
-    { id: "c2", codigo: "CAM-002", recebidaEm: "2026-10-06", solicitante: "MRN — Lavra", projeto: "3686 LAVRA", grupo: "Fauna", atividade: "Afugentamento", local: "Frente de lavra 02", inicio: "2026-11-02", fim: "2026-12-11", qtdEquipes: 2, prioridade: "Média", status: "Planejada", observacao: null },
+    { id: "c1", codigo: "CAM-001", recebidaEm: "2026-10-02", solicitante: "MRN — Meio Ambiente", projeto: "A definir", grupo: "Fauna", atividade: "Resgate", local: "Flanco Norte · Trecho 4", equipeNome: "Equipe Resgate Flanco Norte", necessidade: [{ cargo: "Biólogo de Fauna", qtd: 2 }, { cargo: "Auxiliar", qtd: 6 }], inicio: "2026-10-19", fim: "2026-11-20", qtdEquipes: 1, prioridade: "Alta", status: "Confirmada", observacao: null },
+    { id: "c2", codigo: "CAM-002", recebidaEm: "2026-10-06", solicitante: "MRN — Lavra", projeto: "A definir", grupo: "Fauna", atividade: "Afugentamento", local: "Frente de lavra 02", equipeNome: null, necessidade: [], inicio: "2026-11-02", fim: "2026-12-11", qtdEquipes: 2, prioridade: "Média", status: "Planejada", observacao: null },
   ];
   const alocacoes = [
     ...n1.map((v, i) => ({ id: `a1-${i}`, campanhaId: "c1", vagaId: v.id, inicio: "2026-10-19", fim: "2026-11-20" })),
@@ -62,10 +62,7 @@ export function dadosMock(): any {
     const eq = equipes.find((e) => e.codigo === v.equipeCodigo)!;
     return { id: `m${i + 1}`, veiculoId: v.ref, inicio: "2026-10-07", fim: null as string | null, projeto: eq.projeto, equipeId: eq.id, campanhaId: null as string | null, local: null as string | null, observacao: "Posição inicial segundo a planilha" };
   });
-  // contratos de exemplo SÓ no mock, para ver como ficam as telas quando o João/Samuel cadastrarem
-  const contratos = [
-    { id: "ct1", codigo: "3636 PNM", nome: "Exemplo de contrato", cliente: "MRN", gestor: null, local: null, observacao: null, ativo: true },
-  ];
+  const contratos: { id: string; codigo: string; nome: string | null; cliente: string | null; gestor: string | null; local: string | null; observacao: string | null; ativo: boolean }[] = [];
   if (veiculos[1]) {
     veiculos[1].placa = "RTX-4B21";
     veiculos[1].modelo = "Hilux 4x4";

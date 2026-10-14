@@ -127,3 +127,20 @@ export function CabecalhoPagina({ titulo, subtitulo, acoes }: { titulo: string; 
 export function PontoContrato({ cor, tam = 10 }: { cor: string; tam?: number }) {
   return <span className="inline-block shrink-0 rounded-[3px]" style={{ width: tam, height: tam, background: cor, transform: "rotate(45deg) scale(.82)" }} aria-hidden="true" />;
 }
+
+/** Bloco da página: faixa de título (com ações à direita) e corpo. */
+export function Secao({ titulo, sub, direita, children, semPadding }: { titulo: string; sub?: string; direita?: ReactNode; children: ReactNode; semPadding?: boolean }) {
+  return (
+    <section className="card">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-2.5">
+        <div className="min-w-0">
+          <h2 className="font-display text-[14px] font-semibold tracking-tight text-ink">{titulo}</h2>
+          {sub && <p className="text-[11.5px] text-gray-500">{sub}</p>}
+        </div>
+        {direita}
+      </div>
+      <div className={semPadding ? "" : "p-4"}>{children}</div>
+    </section>
+  );
+}
+

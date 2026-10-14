@@ -310,6 +310,8 @@ export function lerPlanilhaEfetivos(dados: ArrayBuffer | Uint8Array | Buffer, op
 // ---------------------------------------------------------------- formato "DIVISÃO DE EQUIPES"
 
 const PROJETO_A_DEFINIR = "A definir";
+/** Codigo da reserva de pessoas vindas de outro contrato; nao e uma equipe de campo. */
+export const CODIGO_RESERVA = "APOIO";
 
 function ehVago(v: unknown): boolean {
   const n = normalizar(v);
@@ -408,17 +410,18 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
     if (ca) {
       const k = ca.cab;
       const ano = opcoes.anoReferencia ?? new Date().getFullYear();
-      const porContrato = new Map<string, EquipeImportada>();
+      // As pessoas desta aba NAO formam uma equipe (a planilha tem so as equipes da aba DIVISAO DE EQUIPES):
+      // sao reforco de outro contrato que fica livre numa data. Ficam numa reserva unica, sem contrato.
+      let reserva: EquipeImportada | undefined;
       for (const r of la.slice(ca.indice + 1)) {
         const contrato = texto(r[k.get("contrato")!]);
         const prof = textoOuNulo(r[k.get("profissional")!]);
         if (!contrato || !prof) continue;
-        let eq = porContrato.get(contrato);
-        if (!eq) {
-          eq = { codigo: codigoEquipe(equipes.length + 1), projeto: contrato, contratoConfirmado: true, gestor: null, grupo: "Apoio", nome: `APOIO — ${contrato}`, status: "Ativa" };
-          porContrato.set(contrato, eq);
-          equipes.push(eq);
+        if (!reserva) {
+          reserva = { codigo: CODIGO_RESERVA, projeto: PROJETO_A_DEFINIR, contratoConfirmado: true, gestor: null, grupo: "Apoio", nome: "RESERVA DE APOIO (A MOBILIZAR)", status: "Ativa" };
+          equipes.push(reserva);
         }
+        const eq = reserva;
         const transicao = textoOuNulo(r[col(k, "data de tranasicao", "data de transicao")]);
         const ultimo = transicao ? ultimoDiaDeTexto(transicao, ano) : null;
         if (transicao && !ultimo) avisos.push(`Apoio ${contrato} (${prof}): não entendi a data "${transicao}"; ficou sem previsão de liberação.`);

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { STATUS_EQUIPE, STATUS_VAGA, estadoDaVaga, ordenarGrupos, temNome } from "@/lib/efetivos/disponibilidade";
 import { localizacaoNoDia } from "@/lib/efetivos/veiculos";
 import { useDados } from "./DadosContext";
-import { A_DEFINIR, CHIP_VEICULO, SEM_CONTRATO, chamar, contratosConhecidos, corDoContrato, fmtDia, rotuloContrato, type Equipe, type Vaga, type Veiculo } from "./comum";
+import { A_DEFINIR, CHIP_VEICULO, SEM_CONTRATO, chamar, ehReserva, contratosConhecidos, corDoContrato, fmtDia, rotuloContrato, type Equipe, type Vaga, type Veiculo } from "./comum";
 import { IcBusca, IcCalendario, IcLapis, IcMais } from "./icones";
 import { CampoInline } from "./inline";
 import ImportarPlanilha from "./ImportarPlanilha";
@@ -19,8 +19,8 @@ const CHIP_SITUACAO: Record<string, string> = { LIVRE: "chip-ok", ALOCADA: "chip
 const ROTULO_SITUACAO: Record<string, string> = { LIVRE: "Livre", ALOCADA: "Escalada", AUSENTE: "Ausente", VAGA_ABERTA: "Aberta" };
 
 export default function EquipesPessoas() {
-  const { dados, vagasPorEquipe } = useDados();
-  const grupos = ordenarGrupos(dados.equipes.map((e) => e.grupo));
+  const { dados, vagasPorEquipe, equipesCampo } = useDados();
+  const grupos = ordenarGrupos(equipesCampo.map((e) => e.grupo));
   const [sel, setSel] = useState<string | null>(null);
   const [filtroGrupo, setFiltroGrupo] = useState("");
   const [busca, setBusca] = useState("");
@@ -30,7 +30,7 @@ export default function EquipesPessoas() {
   // abre na equipe pedida (?equipe=ID) ou na primeira
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("equipe");
-    setSel(id && dados.equipes.some((e) => e.id === id) ? id : dados.equipes[0]?.id ?? null);
+    setSel(id && dados.equipes.some((e) => e.id === id) ? id : equipesCampo[0]?.id ?? null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const equipeSel = dados.equipes.find((e) => e.id === sel) ?? null;
@@ -41,9 +41,10 @@ export default function EquipesPessoas() {
     if (!t) return true;
     return `${e.codigo} ${e.nome} ${e.projeto}`.toLowerCase().includes(t) || (vagasPorEquipe.get(e.id) ?? []).some((v) => (v.nome ?? "").toLowerCase().includes(t) || v.cargo.toLowerCase().includes(t));
   });
+  const reservaVisivel = visiveis.filter(ehReserva);
   const porContrato = useMemo(() => {
     const m = new Map<string, Equipe[]>();
-    for (const e of visiveis) {
+    for (const e of visiveis.filter((x) => !ehReserva(x))) {
       const k = !e.projeto || e.projeto === A_DEFINIR ? A_DEFINIR : e.projeto;
       if (!m.has(k)) m.set(k, []);
       m.get(k)!.push(e);
@@ -120,6 +121,22 @@ export default function EquipesPessoas() {
                   </ul>
                 </div>
               ))}
+              {reservaVisivel.map((e) => {
+                const vs = vagasPorEquipe.get(e.id) ?? [];
+                const ativa = e.id === sel;
+                return (
+                  <div key={e.id} className="border-t border-line pt-2.5">
+                    <div className="mb-1 px-1 text-[10.5px] font-semibold uppercase tracking-wider text-gray-500">Reserva (não é equipe)</div>
+                    <button onClick={() => setSel(e.id)} className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors ${ativa ? "bg-brand-soft" : "hover:bg-gray-50"}`} aria-current={ativa ? "true" : undefined}>
+                      <span className="min-w-0 flex-1">
+                        <span className={`block truncate text-[12.5px] leading-tight ${ativa ? "font-semibold text-brand-dark" : "font-medium text-ink"}`}>Apoio a mobilizar</span>
+                        <span className="block text-[10.5px] text-gray-500">pessoas vindas de outro contrato</span>
+                      </span>
+                      <span className="num shrink-0 rounded bg-white px-1.5 py-0.5 text-[10.5px] font-semibold text-gray-600 ring-1 ring-line">{vs.length}</span>
+                    </button>
+                  </div>
+                );
+              })}
               {visiveis.length === 0 && <p className="px-1 py-4 text-center text-xs text-gray-400">{dados.equipes.length === 0 ? "Nenhuma equipe ainda." : "Nenhuma equipe neste filtro."}</p>}
             </div>
           </div>
@@ -128,7 +145,7 @@ export default function EquipesPessoas() {
         {/* ficha da equipe */}
         <div className="min-w-0">
           {equipeSel ? (
-            <FichaEquipe key={equipeSel.id} equipe={equipeSel} aoExcluir={() => setSel(dados.equipes.find((e) => e.id !== equipeSel.id)?.id ?? null)} />
+            <FichaEquipe key={equipeSel.id} equipe={equipeSel} aoExcluir={() => setSel(equipesCampo.find((e) => e.id !== equipeSel.id)?.id ?? null)} />
           ) : (
             <div className="card">
               <Vazio titulo="Nenhuma equipe selecionada" texto={dados.podeEditar ? "Crie a primeira equipe ou importe a planilha do Samuel." : undefined} acao={dados.podeEditar ? <button onClick={() => setImportar(true)} className="btn-primary">Importar planilha</button> : undefined} />

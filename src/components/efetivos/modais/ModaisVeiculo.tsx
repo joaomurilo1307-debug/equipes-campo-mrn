@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { STATUS_VEICULO, localizacaoNoDia } from "@/lib/efetivos/veiculos";
 import { useDados } from "../DadosContext";
-import { A_DEFINIR, chamar, contratosConhecidos, corDoContrato, fmtDia, hojeBr, rotuloContrato, type Movimento, type Veiculo } from "../comum";
+import { A_DEFINIR, chamar, contratosConhecidos, corDoContrato, fmtDia, hojeBr, rotuloContrato, type Movimento, type Veiculo, ehReserva } from "../comum";
 import { IcLapis, IcLixo } from "../icones";
 import { Aviso, Campo, Modal, PontoContrato, RodapeModal } from "../ui";
 
@@ -63,7 +63,7 @@ export function ModalMover({ veiculo, periodo, onFechar }: { veiculo: Veiculo; p
           <Campo rotulo="Equipe">
             <select value={f.equipeId} onChange={(e) => escolherEquipe(e.target.value)} className="field">
               <option value="">—</option>
-              {dados.equipes.map((e) => (
+              {dados.equipes.filter((e) => !ehReserva(e)).map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.codigo} · {e.nome}
                 </option>
@@ -156,7 +156,7 @@ function ModalPassagem({ veiculo, mov, onFechar }: { veiculo: Veiculo; mov: Movi
         <Campo rotulo="Equipe">
           <select value={f.equipeId} onChange={(e) => set("equipeId", e.target.value)} className="field">
             <option value="">—</option>
-            {dados.equipes.map((e) => (
+            {dados.equipes.filter((e) => !ehReserva(e)).map((e) => (
               <option key={e.id} value={e.id}>
                 {e.codigo} · {e.nome}
               </option>
@@ -337,7 +337,7 @@ export function ModalVeiculo({ veiculo, equipeIdPadrao, onFechar, onSalvo }: { v
                   className="field"
                 >
                   <option value="">—</option>
-                  {dados.equipes.map((e) => (
+                  {dados.equipes.filter((e) => !ehReserva(e)).map((e) => (
                     <option key={e.id} value={e.id}>
                       {e.codigo} · {e.nome}
                     </option>

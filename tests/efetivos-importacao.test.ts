@@ -133,7 +133,7 @@ test("Formato DIVISAO DE EQUIPES (semana 42): equipe e viatura mescladas, 4x4, v
   assert.deepEqual(r.equipes.map((e) => [e.codigo, e.nome, e.projeto, e.grupo]), [
     ["EQ-01", "FLANCO NORTE - EQUIPE 01", "A definir", "Fauna"],
     ["EQ-02", "LAVRA - EQUIPE 01", "A definir", "Flora"], // cargo de flora -> grupo Flora
-    ["EQ-03", "APOIO — 4362 LT", "4362 LT", "Apoio"],
+    ["APOIO", "RESERVA DE APOIO (A MOBILIZAR)", "A definir", "Apoio"],
   ]);
   const doNorte = r.vagas.filter((v) => v.equipeCodigo === "EQ-01");
   assert.equal(doNorte.length, 4);
@@ -150,6 +150,9 @@ test("Formato DIVISAO DE EQUIPES (semana 42): equipe e viatura mescladas, 4x4, v
   assert.deepEqual(doNorte.map((v) => v.carroRef), ["EQ-01#1", "EQ-01#1", "EQ-01#2", "EQ-01#2"]);
   assert.deepEqual(r.vagas.filter((v) => v.equipeCodigo === "EQ-02").map((v) => v.carroRef), ["EQ-02#3", "EQ-02#3"]);
   assert.ok(r.equipes.every((e) => e.contratoConfirmado)); // nada de "a confirmar": contrato em branco e so em branco
+  // o apoio nao vira equipe nem leva contrato: so a reserva unica, com as pessoas
+  assert.equal(r.equipes.filter((e) => e.grupo !== "Apoio").length, 2);
+  assert.equal(r.vagas.filter((v) => v.equipeCodigo === "APOIO").length, 2);
   const apoio = r.vagas.filter((v) => v.contratoAtual === "4362 LT");
   assert.equal(apoio[0].disponivelAPartir, "2026-10-11"); // "acaba LT 10/10" = livre no dia seguinte
   assert.equal(apoio[0].destino, "FELINOS");
