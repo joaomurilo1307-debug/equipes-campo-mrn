@@ -97,10 +97,10 @@ export default function Lane({ inicio, totalDias, dw, altura, onSelecionar, umDi
             onClick={barra.onClick}
             onKeyDown={(e) => barra.onClick && (e.key === "Enter" || e.key === " ") && barra.onClick()}
             title={barra.dica}
-            className={`absolute z-[6] flex cursor-pointer items-center overflow-hidden whitespace-nowrap px-2 text-[11px] font-semibold shadow-sm transition-[filter] hover:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink ${r.cortadaEsq ? "rounded-l-none" : "rounded-l-md"} ${r.cortadaDir ? "rounded-r-none" : "rounded-r-md"} ${barra.listrada ? "listrado" : ""}`}
-            style={{ left: r.esq * dw, width: Math.max(larg - 1, 4), top: topoBarras + faixa * ALTURA_FAIXA, height: alturaBarra, background: barra.cor, color: barra.corTexto ?? "#fff" }}
+            className={`absolute z-[6] flex cursor-pointer items-center overflow-hidden whitespace-nowrap px-2 text-[11px] font-semibold transition-[filter] hover:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink ${barra.fina ? "" : "shadow-sm"} ${r.cortadaEsq ? "rounded-l-none" : "rounded-l-md"} ${r.cortadaDir ? "rounded-r-none" : "rounded-r-md"} ${barra.listrada ? "listrado" : ""}`}
+            style={{ left: r.esq * dw, width: Math.max(larg - 1, 4), top: topoBarras + faixa * ALTURA_FAIXA + (barra.fina ? (alturaBarra - 8) / 2 : 0), height: barra.fina ? 8 : alturaBarra, background: barra.cor, opacity: barra.fina ? 0.45 : 1, color: barra.corTexto ?? "#fff" }}
           >
-            {larg > 46 ? barra.rotulo : ""}
+            {!barra.fina && larg > 46 ? barra.rotulo : ""}
           </div>
         );
       })}

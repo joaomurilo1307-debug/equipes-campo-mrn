@@ -14,6 +14,8 @@ export type Barra = {
   corTexto?: string;
   dica: string;
   listrada?: boolean;
+  /** Passagem em aberto (sem data de saída): linha fina e discreta em vez de uma barra grossa até o fim. */
+  fina?: boolean;
   onClick?: () => void;
 };
 

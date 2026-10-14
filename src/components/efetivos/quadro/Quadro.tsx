@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   STATUS_CAMPANHA_QUE_LIBERAM,
   avaliarEquipe,
   conferirNecessidade,
   diferencaDias,
+  estadoDaVaga,
   montarPainel,
   ordenarGrupos,
   somarDias,
@@ -51,7 +52,7 @@ import Lane from "./Lane";
 
 type Zoom = "dia" | "semana" | "mes";
 const LARG_DIA: Record<Zoom, number> = { dia: 28, semana: 14, mes: 5 };
-const SEMANAS: Record<Zoom, number> = { dia: 8, semana: 20, mes: 52 };
+const SEMANAS: Record<Zoom, number> = { dia: 12, semana: 78, mes: 156 };
 const SEM_LOCAL = "Sem localização";
 
 type ModalEstado =
@@ -63,6 +64,76 @@ type ModalEstado =
   | { t: "mover"; veiculo: Veiculo; periodo?: { inicio: Dia; fim: Dia } }
   | { t: "historico"; veiculo: Veiculo };
 type DrawerEstado = { t: "campanha"; id: string } | { t: "veiculo"; id: string } | { t: "consulta"; inicio: Dia; fim: Dia };
+
+// ---------------------------------------------------------------- capacidade por semana
+
+type Cap = { seg: Dia; presentes: number; abertas: number; ausentes: number; total: number };
+
+/**
+ * Gargalo por semana. O que é constante (as vagas abertas e as ausências de base) vira faixa fina embaixo;
+ * só o que SOBE acima da base aparece alto, em vermelho, com o número. Onde a vermelha cresce, falta gente.
+ */
+function BarrasDeFalta({ caps, dw, altura, comNumero, maxBarra }: { caps: Cap[]; dw: number; altura: number; comNumero?: boolean; maxBarra?: number }) {
+  const baseAusentes = caps.length ? Math.min(...caps.map((c) => c.ausentes)) : 0;
+  const maxExcesso = Math.max(2, ...caps.map((c) => c.ausentes - baseAusentes));
+  const faixa = 3;
+  const util = (maxBarra ?? altura - (comNumero ? 24 : 8)) - 2 * faixa;
+  const larg = Math.max(3, 7 * dw - 4);
+  return (
+    <>
+      {caps.map((c, k) => {
+        if (c.abertas + c.ausentes === 0) return null;
+        const excesso = c.ausentes - baseAusentes;
+        const hEx = excesso > 0 ? Math.max(3, (excesso / maxExcesso) * util) : 0;
+        const hBase = (baseAusentes > 0 ? faixa : 0) + (c.abertas > 0 ? faixa : 0);
+        return (
+          <div key={c.seg} className="absolute z-[3]" style={{ left: k * 7 * dw + 2, width: larg, bottom: 3, height: hBase + hEx + 14 }} title={`Semana de ${fmtDia(c.seg)}: ${c.ausentes} ausente(s) e ${c.abertas} vaga(s) aberta(s) — ${c.presentes} de ${c.total} posições com alguém`}>
+            {comNumero && excesso > 0 && larg >= 18 && (
+              <div className="num absolute inset-x-0 text-center text-[10px] font-semibold text-bad" style={{ bottom: hBase + hEx + 1 }}>
+                {c.ausentes}
+              </div>
+            )}
+            {hEx > 0 && <div className="absolute inset-x-0 rounded-t-[3px]" style={{ bottom: hBase, height: hEx, background: "#E63329" }} />}
+            {baseAusentes > 0 && <div className="absolute inset-x-0" style={{ bottom: c.abertas > 0 ? faixa : 0, height: faixa, background: "#E63329", opacity: 0.55 }} />}
+            {c.abertas > 0 && <div className="listrado absolute inset-x-0 rounded-[2px]" style={{ bottom: 0, height: faixa, background: "#E0A100" }} />}
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+/**
+ * Linha da equipe: o normal (presentes / posições na primeira semana) fica escrito uma vez, à esquerda;
+ * só as semanas que fogem do normal aparecem, em vermelho (menos gente) ou verde (mais gente).
+ */
+function ChipsDeCapacidade({ caps, dw, altura }: { caps: Cap[]; dw: number; altura: number }) {
+  if (caps.length === 0) return null;
+  const base = caps[0].presentes;
+  const largo = 7 * dw >= 40;
+  return (
+    <>
+      <div className="num sticky z-[4] inline-block rounded-md bg-white/90 px-2 py-0.5 text-[11px] text-gray-600 ring-1 ring-line" style={{ left: ESQ + 8, marginTop: altura - 26 }}>
+        <strong className="text-ink">{base}</strong> de {caps[0].total} posições com alguém
+      </div>
+      {caps.map((c, k) => {
+        const desvio = c.presentes - base;
+        if (desvio === 0) return null;
+        const cls = desvio < 0 ? "bg-bad-soft text-bad" : "bg-ok-soft text-ok";
+        return (
+          <div
+            key={c.seg}
+            className={`num absolute z-[2] flex items-center justify-center rounded-md text-[11px] font-semibold ${cls}`}
+            style={{ left: k * 7 * dw + 2, width: 7 * dw - 4, bottom: 4, height: 20 }}
+            title={`Semana de ${fmtDia(c.seg)}: ${c.presentes} de ${c.total} posições com alguém · ${c.ausentes} ausente(s) · ${c.abertas} vaga(s) aberta(s)`}
+          >
+            {largo ? `${c.presentes}/${c.total}` : ""}
+          </div>
+        );
+      })}
+    </>
+  );
+}
 
 // ---------------------------------------------------------------- peças de linha
 
@@ -97,6 +168,7 @@ export default function Quadro() {
   const { dados, regra, idx, hoje, vagasPorEquipe, equipesCampo, equipePorId, campanhaPorId, vagaPorId, veiculoPorId, nomeDe } = useDados();
   const podeEditar = dados.podeEditar;
   const router = useRouter();
+  const rolagemRef = useRef<HTMLDivElement>(null);
 
   const [zoom, setZoom] = useState<Zoom>("semana");
   const [inicio, setInicio] = useState<Dia>(() => segundaDaSemana(somarDias(hoje, -14)));
@@ -110,7 +182,17 @@ export default function Quadro() {
   const [aviso, setAviso] = useState<string | null>(null);
 
   const dw = LARG_DIA[zoom];
-  const totalDias = SEMANAS[zoom] * 7;
+  // a janela é longa (um ano e meio na semana) e se estende até o último evento lançado (férias, campanha, liberação)
+  const ultimoEvento = useMemo(() => {
+    let m = hoje;
+    for (const a of dados.ausencias) if (a.fim > m) m = a.fim;
+    for (const c of dados.campanhas) if (c.fim > m) m = c.fim;
+    for (const v of dados.vagas) if (v.disponivelAPartir && v.disponivelAPartir > m) m = v.disponivelAPartir;
+    for (const e of dados.equipes) if (e.fim && e.fim > m) m = e.fim;
+    return m;
+  }, [dados.ausencias, dados.campanhas, dados.vagas, dados.equipes, hoje]);
+  const semanasJanela = zoom === "dia" ? SEMANAS.dia : Math.min(260, Math.max(SEMANAS[zoom], Math.ceil(diferencaDias(inicio, ultimoEvento) / 7) + 6));
+  const totalDias = semanasJanela * 7;
   const fimJanela = somarDias(inicio, totalDias - 1);
   const largura = totalDias * dw;
   const posHoje = diferencaDias(inicio, hoje);
@@ -137,16 +219,6 @@ export default function Quadro() {
     }
     return [...m.entries()].sort(([a], [b]) => (a === A_DEFINIR ? 1 : b === A_DEFINIR ? -1 : a.localeCompare(b, "pt-BR", { numeric: true })));
   }, [equipesVisiveis, dados.contratos, grupo, contrato]);
-
-  // ---- estado da equipe dia a dia (a faixa fina embaixo de cada linha)
-  const faixasEquipe = useMemo(() => {
-    const m = new Map<string, ReturnType<typeof compactar>>();
-    for (const e of equipesVisiveis) {
-      const vs = vagasPorEquipe.get(e.id) ?? [];
-      m.set(e.id, compactar(dias.map((d) => estadoVisual(avaliarEquipe(e, vs, idx, d)))));
-    }
-    return m;
-  }, [equipesVisiveis, vagasPorEquipe, idx, dias]);
 
   // ---- campanhas visíveis
   const campanhasVisiveis = useMemo(
@@ -229,6 +301,7 @@ export default function Quadro() {
               fim: m.fim ?? (fimJanela > m.inicio ? fimJanela : m.inicio),
               rotulo: `${rotuloContrato(m.projeto)}${eq ? ` · ${eq.nome}` : ""}${m.local ? ` · ${m.local}` : ""}`,
               cor: corDoContrato(m.projeto),
+              fina: !m.fim,
               dica: `${v.identificacao} em ${rotuloContrato(m.projeto)}${eq ? `\n${eq.codigo} ${eq.nome}` : ""}${m.local ? `\n${m.local}` : ""}\n${fmtDia(m.inicio)} a ${m.fim ? fmtDia(m.fim) : "hoje (continua)"}`,
               onClick: () => setDrawer({ t: "veiculo", id: v.id }),
             };
@@ -251,22 +324,43 @@ export default function Quadro() {
     return [...m.entries()].sort(([a], [b]) => (a === SEM_LOCAL ? 1 : b === SEM_LOCAL ? -1 : a === A_DEFINIR ? 1 : b === A_DEFINIR ? -1 : a.localeCompare(b)));
   }, [frota]);
 
-  // ---- faixa "pessoas livres × faltam" por semana: livres na segunda-feira da semana e o que ainda falta nas campanhas do período
-  const semanas = useMemo(() => Array.from({ length: SEMANAS[zoom] }, (_, k) => somarDias(inicio, k * 7)), [inicio, zoom]);
-  const saldoSemanal = useMemo(
-    () =>
-      semanas.map((seg) => {
-        const p = montarPainel(regra, seg);
-        const livres = p.grupos.filter((g) => !grupo || g.grupo === grupo).reduce((s, g) => s + g.pessoas.livres, 0) + (grupo ? 0 : p.reserva.livres);
-        const fimSem = somarDias(seg, 6);
-        const falta = dados.campanhas
-          .filter((c) => !STATUS_CAMPANHA_QUE_LIBERAM.includes(c.status) && (!grupo || c.grupo === grupo) && c.inicio <= fimSem && c.fim >= seg && c.necessidade.length > 0)
-          .reduce((s, c) => s + conferirNecessidade(c.necessidade, membrosDe(c), []).falta, 0);
-        return { seg, livres, falta };
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [semanas, regra, dados.campanhas, dados.alocacoes, grupo]
-  );
+  // ---- capacidade de cada semana: quantas posições têm alguém presente, quantas estão sem ninguém (ausência ou vaga aberta)
+  const semanas = useMemo(() => Array.from({ length: semanasJanela }, (_, k) => somarDias(inicio, k * 7)), [inicio, semanasJanela]);
+  const capacidade = useMemo(() => {
+    const m = new Map<string, Cap[]>();
+    for (const e of equipesVisiveis) {
+      const vs = vagasPorEquipe.get(e.id) ?? [];
+      m.set(
+        e.id,
+        semanas.map((seg) => {
+          const fimSem = somarDias(seg, 6);
+          const c: Cap = { seg, presentes: 0, abertas: 0, ausentes: 0, total: vs.length };
+          for (const v of vs) {
+            const st = estadoDaVaga(v, idx, seg, fimSem).situacao;
+            if (st === "AUSENTE") c.ausentes++;
+            else if (st === "VAGA_ABERTA") c.abertas++;
+            else c.presentes++;
+          }
+          return c;
+        })
+      );
+    }
+    return m;
+  }, [equipesVisiveis, vagasPorEquipe, idx, semanas]);
+  const somarCapacidade = (ids: string[]): Cap[] =>
+    semanas.map((seg, k) => {
+      const c: Cap = { seg, presentes: 0, abertas: 0, ausentes: 0, total: 0 };
+      for (const id of ids) {
+        const x = capacidade.get(id)?.[k];
+        if (!x) continue;
+        c.presentes += x.presentes;
+        c.abertas += x.abertas;
+        c.ausentes += x.ausentes;
+        c.total += x.total;
+      }
+      return c;
+    });
+  const capacidadeTotal = useMemo(() => somarCapacidade(equipesVisiveis.map((e) => e.id)), [capacidade, equipesVisiveis]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- navegação
   const passo = zoom === "dia" ? 7 : zoom === "semana" ? 28 : 91;
@@ -297,7 +391,7 @@ export default function Quadro() {
     <div>
       <CabecalhoPagina
         titulo="Quadro de equipes"
-        subtitulo="Contrato, equipe e pessoa. A faixa fina de cada equipe mostra, dia a dia, se ela está disponível, alocada, incompleta ou com ausência."
+        subtitulo="Contrato, equipe e pessoa, semana a semana, até o fim (role para o lado). Só aparece o que muda: ausências e semanas com menos gente."
         acoes={
           podeEditar ? (
             <>
@@ -334,11 +428,21 @@ export default function Quadro() {
           <button onClick={() => setInicio((i) => somarDias(i, -passo))} className="btn-ghost px-2" aria-label="Voltar no tempo">
             <IcEsq tam={18} />
           </button>
-          <button onClick={irParaHoje} className="btn-ghost">
+          <button
+            onClick={() => {
+              irParaHoje();
+              rolagemRef.current?.scrollTo({ left: 0, top: 0, behavior: "smooth" });
+            }}
+            className="btn-ghost"
+            title="Volta para hoje"
+          >
             Hoje
           </button>
           <button onClick={() => setInicio((i) => somarDias(i, passo))} className="btn-ghost px-2" aria-label="Avançar no tempo">
             <IcDir tam={18} />
+          </button>
+          <button onClick={() => rolagemRef.current?.scrollTo({ left: rolagemRef.current.scrollWidth, behavior: "smooth" })} className="btn-ghost" title="Vai até o último período da linha do tempo">
+            Fim
           </button>
         </div>
         <input type="date" value={inicio} onChange={(e) => e.target.value && setInicio(segundaDaSemana(e.target.value))} className="field !mt-0 !w-auto" aria-label="Ir para a semana de" />
@@ -374,7 +478,7 @@ export default function Quadro() {
       </div>
 
       <div className="card overflow-hidden">
-        <div className="overflow-auto" style={{ maxHeight: "calc(133.333vh - 330px)", minHeight: 360 }}>
+        <div ref={rolagemRef} className="overflow-auto" style={{ maxHeight: "calc(133.333vh - 330px)", minHeight: 360 }}>
           <div className="relative" style={{ minWidth: ESQ + largura }}>
             {/* cabeçalho do tempo */}
             <div className="sticky top-0 z-20 flex border-b border-line bg-white">
@@ -387,7 +491,7 @@ export default function Quadro() {
                 <div className="flex">
                   {cabecalhoMeses.map((m, i) => (
                     <div key={i} className="overflow-hidden whitespace-nowrap border-r border-line px-2 py-1 font-display text-[12px] font-semibold uppercase tracking-wide text-gray-700" style={{ width: m.dias * dw }}>
-                      {m.rotulo}
+                      {m.dias * dw >= 46 ? m.rotulo : ""}
                     </div>
                   ))}
                 </div>
@@ -411,22 +515,14 @@ export default function Quadro() {
               </div>
             </div>
 
-            {/* faixa: equipes livres x pedidas */}
+            {/* gargalo: quantas posições ficam sem ninguém em cada semana */}
             <div className="flex border-b border-line">
-              <Esq className="flex flex-col justify-center px-4" altura={44}>
-                <div className="text-[13px] font-semibold text-ink">Pessoas livres × faltam</div>
-                <div className="text-[10px] text-gray-500">arraste para consultar o período</div>
+              <Esq className="flex flex-col justify-center px-4" altura={52}>
+                <div className="text-[13px] font-semibold text-ink">Gargalo da semana</div>
+                <div className="text-[10px] text-gray-500">posições sem ninguém · arraste para consultar</div>
               </Esq>
-              <Lane inicio={inicio} totalDias={totalDias} dw={dw} altura={44} onSelecionar={(a, b) => setDrawer({ t: "consulta", inicio: a, fim: b })} umDia={zoom === "dia"} dica="Arraste para ver quem está livre neste período">
-                {saldoSemanal.map(({ seg, livres, falta }, k) => {
-                  const cls = falta === 0 ? "bg-gray-100 text-gray-600" : falta > livres ? "bg-bad-soft text-bad" : "bg-ok-soft text-ok";
-                  return (
-                    <div key={seg} className={`absolute top-1.5 flex flex-col items-center justify-center rounded-md ${cls}`} style={{ left: k * 7 * dw + 2, width: 7 * dw - 4, height: 32 }} title={`Semana de ${fmtDia(seg)}: ${livres} pessoa(s) livre(s) · ${falta} ainda faltando nas campanhas`}>
-                      <span className="num text-[12px] font-bold leading-none">{livres}<span className="font-medium opacity-70"> / {falta}</span></span>
-                      {7 * dw > 60 && <span className="mt-0.5 text-[9px] leading-none opacity-70">livres / faltam</span>}
-                    </div>
-                  );
-                })}
+              <Lane inicio={inicio} totalDias={totalDias} dw={dw} altura={52} onSelecionar={(a, b) => setDrawer({ t: "consulta", inicio: a, fim: b })} umDia={zoom === "dia"} dica="Arraste para ver quem está livre neste período">
+                <BarrasDeFalta caps={capacidadeTotal} dw={dw} altura={52} comNumero />
               </Lane>
             </div>
 
@@ -442,7 +538,7 @@ export default function Quadro() {
                 return (
                   <div key={projeto}>
                     <div className="flex border-b border-line bg-white">
-                      <Esq className="flex items-center gap-2 px-4" altura={34}>
+                      <Esq className="flex items-center gap-2 px-4" altura={42}>
                         <button onClick={() => alternar(fechadas, `c:${projeto}`, setFechadas)} className="flex min-w-0 items-center gap-2 text-left" aria-expanded={!fechadas.has(`c:${projeto}`)}>
                           <span className={`text-gray-400 transition-transform ${fechadas.has(`c:${projeto}`) ? "-rotate-90" : ""}`}>
                             <IcBaixo tam={14} />
@@ -451,18 +547,22 @@ export default function Quadro() {
                           <span className="truncate font-display text-[15px] font-semibold tracking-tight">{rotuloContrato(projeto)}</span>
                         </button>
                       </Esq>
-                      <div className="flex flex-1 items-center gap-4 px-3 text-xs text-gray-500" style={{ background: `${cor}0F` }}>
+                      <Lane inicio={inicio} totalDias={totalDias} dw={dw} altura={42}>
+                        <div className="absolute inset-0" style={{ background: `${cor}0F` }} />
+                        <BarrasDeFalta caps={somarCapacidade(equipes.map((e) => e.id))} dw={dw} altura={42} maxBarra={14} />
+                        <div className="sticky z-[7] inline-flex h-[26px] items-center gap-4 px-3 text-xs text-gray-600" style={{ left: ESQ }}>
                         <span><strong className="num text-ink">{equipes.length}</strong> equipe{equipes.length === 1 ? "" : "s"}</span>
-                        <span><strong className="num text-ink">{pessoas}</strong> pessoas</span>
+                        <span><strong className="num text-ink">{pessoas}</strong> pessoas · {equipes.reduce((x, e) => x + (vagasPorEquipe.get(e.id) ?? []).length, 0)} posições</span>
                         {vagasAbertas > 0 && <span><strong className="num" style={{ color: "#B86E00" }}>{vagasAbertas}</strong> vagas abertas</span>}
                         <span><strong className="num text-ink">{viaturas}</strong> viatura{viaturas === 1 ? "" : "s"} hoje</span>
                         {gestorContrato && <span>gestor {gestorContrato}</span>}
                         {podeEditar && (
-                          <Link href={`/equipes/nova${projeto === A_DEFINIR ? "" : `?contrato=${encodeURIComponent(projeto)}`}`} className="ml-auto inline-flex items-center gap-1 font-semibold text-brand-dark hover:underline">
+                          <Link href={`/equipes/nova${projeto === A_DEFINIR ? "" : `?contrato=${encodeURIComponent(projeto)}`}`} className="ml-2 inline-flex items-center gap-1 font-semibold text-brand-dark hover:underline">
                             <IcMais tam={13} /> equipe neste contrato
                           </Link>
                         )}
-                      </div>
+                        </div>
+                      </Lane>
                     </div>
 
                     {!fechadas.has(`c:${projeto}`) &&
@@ -470,8 +570,8 @@ export default function Quadro() {
                         const vs = vagasPorEquipe.get(e.id) ?? [];
                         const expandida = expandidas.has(e.id);
                         const barras = distribuir(barrasEquipe.get(e.id) ?? []);
-                        const faixas = Math.max(1, ...barras.map((b) => b.faixa + 1));
-                        const altura = Math.max(68, 12 + faixas * ALTURA_FAIXA + 20);
+                        const faixas = barras.length ? Math.max(...barras.map((b) => b.faixa + 1)) : 0;
+                        const altura = Math.max(66, 12 + faixas * ALTURA_FAIXA + 32);
                         const hojeEstado = estadoVisual(avaliarEquipe(e, vs, idx, hoje));
                         const ev = ESTADO_VISUAL[hojeEstado];
                         const preenchidas = vs.filter(temNome).length;
@@ -506,19 +606,7 @@ export default function Quadro() {
                                 )}
                               </Esq>
                               <Lane inicio={inicio} totalDias={totalDias} dw={dw} altura={altura} barras={barras} onSelecionar={podeEditar ? (a, b) => criarCampanhaDaEquipe(e, a, b) : undefined} umDia={zoom === "dia"} dica="Arraste para criar uma campanha com esta equipe">
-                                {(faixasEquipe.get(e.id) ?? []).map((f) => {
-                                  const info = ESTADO_VISUAL[f.estado];
-                                  const iniDia = dias[f.ini];
-                                  const fimDia = dias[f.ini + f.n - 1];
-                                  return (
-                                    <div
-                                      key={f.ini}
-                                      className={`absolute z-[2] rounded-full ${f.estado === "incompleta" ? "listrado" : ""}`}
-                                      style={{ left: f.ini * dw + 1, width: f.n * dw - 2, bottom: 6, height: 7, background: info.cor }}
-                                      title={`${info.rotulo}: ${fmtDia(iniDia)} a ${fmtDia(fimDia)}\n${info.dica}`}
-                                    />
-                                  );
-                                })}
+                                <ChipsDeCapacidade caps={capacidade.get(e.id) ?? []} dw={dw} altura={altura} />
                               </Lane>
                             </div>
 
@@ -635,13 +723,10 @@ export default function Quadro() {
 
       {/* legenda */}
       <div className="no-print mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[11px] text-gray-500">
-        <span className="font-semibold uppercase tracking-wide">Faixa da equipe</span>
-        {(["disponivel", "alocada", "incompleta", "ausencia"] as const).map((k) => (
-          <span key={k} className="inline-flex items-center gap-1.5">
-            <span className={`inline-block h-2 w-5 rounded-full ${k === "incompleta" ? "listrado" : ""}`} style={{ background: ESTADO_VISUAL[k].cor }} />
-            {ESTADO_VISUAL[k].rotulo}
-          </span>
-        ))}
+        <span className="font-semibold uppercase tracking-wide">Gargalo</span>
+        <span className="inline-flex items-center gap-1.5"><span className="inline-block h-2.5 w-3 rounded-sm" style={{ background: "#E63329" }} /> ausentes acima do normal (fina = base)</span>
+        <span className="inline-flex items-center gap-1.5"><span className="listrado inline-block h-1.5 w-4 rounded-sm" style={{ background: "#E0A100" }} /> vagas abertas (faixa fina)</span>
+        <span className="inline-flex items-center gap-1.5"><span className="num rounded bg-bad-soft px-1 text-[10px] font-semibold text-bad">12/14</span> semana com menos gente que o normal da equipe</span>
         <span className="mx-1 text-gray-300">|</span>
         <span className="font-semibold uppercase tracking-wide">Barras</span>
         {["Nova", "Planejada", "Confirmada", "Em execução"].map((s) => (

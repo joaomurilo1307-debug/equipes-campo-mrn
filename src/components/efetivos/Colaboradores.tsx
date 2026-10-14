@@ -107,14 +107,15 @@ export default function Colaboradores() {
   const grupos = useMemo(() => {
     const m = new Map<string, Map<string, Linha[]>>();
     for (const l of filtradas) {
-      const k = l.contrato || "__sem";
-      const eqNome = l.eq ? (ehReserva(l.eq) ? "Sem equipe de campo" : l.eq.nome) : "Sem equipe";
+      const k = l.contrato || (l.eq && ehReserva(l.eq) ? "__livres" : "__sem");
+      const eqNome = l.eq ? (ehReserva(l.eq) ? "Aguardando equipe" : l.eq.nome) : "Sem equipe";
       if (!m.has(k)) m.set(k, new Map());
       if (!m.get(k)!.has(eqNome)) m.get(k)!.set(eqNome, []);
       m.get(k)!.get(eqNome)!.push(l);
     }
     for (const eqs of m.values()) for (const lista of eqs.values()) lista.sort((a, b) => (a.v.nome ?? "").localeCompare(b.v.nome ?? "", "pt-BR"));
-    return [...m.entries()].sort(([a], [b]) => (a === "__sem" ? 1 : b === "__sem" ? -1 : a.localeCompare(b, "pt-BR", { numeric: true })));
+    const fim = (x: string) => (x === "__sem" ? 2 : x === "__livres" ? 1 : 0);
+    return [...m.entries()].sort(([a], [b]) => fim(a) - fim(b) || a.localeCompare(b, "pt-BR", { numeric: true }));
   }, [filtradas]);
 
   const alternar = (k: string) =>
@@ -129,6 +130,7 @@ export default function Colaboradores() {
     <tr key={l.v.id} className="border-t border-gray-100 hover:bg-gray-50/60">
       <td className="py-1 pl-8 pr-3 text-[12.5px] font-medium text-ink">
         {nomeDe(l.v)}
+        {l.eq && ehReserva(l.eq) && l.v.contratoAtual && <span className="ml-2 text-[10.5px] font-normal text-gray-400">vindo de {l.v.contratoAtual}</span>}
         {l.v.observacao && l.v.status !== "Vigente" && <span className="ml-2 text-[10.5px] font-normal text-gray-400">{l.v.status}</span>}
       </td>
       <td className="px-3 py-1 text-[12px] text-gray-700">{l.v.cargo}</td>
@@ -251,7 +253,7 @@ export default function Colaboradores() {
                 {c}
               </option>
             ))}
-            <option value="__sem">Sem contrato</option>
+            {linhas.some((l) => !l.contrato && !(l.eq && ehReserva(l.eq))) && <option value="__sem">Sem contrato</option>}
           </select>
         </label>
         <label className="text-xs">
@@ -328,10 +330,10 @@ export default function Colaboradores() {
                           <span className={`text-gray-400 transition-transform ${aberto ? "" : "-rotate-90"}`}>
                             <IcBaixo tam={14} />
                           </span>
-                          <PontoContrato cor={k === "__sem" ? "#9AA8A1" : corDoContrato(k)} />
-                          <span className="font-display text-[14px] font-semibold tracking-tight text-ink">{k === "__sem" ? "Sem contrato" : rotuloContrato(k)}</span>
+                          <PontoContrato cor={k === "__sem" || k === "__livres" ? "#9AA8A1" : corDoContrato(k)} />
+                          <span className="font-display text-[14px] font-semibold tracking-tight text-ink">{k === "__livres" ? "Disponíveis para uma equipe" : k === "__sem" ? "Sem contrato" : rotuloContrato(k)}</span>
                           <span className="num rounded bg-white px-1.5 text-[11px] font-semibold text-gray-600 ring-1 ring-line">{total}</span>
-                          <span className="text-[11px] text-gray-500">{eqs.size} equipe{eqs.size === 1 ? "" : "s"}</span>
+                          {k !== "__livres" && <span className="text-[11px] text-gray-500">{eqs.size} equipe{eqs.size === 1 ? "" : "s"}</span>}
                         </button>
                       </td>
                     </tr>
