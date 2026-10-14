@@ -328,10 +328,9 @@ export function cruzarCadastroComDivisao(
       slot.disponivelAPartir = a.disponivelAPartir ?? null;
       slot.destino = a.destino ?? null;
       slot.observacao = [slot.observacao, a.observacao].filter(Boolean).join(" · ") || null;
-      slot.contrato = slot.contrato ?? a.contratoAtual ?? null;
       apoioJaNaEquipe++;
     } else {
-      apoioQueFicou.push({ ...a, contrato: a.contratoAtual ?? null });
+      apoioQueFicou.push({ ...a, contrato: null });
     }
   });
 
@@ -437,9 +436,6 @@ export function cruzarCadastroComDivisao(
     const c = contratos.get(p.contrato) ?? { codigo: p.contrato, gestor: null, cliente: null };
     if (!c.gestor && p.gestor) c.gestor = p.gestor;
     contratos.set(p.contrato, c);
-  }
-  for (const v of [...apoioQueFicou, ...posicoes]) {
-    if (v.contratoAtual && !contratos.has(v.contratoAtual)) contratos.set(v.contratoAtual, { codigo: v.contratoAtual, gestor: null, cliente: null });
   }
 
   const todas: VagaImportada[] = [...posicoes, ...posicoesNovas.map(({ _ordem, ...v }) => (void _ordem, v)), ...apoioQueFicou].map((v, i) => ({ ...v, numero: i + 1 }));

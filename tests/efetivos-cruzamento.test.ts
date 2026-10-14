@@ -53,8 +53,8 @@ const APOIO = [
 test("Cadastro + divisão: hierarquia contrato -> equipe -> pessoa, cada pessoa uma vez, vaga aberta ≠ posição sem nome", () => {
   const r = lerPlanilhaEfetivos(xlsx({ "AFUG E RESG - SETEMBRO": CADASTRO, "DIVISÃO DE EQUIPES": DIVISAO, "EQUIPE DE LT PARA APOIO": APOIO }), { anoReferencia: 2026 });
   assert.equal(r.formato, "cruzado");
-  // contratos citados (sem inventar): os da primeira aba (mesmo o de Flora, ainda sem ninguém com nome) e o de onde vem o apoio
-  assert.deepEqual(r.contratos.map((c) => [c.codigo, c.gestor]).sort(), [["3636 PNM", "Ronaldo"], ["3648", "Jocenild"], ["3687 LT", "Ronaldo"], ["4362 LT", null]]);
+  // contratos: só os da primeira aba. O "4362 LT" da aba de apoio é o texto de onde a pessoa vem, não um contrato cadastrado
+  assert.deepEqual(r.contratos.map((c) => [c.codigo, c.gestor]).sort(), [["3636 PNM", "Ronaldo"], ["3648", "Jocenild"], ["3687 LT", "Ronaldo"]]);
 
   // o contrato de Flora (3648) tem equipe: as posições sem nome da primeira aba viram a equipe, preenchidas sem nome informado
   const flora = r.equipes.find((e) => e.projeto === "3648")!;
@@ -102,6 +102,7 @@ test("Cadastro + divisão: hierarquia contrato -> equipe -> pessoa, cada pessoa 
   const reserva = r.vagas.filter((v) => v.equipeCodigo === "APOIO");
   assert.deepEqual(reserva.map((v) => v.nome), ["EVA TESTE"]);
   assert.equal(reserva[0].disponivelAPartir, "2026-10-11");
+  assert.equal(reserva[0].contrato ?? null, null); // sem contrato cadastrado: fica disponível
 });
 
 test("Sem a primeira aba (ou oculta) continua valendo a divisão sozinha, sem contrato inventado", () => {
