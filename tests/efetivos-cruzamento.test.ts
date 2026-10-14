@@ -105,6 +105,24 @@ test("Cadastro + divisão: hierarquia contrato -> equipe -> pessoa, cada pessoa 
   assert.equal(reserva[0].contrato ?? null, null); // sem contrato cadastrado: fica disponível
 });
 
+test("Contrato informado pelo João para equipes que a planilha não liga a contrato (Felinos, Fauna Atropelada, Meliponário)", () => {
+  const div = [
+    DIVISAO[0],
+    ["EQUIPE DE FELINOS", "Consominas", "Resgate", "Superior", "Médico Veterinário", "Fulana Teste", "Sim", "VL 01", ""],
+    ["", "Coopermoura/MRN", "Resgate", "NA", "Auxiliar", "", "", "", ""],
+    ["FAUNA ATROPELADA", "Consominas", "Resgate", "Superior", "Biólogo de Fauna", "Ciclana Teste", "Sim", "VL 01", ""],
+    ["MELIPONÁRIO", "Consominas", "Resgate", "Superior", "Biólogo de Fauna", "Beltrana Teste", "Sim", "VL 01", ""],
+  ];
+  const r = lerPlanilhaEfetivos(xlsx({ "AFUG E RESG - SETEMBRO": CADASTRO, "DIVISÃO DE EQUIPES": div }), { anoReferencia: 2026 });
+  const contratoDe = (nome: string) => r.equipes.find((e) => e.nome === nome)?.projeto;
+  assert.equal(contratoDe("EQUIPE DE FELINOS"), "3686 LAVRA");
+  assert.equal(contratoDe("FAUNA ATROPELADA"), "3687 LT");
+  assert.equal(contratoDe("MELIPONÁRIO"), "3686 LAVRA");
+  // as posições da equipe herdam o contrato (também a que está sem nome)
+  const felinos = r.equipes.find((e) => e.nome === "EQUIPE DE FELINOS")!;
+  assert.ok(r.vagas.filter((v) => v.equipeCodigo === felinos.codigo).every((v) => v.contrato === "3686 LAVRA"));
+});
+
 test("Sem a primeira aba (ou oculta) continua valendo a divisão sozinha, sem contrato inventado", () => {
   const r = lerPlanilhaEfetivos(xlsx({ "DIVISÃO DE EQUIPES": DIVISAO }), { anoReferencia: 2026 });
   assert.equal(r.formato, "divisao");

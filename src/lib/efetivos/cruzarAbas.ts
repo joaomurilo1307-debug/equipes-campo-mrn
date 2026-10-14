@@ -39,6 +39,13 @@ export type PosicaoCadastro = {
 const CODIGO_FORA = "APOIO"; // a "reserva": quem não está em nenhuma equipe (apoio de outro contrato, desmobilizados, disponíveis)
 const PROJETO_A_DEFINIR = "A definir";
 
+/** Contratos informados por quem conhece a operação (João, 14/10/2026) para equipes que a planilha não liga a nenhum contrato. */
+const CONTRATO_INFORMADO: Record<string, string> = {
+  "equipe de felinos": "3686 LAVRA",
+  "fauna atropelada": "3687 LT",
+  meliponario: "3686 LAVRA",
+};
+
 const norm = (t: unknown) =>
   String(t ?? "")
     .normalize("NFD")
@@ -423,10 +430,13 @@ export function cruzarCadastroComDivisao(
       const contratos = new Set(melhores.map((x) => x.k.split("|")[0]));
       if (contratos.size === 1) contrato = [...contratos][0];
     }
+    if (!contrato) contrato = CONTRATO_INFORMADO[norm(e.nome).trim()] ?? null;
     e.projeto = contrato ?? PROJETO_A_DEFINIR;
     if (contrato) {
       comContrato++;
       e.gestor = pessoas.find((p) => p.contrato === contrato && p.gestor)?.gestor ?? e.gestor;
+      // quem está na equipe trabalha no contrato dela (a pessoa que já tem outro contrato mantém o seu)
+      for (const v of posicoes) if (v.equipeCodigo === e.codigo && !v.contrato) v.contrato = contrato;
     }
   }
 
