@@ -1,27 +1,20 @@
 "use client";
 
 // Relatórios: o que a gestão precisa mostrar, por período, com gráfico, tabela, Excel e impressão.
+// Todos os números vêm da mesma regra do Painel (lib/efetivos/situacao).
 import { useMemo, useState } from "react";
-import {
-  STATUS_CAMPANHA_QUE_LIBERAM,
-  conferirNecessidade,
-  livresNoPeriodo,
-  montarPainel,
-  somarDias,
-  temNome,
-  trechosLivres,
-} from "@/lib/efetivos/disponibilidade";
+import { somarDias, temNome } from "@/lib/efetivos/disponibilidade";
 import { localizacaoNoDia } from "@/lib/efetivos/veiculos";
 import { useDados } from "./DadosContext";
 import { BarraPartes, BarrasHorizontais, ColunasEmpilhadas, Legenda, Rosca, type Coluna, type Serie } from "./graficos";
-import { COR_AUSENCIA, COR_STATUS_CAMPANHA, diasDoPeriodo, fmtDia, fmtDiaCurto, nomeDaEquipeDaCampanha, rotuloContrato, rotuloEquipe, segundaDaSemana } from "./comum";
+import { A_DEFINIR, COR_AUSENCIA, diasDoPeriodo, fmtDia, fmtDiaCurto, rotuloContrato, rotuloEquipe, segundaDaSemana } from "./comum";
 import { IcImprimir } from "./icones";
 import { CabecalhoPagina, Secao, Segmentado } from "./ui";
 
-type Relatorio = "efetivo" | "disponibilidade" | "ausencias" | "campanhas" | "frota";
+type Relatorio = "efetivo" | "pessoas" | "ausencias" | "movimentos" | "frota";
 type Tabela = { nome: string; cabecalho: string[]; linhas: (string | number)[][] };
 
-const COR = { livre: "#0E8F63", alocada: "#1D6FB8", ausente: "#E63329", aberta: "#E0A100", reserva: "#7CCDB4" };
+const COR = { emEquipe: "#0E8F63", ausente: "#E63329", disponivel: "#2F6FDE", outro: "#9DB7E8", aberta: "#E0A100", semNome: "#9CC9BB" };
 const CORES_EMPRESA = ["#0A9E7F", "#2F6FDE", "#B86E00", "#7C5CD6"];
 
 function Numero({ rotulo, valor, sub, cor }: { rotulo: string; valor: string | number; sub?: string; cor?: string }) {
@@ -77,13 +70,12 @@ function TabelaSimples({ t, vazio }: { t: Tabela; vazio?: string }) {
 }
 
 export default function Relatorios() {
-  const { dados, regra, idx, hoje, equipePorId, vagaPorId } = useDados();
+  const { dados, hoje, equipePorId, vagaPorId, vagasPorEquipe, equipesCampo, resumoDoDia, contagemDe, situacaoDe, contratoNoDia } = useDados();
   const [qual, setQual] = useState<Relatorio>("efetivo");
   const [inicio, setInicio] = useState(hoje);
   const [fim, setFim] = useState(somarDias(hoje, 89));
   const periodoOk = inicio <= fim;
   const dias = periodoOk ? diasDoPeriodo(inicio, fim) : 0;
-  const campo = (id: string) => equipePorId.get(id)?.grupo !== "Apoio";
 
   // semanas (segundas-feiras) que cobrem o período, no máximo 40
   const semanas = useMemo(() => {
@@ -93,67 +85,68 @@ export default function Relatorios() {
     return out;
   }, [inicio, fim, periodoOk]);
 
-  // ---------------------------------------------------------------- efetivo e vacâncias (na data inicial)
+  // ---------------------------------------------------------------- efetivo e vagas (na data inicial)
   const efetivo = useMemo(() => {
-    const painel = montarPainel(regra, inicio);
-    const porEquipe = painel.equipes.map((l) => ({ nome: l.nome, codigo: l.codigo, vagas: l.vagasPrevistas, preenchidas: l.nomesPreenchidos, semNome: l.semNome }));
-    const porFuncao = new Map<string, { vagas: number; preenchidas: number; semNome: number; porEmpresa: Map<string, number> }>();
+    const r = resumoDoDia(inicio);
+    const porEquipe = equipesCampo.map((e) => {
+      const c = contagemDe([e.id], inicio);
+      return { e, contrato: contratoNoDia(e, inicio) || A_DEFINIR, c };
+    });
+    const porFuncao = new Map<string, { vagas: number; comNome: number; semNome: number; porEmpresa: Map<string, number> }>();
     const empresasPessoas = new Map<string, number>();
-    for (const v of dados.vagas) {
-      if (!campo(v.equipeId)) continue;
-      const x = porFuncao.get(v.cargo) ?? { vagas: 0, preenchidas: 0, semNome: 0, porEmpresa: new Map() };
-      x.vagas++;
-      if (temNome(v)) {
-        x.preenchidas++;
-        empresasPessoas.set(v.empresa, (empresasPessoas.get(v.empresa) ?? 0) + 1);
-      } else if (v.semNome) x.semNome++;
-      else x.porEmpresa.set(v.empresa, (x.porEmpresa.get(v.empresa) ?? 0) + 1);
-      porFuncao.set(v.cargo, x);
-    }
-    const empresasAbertas = Array.from(new Set([...porFuncao.values()].flatMap((x) => [...x.porEmpresa.keys()]))).sort();
-    const funcoes = [...porFuncao.entries()].map(([cargo, x]) => ({ cargo, ...x, abertas: x.vagas - x.preenchidas - x.semNome })).sort((a, b) => b.abertas - a.abertas || b.vagas - a.vagas || a.cargo.localeCompare(b.cargo, "pt-BR"));
-
-    // falta para atender as campanhas em aberto no período, por função
-    const faltas = new Map<string, { pedido: number; escalados: number; livres: number; semGente: number }>();
-    for (const c of dados.campanhas) {
-      if (STATUS_CAMPANHA_QUE_LIBERAM.includes(c.status) || c.necessidade.length === 0 || c.fim < inicio || c.inicio > fim) continue;
-      const membros = dados.alocacoes.filter((a) => a.campanhaId === c.id).map((a) => vagaPorId.get(a.vagaId)).filter((v): v is NonNullable<typeof v> => !!v);
-      const livres = livresNoPeriodo(regra, c.inicio, c.fim, { ignorarCampanhaId: c.id }).livres.filter((p) => !membros.some((m) => m.id === p.id));
-      const conf = conferirNecessidade(c.necessidade, membros, livres);
-      for (const l of conf.linhas) {
-        const x = faltas.get(l.cargo) ?? { pedido: 0, escalados: 0, livres: 0, semGente: 0 };
-        x.pedido += l.pedido;
-        x.escalados += l.escalados;
-        x.livres += l.livresRestantes;
-        x.semGente += l.semGente;
-        faltas.set(l.cargo, x);
+    const abertas: { contrato: string; equipe: string; cargo: string; empresa: string; atividade: string; situacao: string }[] = [];
+    for (const { e, contrato } of porEquipe) {
+      for (const v of vagasPorEquipe.get(e.id) ?? []) {
+        const sit = situacaoDe(v, inicio).situacao;
+        if (sit === "DESMOBILIZADO") continue;
+        const x = porFuncao.get(v.cargo) ?? { vagas: 0, comNome: 0, semNome: 0, porEmpresa: new Map() };
+        x.vagas++;
+        if (temNome(v)) {
+          x.comNome++;
+          empresasPessoas.set(v.empresa, (empresasPessoas.get(v.empresa) ?? 0) + 1);
+        } else if (v.semNome) x.semNome++;
+        else {
+          x.porEmpresa.set(v.empresa, (x.porEmpresa.get(v.empresa) ?? 0) + 1);
+          abertas.push({ contrato: rotuloContrato(contrato), equipe: e.nome, cargo: v.cargo, empresa: v.empresa, atividade: v.atividade, situacao: v.status === "Em contratação" ? "Em contratação" : "Aberta" });
+        }
+        porFuncao.set(v.cargo, x);
       }
     }
-    return { painel, porEquipe, funcoes, empresasAbertas, empresasPessoas: [...empresasPessoas.entries()].sort((a, b) => b[1] - a[1]), faltas: [...faltas.entries()].map(([cargo, x]) => ({ cargo, ...x })).sort((a, b) => b.semGente - a.semGente) };
+    const empresasAbertas = Array.from(new Set([...porFuncao.values()].flatMap((x) => [...x.porEmpresa.keys()]))).sort();
+    const funcoes = [...porFuncao.entries()].map(([cargo, x]) => ({ cargo, ...x, abertas: x.vagas - x.comNome - x.semNome })).sort((a, b) => b.abertas - a.abertas || b.vagas - a.vagas || a.cargo.localeCompare(b.cargo, "pt-BR"));
+    return { r, porEquipe, funcoes, abertas, empresasAbertas, empresasPessoas: [...empresasPessoas.entries()].sort((a, b) => b[1] - a[1]) };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [regra, dados.vagas, dados.campanhas, dados.alocacoes, inicio, fim, vagaPorId, equipePorId]);
+  }, [dados, inicio]);
 
-  // ---------------------------------------------------------------- disponibilidade no período
-  const disp = useMemo(() => {
+  // ---------------------------------------------------------------- pessoas semana a semana
+  const pessoas = useMemo(() => {
     if (!periodoOk) return null;
-    const { livres, indisponiveis } = livresNoPeriodo(regra, inicio, fim);
-    const parciais = indisponiveis
-      .map((p) => ({ p, trechos: trechosLivres(vagaPorId.get(p.id)!, idx, inicio, fim) }))
-      .filter((x) => x.trechos.length > 0)
-      .sort((a, b) => (a.p.nome ?? "").localeCompare(b.p.nome ?? "", "pt-BR"));
     const colunas: Coluna[] = semanas.map((seg, k) => {
-      const p = montarPainel(regra, seg < inicio ? inicio : seg);
-      const q = p.totais.pessoas;
-      return { rotulo: fmtDiaCurto(seg), dica: `Semana de ${fmtDia(seg)}`, destaque: k === 0, valores: [q.livres, q.alocadas, q.ausentes, p.reserva.livres] };
+      const q = resumoDoDia(seg < inicio ? inicio : seg);
+      return { rotulo: fmtDiaCurto(seg), dica: `Semana de ${fmtDia(seg)}`, destaque: k === 0, valores: [q.emEquipe, q.ausentes, q.disponiveis, q.outroContrato] };
     });
-    return { livres, indisponiveis, parciais, colunas };
+    // quem fica disponível durante o período e a partir de quando (equipe que termina, apoio liberado)
+    const ficam: { v: (typeof dados.vagas)[number]; desde: string }[] = [];
+    for (const v of dados.vagas) {
+      if (!temNome(v) || v.status === "Desmobilizado") continue;
+      if (situacaoDe(v, inicio).situacao === "DISPONIVEL") continue; // já disponível no início: não é "passa a ficar"
+      for (const seg of semanas) {
+        const d = seg < inicio ? inicio : seg;
+        if (situacaoDe(v, d).situacao === "DISPONIVEL") {
+          ficam.push({ v, desde: d });
+          break;
+        }
+      }
+    }
+    const jaDisponiveis = dados.vagas.filter((v) => temNome(v) && v.status !== "Desmobilizado" && situacaoDe(v, inicio).situacao === "DISPONIVEL");
+    return { colunas, ficam: ficam.sort((a, b) => a.desde.localeCompare(b.desde)), jaDisponiveis };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [regra, idx, inicio, fim, periodoOk, semanas, vagaPorId]);
-  const seriesDisp: Serie[] = [
-    { nome: "Livres", cor: COR.livre },
-    { nome: "Em campanha", cor: COR.alocada },
+  }, [dados, inicio, periodoOk, semanas]);
+  const seriesPessoas: Serie[] = [
+    { nome: "Em equipe", cor: COR.emEquipe },
     { nome: "Ausentes", cor: COR.ausente },
-    { nome: "Reserva de apoio livre", cor: COR.reserva, listrada: true },
+    { nome: "Disponíveis (sem equipe)", cor: COR.disponivel },
+    { nome: "Em outro contrato", cor: COR.outro, listrada: true },
   ];
 
   // ---------------------------------------------------------------- férias e ausências
@@ -181,19 +174,16 @@ export default function Relatorios() {
     return { lista, tipos, porTipo, colunas, pessoas: new Set(lista.map((x) => x.a.vagaId)).size };
   }, [dados.ausencias, vagaPorId, equipePorId, inicio, fim, periodoOk, semanas]);
 
-  // ---------------------------------------------------------------- campanhas
-  const camp = useMemo(() => {
-    const lista = dados.campanhas
-      .filter((c) => periodoOk && c.fim >= inicio && c.inicio <= fim)
+  // ---------------------------------------------------------------- equipes e movimentações
+  const mov = useMemo(() => {
+    const passagens = (dados.movimentosEquipe ?? [])
+      .filter((m) => periodoOk && (m.fim ?? "9999-12-31") >= inicio && m.inicio <= fim)
       .sort((a, b) => a.inicio.localeCompare(b.inicio))
-      .map((c) => {
-        const membros = dados.alocacoes.filter((a) => a.campanhaId === c.id).map((a) => vagaPorId.get(a.vagaId)).filter((v): v is NonNullable<typeof v> => !!v);
-        const pedido = c.necessidade.reduce((s, n) => s + n.qtd, 0);
-        const conf = c.necessidade.length ? conferirNecessidade(c.necessidade, membros, []) : null;
-        return { c, membros, pedido, falta: conf?.falta ?? 0 };
-      });
-    return lista;
-  }, [dados.campanhas, dados.alocacoes, vagaPorId, inicio, fim, periodoOk]);
+      .map((m) => ({ m, equipe: equipePorId.get(m.equipeId) }));
+    const terminam = dados.equipes.filter((e) => e.grupo !== "Apoio" && e.fim && e.fim >= inicio && e.fim <= fim).sort((a, b) => (a.fim ?? "").localeCompare(b.fim ?? ""));
+    const comecam = dados.equipes.filter((e) => e.grupo !== "Apoio" && e.inicio && e.inicio >= inicio && e.inicio <= fim).sort((a, b) => (a.inicio ?? "").localeCompare(b.inicio ?? ""));
+    return { passagens, terminam, comecam };
+  }, [dados.movimentosEquipe, dados.equipes, equipePorId, inicio, fim, periodoOk]);
 
   // ---------------------------------------------------------------- frota
   const frota = useMemo(() => {
@@ -217,22 +207,30 @@ export default function Relatorios() {
   const tabelas: Tabela[] = useMemo(() => {
     if (qual === "efetivo")
       return [
-        { nome: "Por equipe", cabecalho: ["Equipe", "Código", "Posições", "Com profissional", "Sem nome informado", "Vagas abertas", "% preenchido"], linhas: efetivo.porEquipe.map((e) => [e.nome, e.codigo, e.vagas, e.preenchidas, e.semNome, e.vagas - e.preenchidas - e.semNome, e.vagas ? Math.round(((e.preenchidas + e.semNome) / e.vagas) * 100) : 0]) },
-        { nome: "Por função", cabecalho: ["Função", "Posições", "Com profissional", "Sem nome informado", "Vagas abertas"], linhas: efetivo.funcoes.map((f) => [f.cargo, f.vagas, f.preenchidas, f.semNome, f.abertas]) },
-        { nome: "Falta p campanhas", cabecalho: ["Função", "Pedido", "Na equipe", "Livres", "Sem ninguém livre"], linhas: efetivo.faltas.map((f) => [f.cargo, f.pedido, f.escalados, f.livres, f.semGente]) },
+        {
+          nome: "Por equipe",
+          cabecalho: ["Contrato", "Equipe", "Código", "Posições", "Com nome", "Sem nome informado", "Vagas abertas", "Em equipe", "Ausentes", "% preenchido"],
+          linhas: efetivo.porEquipe.map(({ e, contrato, c }) => [rotuloContrato(contrato), e.nome, e.codigo, c.posicoes, c.comNome, c.semNome, c.abertas, c.emEquipe, c.ausentes, c.posicoes ? Math.round(((c.comNome + c.semNome) / c.posicoes) * 100) : 0]),
+        },
+        { nome: "Por função", cabecalho: ["Função", "Posições", "Com nome", "Sem nome informado", "Vagas abertas"], linhas: efetivo.funcoes.map((f) => [f.cargo, f.vagas, f.comNome, f.semNome, f.abertas]) },
+        { nome: "Vagas abertas", cabecalho: ["Contrato", "Equipe", "Função", "Empresa", "Atividade", "Situação"], linhas: efetivo.abertas.map((a) => [a.contrato, a.equipe, a.cargo, a.empresa, a.atividade, a.situacao]) },
       ];
-    if (qual === "disponibilidade" && disp)
+    if (qual === "pessoas" && pessoas)
       return [
-        { nome: "Livres na faixa", cabecalho: ["Nome", "Função", "Empresa", "Equipe"], linhas: disp.livres.map((p) => [p.nome ?? "", p.cargo, p.empresa, rotuloEquipe({ codigo: p.equipeCodigo, nome: p.equipeNome, grupo: p.grupo })]) },
-        { nome: "Livres em parte", cabecalho: ["Nome", "Função", "Trechos livres"], linhas: disp.parciais.map((x) => [x.p.nome ?? "", x.p.cargo, x.trechos.map((t) => `${fmtDia(t.inicio)} a ${fmtDia(t.fim)}`).join("; ")]) },
-        { nome: "Por semana", cabecalho: ["Semana", "Livres", "Em campanha", "Ausentes", "Reserva livre"], linhas: disp.colunas.map((c) => [c.dica, ...c.valores]) },
+        { nome: "Passam a ficar disponíveis", cabecalho: ["Nome", "Função", "Empresa", "Equipe", "Disponível a partir de"], linhas: pessoas.ficam.map(({ v, desde }) => [v.nome ?? "", v.cargo, v.empresa, rotuloEquipe(equipePorId.get(v.equipeId) ?? { codigo: "", nome: "", grupo: "" }), fmtDia(desde)]) },
+        { nome: "Já disponíveis", cabecalho: ["Nome", "Função", "Empresa", "Origem"], linhas: pessoas.jaDisponiveis.map((v) => [v.nome ?? "", v.cargo, v.empresa, v.contratoAtual ?? ""]) },
+        { nome: "Por semana", cabecalho: ["Semana", "Em equipe", "Ausentes", "Disponíveis", "Em outro contrato"], linhas: pessoas.colunas.map((c) => [c.dica, ...c.valores]) },
       ];
     if (qual === "ausencias")
       return [{ nome: "Ausências", cabecalho: ["Pessoa", "Equipe", "Tipo", "Início", "Fim", "Dias no período"], linhas: aus.lista.map((x) => [x.v?.nome ?? "", x.equipe ? rotuloEquipe(x.equipe) : "", x.a.tipo, fmtDia(x.a.inicio), fmtDia(x.a.fim), x.diasNoPeriodo]) }];
-    if (qual === "campanhas")
-      return [{ nome: "Campanhas", cabecalho: ["Equipe", "Código", "Contrato", "Atividade", "Local", "Início", "Fim", "Pessoas", "Pedido", "Falta", "Situação"], linhas: camp.map(({ c, membros, pedido, falta }) => [nomeDaEquipeDaCampanha(c), c.codigo, rotuloContrato(c.projeto), c.atividade, c.local ?? "", fmtDia(c.inicio), fmtDia(c.fim), membros.length, pedido, falta, c.status]) }];
+    if (qual === "movimentos")
+      return [
+        { nome: "Passagens", cabecalho: ["Equipe", "Contrato", "Frente / local", "De", "Até", "Observação"], linhas: mov.passagens.map(({ m, equipe }) => [equipe?.nome ?? "", rotuloContrato(m.projeto), m.local ?? "", fmtDia(m.inicio), m.fim ? fmtDia(m.fim) : "em curso", m.observacao ?? ""]) },
+        { nome: "Equipes que terminam", cabecalho: ["Equipe", "Contrato", "Fim", "Pessoas"], linhas: mov.terminam.map((e) => [e.nome, rotuloContrato(e.projeto), fmtDia(e.fim), (vagasPorEquipe.get(e.id) ?? []).filter(temNome).length]) },
+        { nome: "Equipes que começam", cabecalho: ["Equipe", "Contrato", "Início", "Pessoas"], linhas: mov.comecam.map((e) => [e.nome, rotuloContrato(e.projeto), fmtDia(e.inicio), (vagasPorEquipe.get(e.id) ?? []).filter(temNome).length]) },
+      ];
     return [{ nome: "Frota", cabecalho: ["Viatura", "Placa", "Modelo", "Situação", "Equipe", "Pessoas"], linhas: frota.linhas.map((l) => [l.v.identificacao, l.v.placa ?? "", l.v.modelo ?? "", l.v.status, l.eq?.nome ?? "", l.ocupantes]) }];
-  }, [qual, efetivo, disp, aus, camp, frota]);
+  }, [qual, efetivo, pessoas, aus, mov, frota, equipePorId, vagasPorEquipe]);
 
   async function exportar() {
     const XLSX = await import("xlsx");
@@ -245,14 +243,15 @@ export default function Relatorios() {
     XLSX.writeFile(wb, `relatorio-${qual}-${inicio}.xlsx`);
   }
 
-  const titulo: Record<Relatorio, string> = { efetivo: "Efetivo e vacâncias", disponibilidade: "Disponibilidade", ausencias: "Férias e ausências", campanhas: "Campanhas e equipes", frota: "Frota" };
+  const titulo: Record<Relatorio, string> = { efetivo: "Efetivo e vagas", pessoas: "Pessoas e disponibilidade", ausencias: "Férias e ausências", movimentos: "Equipes e movimentações", frota: "Frota" };
   const usaPeriodo = qual !== "frota";
+  const r = efetivo.r;
 
   return (
     <div className="space-y-5">
       <CabecalhoPagina
         titulo="Relatórios"
-        subtitulo="Para mostrar à gestão e ao cliente: escolha o relatório e o período; dá para baixar em Excel ou imprimir."
+        subtitulo="Para mostrar à gestão e ao cliente: escolha o relatório e o período; dá para baixar em Excel ou imprimir. Os números são os mesmos do Painel."
         acoes={
           <>
             <button onClick={exportar} className="btn-ghost">
@@ -270,10 +269,10 @@ export default function Relatorios() {
           valor={qual}
           onChange={setQual}
           opcoes={[
-            { id: "efetivo", rotulo: "Efetivo e vacâncias" },
-            { id: "disponibilidade", rotulo: "Disponibilidade" },
+            { id: "efetivo", rotulo: "Efetivo e vagas" },
+            { id: "pessoas", rotulo: "Pessoas" },
             { id: "ausencias", rotulo: "Férias e ausências" },
-            { id: "campanhas", rotulo: "Campanhas" },
+            { id: "movimentos", rotulo: "Equipes" },
             { id: "frota", rotulo: "Frota" },
           ]}
         />
@@ -309,23 +308,23 @@ export default function Relatorios() {
       {qual === "efetivo" && (
         <>
           <Faixa>
-            <Numero rotulo="Vagas" valor={efetivo.painel.totais.pessoas.vagas} sub={`${efetivo.painel.totais.equipes} equipes`} />
-            <Numero rotulo="Com profissional" valor={efetivo.painel.totais.pessoas.preenchidas} sub={`${Math.round((efetivo.painel.totais.pessoas.preenchidas / Math.max(1, efetivo.painel.totais.pessoas.vagas)) * 100)}% preenchido`} cor={COR.livre} />
-            <Numero rotulo="Vagas abertas" valor={efetivo.painel.totais.pessoas.abertas} sub="para contratar ou remanejar" cor={COR.aberta} />
-            <Numero rotulo="Sem ninguém livre" valor={efetivo.faltas.reduce((s, f) => s + f.semGente, 0)} sub="falta nas campanhas do período" cor={COR.ausente} />
+            <Numero rotulo="Posições" valor={r.posicoes} sub={`${r.equipes} equipes · em ${fmtDia(inicio)}`} />
+            <Numero rotulo="Com nome" valor={r.comNome} sub={`${Math.round(((r.comNome + r.semNome) / Math.max(1, r.posicoes)) * 100)}% preenchido`} cor={COR.emEquipe} />
+            <Numero rotulo="Sem nome informado" valor={r.semNome} sub="preenchidas, nome não informado" />
+            <Numero rotulo="Vagas abertas" valor={r.abertas} sub="para contratar ou puxar" cor={COR.aberta} />
           </Faixa>
 
           <div className="grid items-start gap-5 xl:grid-cols-2">
-            <Secao titulo="Vagas por equipe" sub="Com profissional e abertas, em cada uma das equipes.">
+            <Secao titulo="Posições por equipe" sub="Com nome, sem nome informado e vagas abertas, em cada equipe.">
               <BarrasHorizontais
-                itens={efetivo.porEquipe.map((e) => ({ rotulo: e.nome, partes: [e.preenchidas, e.semNome, e.vagas - e.preenchidas - e.semNome], sub: `${e.vagas} posições` }))}
+                itens={efetivo.porEquipe.map(({ e, c }) => ({ rotulo: e.nome, partes: [c.comNome, c.semNome, c.abertas], sub: `${c.posicoes} posições` }))}
                 series={[
-                  { nome: "Com profissional", cor: COR.livre },
-                  { nome: "Sem nome informado", cor: "#9CC9BB" },
+                  { nome: "Com nome", cor: COR.emEquipe },
+                  { nome: "Sem nome informado", cor: COR.semNome },
                   { nome: "Vaga aberta", cor: "#F2D48B", listrada: true },
                 ]}
               />
-              <Legenda className="mt-3" series={[{ nome: "Com profissional", cor: COR.livre }, { nome: "Sem nome informado", cor: "#9CC9BB" }, { nome: "Vaga aberta", cor: "#F2D48B", listrada: true }]} />
+              <Legenda className="mt-3" series={[{ nome: "Com nome", cor: COR.emEquipe }, { nome: "Sem nome informado", cor: COR.semNome }, { nome: "Vaga aberta", cor: "#F2D48B", listrada: true }]} />
             </Secao>
             <div className="space-y-5">
               <Secao titulo="Vagas abertas por função" sub="Onde falta profissional, por empresa.">
@@ -337,7 +336,7 @@ export default function Relatorios() {
               </Secao>
               <Secao titulo="Profissionais por empresa" sub="Quem já está nas equipes.">
                 <div className="flex items-center gap-6">
-                  <Rosca partes={efetivo.empresasPessoas.map(([e, n], k) => ({ n, cor: CORES_EMPRESA[k % CORES_EMPRESA.length], rotulo: e }))} centro={{ valor: efetivo.painel.totais.pessoas.preenchidas, rotulo: "pessoas" }} />
+                  <Rosca partes={efetivo.empresasPessoas.map(([e, n], k) => ({ n, cor: CORES_EMPRESA[k % CORES_EMPRESA.length], rotulo: e }))} centro={{ valor: r.comNome, rotulo: "pessoas" }} />
                   <ul className="space-y-1.5 text-[12.5px]">
                     {efetivo.empresasPessoas.map(([e, n], k) => (
                       <li key={e} className="flex items-center gap-2">
@@ -352,33 +351,36 @@ export default function Relatorios() {
             </div>
           </div>
 
-          <Secao titulo="O que falta para atender as campanhas" sub="Por função, nas campanhas do período: o pedido, quem já está na equipe, quem está livre e o que fica sem ninguém." semPadding>
-            <TabelaSimples t={tabelas[2]} vazio="Nenhuma campanha do período informou o pedido por função." />
+          <Secao titulo="Por equipe" sub="Contrato, equipe e a situação de cada uma." semPadding>
+            <TabelaSimples t={tabelas[0]} />
           </Secao>
-          <Secao titulo="Vagas por função" semPadding>
+          <Secao titulo="Vagas abertas" sub="Cada vaga a preencher, com contrato e equipe." semPadding>
+            <TabelaSimples t={tabelas[2]} vazio="Nenhuma vaga aberta." />
+          </Secao>
+          <Secao titulo="Posições por função" semPadding>
             <TabelaSimples t={tabelas[1]} />
           </Secao>
         </>
       )}
 
-      {/* ------------------------------------------------ disponibilidade */}
-      {qual === "disponibilidade" && disp && (
+      {/* ------------------------------------------------ pessoas */}
+      {qual === "pessoas" && pessoas && (
         <>
           <Faixa>
-            <Numero rotulo="Livres na faixa toda" valor={disp.livres.length} sub="podem ser escaladas" cor={COR.livre} />
-            <Numero rotulo="Livres só em parte" valor={disp.parciais.length} sub="voltam ou saem no meio" cor={COR.aberta} />
-            <Numero rotulo="Fora da faixa" valor={disp.indisponiveis.length - disp.parciais.length} sub="férias, campanha, outro contrato" />
+            <Numero rotulo="Disponíveis no início" valor={pessoas.jaDisponiveis.length} sub="sem equipe, podem ser puxados" cor={COR.disponivel} />
+            <Numero rotulo="Passam a ficar disponíveis" valor={pessoas.ficam.length} sub="equipe que termina, apoio liberado" cor={COR.emEquipe} />
+            <Numero rotulo="Ausentes no início" valor={r.ausentes} sub="férias, INSS, restrição" cor={COR.ausente} />
             <Numero rotulo="Período" valor={`${dias} dias`} sub={`${fmtDiaCurto(inicio)} a ${fmtDiaCurto(fim)}`} />
           </Faixa>
-          <Secao titulo="Pessoas por situação, semana a semana" sub="Livres, em campanha e ausentes a cada segunda-feira do período.">
-            <ColunasEmpilhadas colunas={disp.colunas} series={seriesDisp} altura={230} />
-            <Legenda series={seriesDisp} className="mt-2" />
+          <Secao titulo="Pessoas por situação, semana a semana" sub="Em equipe, ausentes e disponíveis a cada segunda-feira do período.">
+            <ColunasEmpilhadas colunas={pessoas.colunas} series={seriesPessoas} altura={230} />
+            <Legenda series={seriesPessoas} className="mt-2" />
           </Secao>
-          <Secao titulo="Livres na faixa toda" semPadding>
-            <TabelaSimples t={tabelas[0]} vazio="Ninguém está livre na faixa inteira." />
+          <Secao titulo="Passam a ficar disponíveis no período" sub="A equipe termina ou a pessoa é liberada de outro contrato." semPadding>
+            <TabelaSimples t={tabelas[0]} vazio="Ninguém passa a ficar disponível neste período." />
           </Secao>
-          <Secao titulo="Livres só em parte da faixa" sub="Trechos em que a pessoa pode ser escalada." semPadding>
-            <TabelaSimples t={tabelas[1]} vazio="Ninguém livre só em parte." />
+          <Secao titulo="Já disponíveis" sub="Sem equipe na data inicial." semPadding>
+            <TabelaSimples t={tabelas[1]} vazio="Ninguém disponível." />
           </Secao>
         </>
       )}
@@ -407,44 +409,23 @@ export default function Relatorios() {
         </>
       )}
 
-      {/* ------------------------------------------------ campanhas */}
-      {qual === "campanhas" && (
+      {/* ------------------------------------------------ equipes e movimentações */}
+      {qual === "movimentos" && (
         <>
           <Faixa>
-            <Numero rotulo="Campanhas no período" valor={camp.length} />
-            <Numero rotulo="Pessoas escaladas" valor={camp.reduce((s, x) => s + x.membros.length, 0)} cor={COR.alocada} />
-            <Numero rotulo="Pedido informado" valor={camp.reduce((s, x) => s + x.pedido, 0)} sub="pessoas" />
-            <Numero rotulo="Ainda faltam" valor={camp.reduce((s, x) => s + x.falta, 0)} sub="para fechar o pedido" cor={COR.aberta} />
+            <Numero rotulo="Equipes ativas" valor={r.equipes} sub={`em ${r.contratos} contratos`} />
+            <Numero rotulo="Passagens no período" valor={mov.passagens.length} sub="equipes por contrato/frente" cor={COR.disponivel} />
+            <Numero rotulo="Equipes que terminam" valor={mov.terminam.length} sub="as pessoas ficam disponíveis" cor={COR.aberta} />
+            <Numero rotulo="Equipes que começam" valor={mov.comecam.length} />
           </Faixa>
-          <Secao titulo="Linha do tempo" sub="Cada campanha com a sua equipe, no período.">
-            {camp.length === 0 ? (
-              <p className="py-6 text-center text-sm text-gray-400">Nenhuma campanha neste período.</p>
-            ) : (
-              <ul className="space-y-2.5">
-                {camp.map(({ c, membros, pedido }) => {
-                  const total = Math.max(1, diasDoPeriodo(inicio, fim));
-                  const ini = Math.max(0, diasDoPeriodo(inicio, c.inicio < inicio ? inicio : c.inicio) - 1);
-                  const larg = Math.max(1, diasDoPeriodo(c.inicio < inicio ? inicio : c.inicio, c.fim > fim ? fim : c.fim));
-                  return (
-                    <li key={c.id} className="grid items-center gap-3 sm:grid-cols-[220px_minmax(0,1fr)]">
-                      <div className="min-w-0">
-                        <div className="truncate text-[13px] font-medium text-ink">{nomeDaEquipeDaCampanha(c)}</div>
-                        <div className="num text-[11px] text-gray-500">
-                          {fmtDiaCurto(c.inicio)} a {fmtDiaCurto(c.fim)} · {membros.length}
-                          {pedido ? ` de ${pedido}` : ""} pessoas
-                        </div>
-                      </div>
-                      <div className="relative h-5 rounded-full bg-gray-100">
-                        <div className="absolute top-0 h-5 rounded-full" style={{ left: `${(ini / total) * 100}%`, width: `${Math.max(1.5, (larg / total) * 100)}%`, background: COR_STATUS_CAMPANHA[c.status] ?? COR.livre }} title={`${c.codigo} · ${c.status}`} />
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
+          <Secao titulo="Passagens das equipes" sub="Cada vez que uma equipe foi (ou vai) para um contrato ou frente." semPadding>
+            <TabelaSimples t={tabelas[0]} vazio="Nenhuma movimentação de equipe neste período." />
           </Secao>
-          <Secao titulo="Campanhas e equipes" semPadding>
-            <TabelaSimples t={tabelas[0]} vazio="Nenhuma campanha neste período." />
+          <Secao titulo="Equipes que terminam no período" semPadding>
+            <TabelaSimples t={tabelas[1]} vazio="Nenhuma equipe termina neste período." />
+          </Secao>
+          <Secao titulo="Equipes que começam no período" semPadding>
+            <TabelaSimples t={tabelas[2]} vazio="Nenhuma equipe começa neste período." />
           </Secao>
         </>
       )}
@@ -454,7 +435,7 @@ export default function Relatorios() {
         <>
           <Faixa>
             <Numero rotulo="Viaturas" valor={frota.linhas.length} />
-            <Numero rotulo="Em operação" valor={frota.porStatus.find(([s]) => s === "Em operação")?.[1] ?? 0} cor={COR.livre} />
+            <Numero rotulo="Em operação" valor={frota.porStatus.find(([s]) => s === "Em operação")?.[1] ?? 0} cor={COR.emEquipe} />
             <Numero rotulo="Em manutenção ou paradas" valor={frota.linhas.filter((l) => l.v.status === "Em manutenção" || l.v.status === "Parado").length} cor={COR.aberta} />
             <Numero rotulo="Pessoas nas viaturas" valor={frota.linhas.reduce((s, l) => s + l.ocupantes, 0)} />
           </Faixa>

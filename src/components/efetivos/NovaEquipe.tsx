@@ -1,13 +1,13 @@
 "use client";
 
-// Nova equipe: como montar uma campanha. Contrato, período, campanha (opcional), colaboradores cadastrados para puxar,
+// Nova equipe, no estilo de montar uma campanha: contrato, período (opcional), colaboradores cadastrados para puxar,
 // pessoas novas cadastradas na hora e vagas a abrir. Salvar cria a equipe com tudo isso numa operação só.
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { dataValida, estadoDaVaga, ordenarGrupos, somarDias, temNome, type Dia } from "@/lib/efetivos/disponibilidade";
 import { useDados } from "./DadosContext";
-import { A_DEFINIR, chamar, contratosConhecidos, descreverConflitos, diasDoPeriodo, ehReserva, fmtDia, nomeDaEquipeDaCampanha, rotuloContrato, valoresUsados } from "./comum";
+import { A_DEFINIR, chamar, contratosConhecidos, descreverConflitos, diasDoPeriodo, ehReserva, fmtDia, rotuloContrato, valoresUsados } from "./comum";
 import { IcFechar, IcMais } from "./icones";
 import { Aviso, CabecalhoPagina, Secao } from "./ui";
 
@@ -29,7 +29,7 @@ function Rotulo({ t, children, className = "" }: { t: string; children: React.Re
 export default function NovaEquipe() {
   const params = useSearchParams();
   const router = useRouter();
-  const { dados, idx, hoje, recarregar, equipePorId, nomeDe } = useDados();
+  const { dados, idx, hoje, recarregar, equipePorId, nomeDe, situacaoDe } = useDados();
   const podeEditar = dados.podeEditar;
 
   const contratos = useMemo(() => contratosConhecidos(dados), [dados]);
@@ -46,7 +46,6 @@ export default function NovaEquipe() {
     comPeriodo: false,
     inicio: (valido(params.get("inicio")) ? params.get("inicio") : hoje) as Dia,
     fim: (valido(params.get("fim")) ? params.get("fim") : somarDias(hoje, 29)) as Dia,
-    campanhaId: "",
     observacao: "",
   });
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }));
@@ -71,7 +70,8 @@ export default function NovaEquipe() {
       .filter((v) => temNome(v) && v.status !== "Desmobilizado")
       .map((v) => {
         const eq = equipePorId.get(v.equipeId);
-        const naReserva = !!eq && ehReserva(eq);
+        // disponível = na reserva ou com a equipe já encerrada (a regra única de situação)
+        const naReserva = (!!eq && ehReserva(eq)) || situacaoDe(v, periodoOk ? f.inicio : hoje).situacao === "DISPONIVEL";
         const est = periodoOk ? estadoDaVaga(v, idx, f.inicio, f.fim) : estadoDaVaga(v, idx, hoje);
         const indisponivel = est.situacao === "AUSENTE" || est.situacao === "ALOCADA";
         return { v, eq, naReserva, contrato: v.contrato || (eq && !naReserva && eq.projeto !== A_DEFINIR ? eq.projeto : ""), indisponivel, motivo: est.motivo };
@@ -89,7 +89,6 @@ export default function NovaEquipe() {
     const e = estadoDaVaga(v, idx, f.inicio, f.fim).situacao;
     return e === "AUSENTE" || e === "ALOCADA";
   });
-  const campanhasAbertas = dados.campanhas.filter((c) => !["Cancelada", "Concluída"].includes(c.status));
 
   const total = sel.size + novos.length;
   const totalVagas = abertas.reduce((s, v) => s + v.quantidade, 0);
@@ -122,7 +121,6 @@ export default function NovaEquipe() {
       observacao: f.observacao.trim() || null,
       inicio: f.comPeriodo ? f.inicio : null,
       fim: f.comPeriodo ? f.fim : null,
-      campanhaId: f.campanhaId || null,
       colaboradorIds: [...sel],
       abrirVagasNasOrigens: abrirNasOrigens,
       novos: novos.map((n) => ({ nome: n.nome, cargo: n.cargo, empresa: n.empresa, atividade: n.atividade, nivel: n.nivel || null, direcao4x4: n.direcao4x4 === "" ? null : n.direcao4x4 === "sim" })),
@@ -141,7 +139,7 @@ export default function NovaEquipe() {
     <div>
       <CabecalhoPagina
         titulo="Nova equipe"
-        subtitulo="Escolha o contrato e o período, puxe colaboradores já cadastrados (ou cadastre alguém na hora) e, se quiser, associe a uma campanha."
+        subtitulo="Escolha o contrato e, se quiser, o período da equipe; puxe colaboradores já cadastrados (ou cadastre alguém na hora) e abra as vagas que faltam."
         acoes={
           <Link href="/equipes" className="btn-ghost">
             Cancelar
@@ -182,16 +180,6 @@ export default function NovaEquipe() {
               <Rotulo t="Local / frente" className="lg:col-span-2">
                 <input value={f.local} onChange={(e) => set("local", e.target.value)} className="field" />
               </Rotulo>
-              <Rotulo t="Campanha (opcional)">
-                <select value={f.campanhaId} onChange={(e) => set("campanhaId", e.target.value)} className="field">
-                  <option value="">Sem campanha</option>
-                  {campanhasAbertas.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.codigo} · {nomeDaEquipeDaCampanha(c)}
-                    </option>
-                  ))}
-                </select>
-              </Rotulo>
             </div>
             <div className="mt-3 flex flex-wrap items-end gap-3 border-t border-line pt-3">
               <label className="flex items-center gap-2 pb-2 text-sm text-gray-700">
@@ -206,7 +194,7 @@ export default function NovaEquipe() {
                     <input type="date" value={f.fim} min={f.inicio} onChange={(e) => e.target.value && set("fim", e.target.value)} className="field !py-1.5" />
                   </Rotulo>
                   <span className="num pb-2 text-xs text-gray-500">{f.inicio <= f.fim ? `${diasDoPeriodo(f.inicio, f.fim)} dias` : "período inválido"}</span>
-                  <span className="pb-2 text-xs text-gray-500">A lista abaixo mostra quem está livre nesse período.</span>
+                  <span className="pb-2 text-xs text-gray-500">A lista abaixo mostra quem está livre nesse período. No dia seguinte ao fim, as pessoas da equipe ficam disponíveis.</span>
                 </>
               )}
             </div>

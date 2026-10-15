@@ -3,10 +3,10 @@
 // Carrega uma vez os dados do sistema (poucas centenas de linhas) e entrega para todas as telas,
 // já com a regra de disponibilidade pronta para calcular qualquer data no próprio navegador.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { alocacoesQueSeguram, indexar, type Dia, type DadosEfetivos, type Indice } from "@/lib/efetivos/disponibilidade";
+import { indexar, type Dia, type DadosEfetivos, type Indice } from "@/lib/efetivos/disponibilidade";
 import { contar, resumirDia, situacaoDaPosicao, type Contagem, type ResumoDoDia, type SituacaoDaPosicao } from "@/lib/efetivos/situacao";
 import { localizacaoNoDia, type MovimentoBase } from "@/lib/efetivos/veiculos";
-import { chamar, ehReserva, hojeBr, type Campanha, type DadosTela, type Equipe, type MovimentoEquipe, type Vaga, type Veiculo } from "./comum";
+import { chamar, ehReserva, hojeBr, type DadosTela, type Equipe, type MovimentoEquipe, type Vaga, type Veiculo } from "./comum";
 
 type Ctx = {
   dados: DadosTela;
@@ -20,7 +20,6 @@ type Ctx = {
   equipesCampo: Equipe[];
   equipePorId: Map<string, Equipe>;
   vagaPorId: Map<string, Vaga>;
-  campanhaPorId: Map<string, Campanha>;
   veiculoPorId: Map<string, Veiculo>;
   vagasPorEquipe: Map<string, Vaga[]>;
   /** Viaturas que estao hoje com cada equipe (pela ultima passagem registrada). */
@@ -92,7 +91,7 @@ export function DadosProvider({ children }: { children: ReactNode }) {
       equipes: dados.equipes,
       vagas: dados.vagas,
       ausencias: dados.ausencias,
-      alocacoes: alocacoesQueSeguram(dados.alocacoes, dados.campanhas),
+      alocacoes: [], // campanhas deixaram de existir na tela: a pessoa está em equipe, não em campanha
     };
     const vagasPorEquipe = new Map<string, Vaga[]>();
     for (const v of dados.vagas) {
@@ -133,7 +132,6 @@ export function DadosProvider({ children }: { children: ReactNode }) {
       equipesCampo: dados.equipes.filter((e) => !ehReserva(e)),
       equipePorId: new Map(dados.equipes.map((e) => [e.id, e])),
       vagaPorId: new Map(dados.vagas.map((v) => [v.id, v])),
-      campanhaPorId: new Map(dados.campanhas.map((c) => [c.id, c])),
       veiculoPorId: new Map(dados.veiculos.map((v) => [v.id, v])),
       vagasPorEquipe,
     };

@@ -1,4 +1,5 @@
 // Geometria do Quadro (Gantt): tudo em "dias desde o início da janela" x largura do dia.
+import type { ReactNode } from "react";
 import { diferencaDias, type Dia } from "@/lib/efetivos/disponibilidade";
 import type { EstadoVisual } from "../comum";
 
@@ -12,7 +13,8 @@ export type Barra = {
   rotulo: string;
   cor: string;
   corTexto?: string;
-  dica: string;
+  /** o que aparece quando o mouse passa: texto (a 1ª linha é o título) ou um bloco pronto */
+  dica: string | ReactNode;
   listrada?: boolean;
   /** Passagem em aberto (sem data de saída): linha fina e discreta em vez de uma barra grossa até o fim. */
   fina?: boolean;

@@ -160,7 +160,7 @@ export default function Ferias() {
     <div>
       <CabecalhoPagina
         titulo="Férias e ausências"
-        subtitulo="Quando não dá para contar com cada pessoa. Quem estiver ausente aparece como indisponível ao montar a equipe de uma campanha, com as datas e a volta."
+        subtitulo="Quando não dá para contar com cada pessoa. A pessoa ausente continua na equipe, mas deixa de contar como presente no Painel e no Quadro, com as datas e a volta."
         acoes={
           podeEditar && (
             <button onClick={() => setModal({})} className="btn-primary">

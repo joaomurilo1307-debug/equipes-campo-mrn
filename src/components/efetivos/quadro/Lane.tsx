@@ -3,6 +3,7 @@
 import { useRef, useState, type ReactNode } from "react";
 import { somarDias, type Dia } from "@/lib/efetivos/disponibilidade";
 import { fmtDiaCurto } from "../comum";
+import { ligarDica, fatorZoom, useDica } from "./dicas";
 import { recortar, ALTURA_FAIXA, type Barra } from "./geometria";
 
 type Props = {
@@ -23,17 +24,19 @@ type Props = {
 
 /**
  * Faixa horizontal da linha do tempo: desenha as barras e, quando editável, deixa arrastar
- * com o mouse (ou o dedo) para escolher um período — é daqui que se cria campanha, ausência etc.
+ * com o mouse (ou o dedo) para escolher um período — é daqui que se movimenta uma equipe, se lança uma ausência etc.
  */
 export default function Lane({ inicio, totalDias, dw, altura, onSelecionar, umDia, dica, barras = [], topoBarras = 6, alturaBarra = ALTURA_FAIXA - 4, children }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const tip = useDica();
   const arrastando = useRef<{ a: number } | null>(null);
   const [sel, setSel] = useState<{ a: number; b: number } | null>(null);
   const fimJanela = somarDias(inicio, totalDias - 1);
 
   const celula = (clientX: number) => {
     const r = ref.current!.getBoundingClientRect();
-    return Math.max(0, Math.min(totalDias - 1, Math.floor((clientX - r.left) / dw)));
+    // o mouse e as medidas vêm em pixels visuais; dw é em pixels da página (que tem zoom)
+    return Math.max(0, Math.min(totalDias - 1, Math.floor((clientX - r.left) / (dw * fatorZoom()))));
   };
 
   function descer(e: React.PointerEvent<HTMLDivElement>) {
@@ -96,7 +99,7 @@ export default function Lane({ inicio, totalDias, dw, altura, onSelecionar, umDi
             tabIndex={barra.onClick ? 0 : undefined}
             onClick={barra.onClick}
             onKeyDown={(e) => barra.onClick && (e.key === "Enter" || e.key === " ") && barra.onClick()}
-            title={barra.dica}
+            {...ligarDica(tip, barra.dica)}
             className={`absolute z-[6] flex cursor-pointer items-center overflow-hidden whitespace-nowrap px-2 text-[11px] font-semibold transition-[filter] hover:brightness-95 focus-visible:outline focus-visible:outline-2 focus-visible:outline-ink ${barra.fina ? "" : "shadow-sm"} ${r.cortadaEsq ? "rounded-l-none" : "rounded-l-md"} ${r.cortadaDir ? "rounded-r-none" : "rounded-r-md"} ${barra.listrada ? "listrado" : ""}`}
             style={{ left: r.esq * dw, width: Math.max(larg - 1, 4), top: topoBarras + faixa * ALTURA_FAIXA + (barra.fina ? (alturaBarra - 8) / 2 : 0), height: barra.fina ? 8 : alturaBarra, background: barra.cor, opacity: barra.fina ? 0.45 : 1, color: barra.corTexto ?? "#fff" }}
           >

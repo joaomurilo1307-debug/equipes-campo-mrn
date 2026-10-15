@@ -18,7 +18,7 @@ export function ModalMover({ veiculo, periodo, onFechar }: { veiculo: Veiculo; p
   const contratos = useContratos();
   const atual = localizacaoNoDia(dados.movimentos.filter((m) => m.veiculoId === veiculo.id), hoje);
   const atualEq = atual?.equipeId ? equipePorId.get(atual.equipeId) : null;
-  const [f, setF] = useState({ inicio: periodo?.inicio ?? hoje, fim: periodo?.fim ?? "", projeto: "", equipeId: "", campanhaId: "", local: "", observacao: "" });
+  const [f, setF] = useState({ inicio: periodo?.inicio ?? hoje, fim: periodo?.fim ?? "", projeto: "", equipeId: "", local: "", observacao: "" });
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const set = (k: keyof typeof f, v: string) => setF((x) => ({ ...x, [k]: v }));
@@ -36,7 +36,6 @@ export function ModalMover({ veiculo, periodo, onFechar }: { veiculo: Veiculo; p
       fim: f.fim || null,
       projeto: f.projeto.trim() || A_DEFINIR,
       equipeId: f.equipeId || null,
-      campanhaId: f.campanhaId || null,
       local: f.local || null,
       observacao: f.observacao || null,
     });
@@ -77,16 +76,6 @@ export function ModalMover({ veiculo, periodo, onFechar }: { veiculo: Veiculo; p
                 <option key={p} value={p} />
               ))}
             </datalist>
-          </Campo>
-          <Campo rotulo="Campanha (opcional)">
-            <select value={f.campanhaId} onChange={(e) => set("campanhaId", e.target.value)} className="field">
-              <option value="">—</option>
-              {dados.campanhas.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.codigo} · {rotuloContrato(c.projeto)}
-                </option>
-              ))}
-            </select>
           </Campo>
           <Campo rotulo="Local / frente">
             <input value={f.local} onChange={(e) => set("local", e.target.value)} className="field" />

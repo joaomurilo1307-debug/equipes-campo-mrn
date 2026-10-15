@@ -1,7 +1,7 @@
 "use client";
 
 // Moldura dos assistentes (nova equipe, movimentar equipe, abrir vagas / novo cargo): à esquerda o que se preenche, à direita
-// o resumo que acompanha e o botão de confirmar. É o mesmo jeito de montar uma campanha, agora para a equipe.
+// o resumo que acompanha e o botão de confirmar. É o jeito de trabalhar com a equipe: criar, movimentar, abrir vagas.
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { IcCheck } from "./icones";

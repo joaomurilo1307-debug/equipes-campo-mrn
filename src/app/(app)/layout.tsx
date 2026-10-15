@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import ConsominasLogo from "@/components/ConsominasLogo";
 import { DadosGate, DadosProvider, useShell } from "@/components/efetivos/DadosContext";
+import { DicaProvider } from "@/components/efetivos/quadro/dicas";
 import { ModalMinhaSenha } from "@/components/efetivos/AcessosEHistorico";
 import { IcBase, IcCarro, IcContrato, IcEquipe, IcFechar, IcFerias, IcHistorico, IcMais, IcOlho, IcPainel, IcQuadro, IcRelatorio, IcSair, IcUsuarios, IcVaga } from "@/components/efetivos/icones";
 
@@ -145,7 +146,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         )}
 
         <main className="px-6 py-6 sm:px-8">
-          <DadosGate>{children}</DadosGate>
+          <DicaProvider>
+            <DadosGate>{children}</DadosGate>
+          </DicaProvider>
         </main>
       </div>
     </DadosProvider>

@@ -12,7 +12,7 @@ const ROTULO_PAPEL: Record<string, string> = { ADMIN: "Administrador", EDITOR: "
 const DESCRICAO_PAPEL: Record<string, string> = {
   ADMIN: "Tudo, inclusive criar e gerenciar acessos.",
   EDITOR: "Monta e movimenta equipes, lança ausências, mexe em veículos e importa planilha.",
-  VISUALIZADOR: "Só consulta painel, quadro, campanhas e frota; não vê o motivo das ausências.",
+  VISUALIZADOR: "Só consulta painel, quadro, equipes, vagas e frota; não vê o motivo das ausências.",
 };
 
 export function Acessos() {
@@ -207,7 +207,7 @@ export function Historico() {
       <div className="card mb-4 p-4">
         <label className="block max-w-md">
           <span className="label">Buscar no histórico</span>
-          <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="campanha, nome, veículo…" className="field" />
+          <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="equipe, nome, veículo…" className="field" />
         </label>
       </div>
       {erro && <div className="mb-4"><Aviso tipo="erro">{erro}</Aviso></div>}

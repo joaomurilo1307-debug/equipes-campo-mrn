@@ -20,7 +20,18 @@ export default function MovimentarEquipe() {
   const pedida = params.get("equipe");
   const [equipeId, setEquipeId] = useState(pedida && equipePorId.has(pedida) ? pedida : equipesCampo[0]?.id ?? "");
   const equipe = equipePorId.get(equipeId);
-  const [f, setF] = useState({ projeto: "", local: "", inicio: hoje, comFim: false, fim: somarDias(hoje, 29), observacao: "", viaturas: true, pessoas: true });
+  const pIni = params.get("inicio");
+  const pFim = params.get("fim");
+  const [f, setF] = useState({
+    projeto: "",
+    local: "",
+    inicio: pIni && dataValida(pIni) ? pIni : hoje,
+    comFim: !!(pFim && dataValida(pFim)),
+    fim: pFim && dataValida(pFim) ? pFim : somarDias(hoje, 29),
+    observacao: "",
+    viaturas: true,
+    pessoas: true,
+  });
   const set = <K extends keyof typeof f>(k: K, v: (typeof f)[K]) => setF((x) => ({ ...x, [k]: v }));
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);

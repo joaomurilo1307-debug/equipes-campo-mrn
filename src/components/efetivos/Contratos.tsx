@@ -1,16 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
-import { temNome } from "@/lib/efetivos/disponibilidade";
+import { ROTULO_ESTADO_EQUIPE, estadoDaEquipe } from "@/lib/efetivos/situacao";
 import { localizacaoNoDia } from "@/lib/efetivos/veiculos";
 import { useDados } from "./DadosContext";
-import { A_DEFINIR, CHIP_STATUS_CAMPANHA, SEM_CONTRATO, chamar, contratosConhecidos, corDoContrato, fmtDia, rotuloContrato, type Contrato } from "./comum";
-import { IcLixo, IcMais } from "./icones";
+import { A_DEFINIR, SEM_CONTRATO, chamar, contratosConhecidos, corDoContrato, fmtDia, rotuloContrato, type Contrato } from "./comum";
+import { IcLixo, IcMais, IcMover } from "./icones";
 import { CampoInline } from "./inline";
 import { Aviso, CabecalhoPagina, Campo, Modal, PontoContrato, RodapeModal, Vazio } from "./ui";
 
 export default function Contratos() {
-  const { dados, hoje, recarregar, vagasPorEquipe, veiculosPorEquipe, equipesCampo } = useDados();
+  const { dados, hoje, recarregar, veiculosPorEquipe, equipesCampo, contagemDe, equipePorId } = useDados();
   const [sel, setSel] = useState<string>("");
   const [novo, setNovo] = useState(false);
   const [adicionar, setAdicionar] = useState("");
@@ -28,14 +29,16 @@ export default function Contratos() {
   const ehSem = atualCodigo === A_DEFINIR;
 
   const equipes = equipesCampo.filter((e) => (ehSem ? !e.projeto || e.projeto === A_DEFINIR : e.projeto === atualCodigo));
-  const campanhas = dados.campanhas.filter((c) => c.projeto === atualCodigo);
+  // passagens de equipes por este contrato (de qualquer equipe)
+  const passagens = (dados.movimentosEquipe ?? []).filter((m) => m.projeto === atualCodigo).sort((a, b) => b.inicio.localeCompare(a.inicio));
   const viaturasHoje = dados.veiculos.filter((v) => {
     const loc = localizacaoNoDia(dados.movimentos.filter((m) => m.veiculoId === v.id), hoje);
     return ehSem ? !loc || loc.projeto === A_DEFINIR : loc?.projeto === atualCodigo;
   });
-  const pessoas = equipes.reduce((s, e) => s + (vagasPorEquipe.get(e.id) ?? []).filter(temNome).length, 0);
-  const semNome = equipes.reduce((s, e) => s + (vagasPorEquipe.get(e.id) ?? []).filter((v) => !temNome(v) && v.semNome).length, 0);
-  const vagasAbertas = equipes.reduce((s, e) => s + (vagasPorEquipe.get(e.id) ?? []).filter((v) => !temNome(v) && !v.semNome).length, 0);
+  const c = contagemDe(equipes.map((e) => e.id), hoje);
+  const pessoas = c.comNome;
+  const semNome = c.semNome;
+  const vagasAbertas = c.abertas;
 
   async function salvarCampo(campo: string, valor: string): Promise<string | null> {
     setErro(null);
@@ -69,7 +72,7 @@ export default function Contratos() {
     <div>
       <CabecalhoPagina
         titulo="Contratos"
-        subtitulo="Os contratos e o que está em cada um: equipes, viaturas e campanhas. Cadastre os dados do contrato e distribua as equipes."
+        subtitulo="Os contratos e o que está em cada um: equipes, pessoas, vagas e viaturas. Cadastre os dados do contrato; para levar uma equipe a outro contrato, use Movimentar equipe."
         acoes={
           podeEditar && (
             <button onClick={() => setNovo(true)} className="btn-primary">
@@ -136,7 +139,8 @@ export default function Contratos() {
                   {semNome > 0 && <span><strong className="num text-ink">{semNome}</strong> sem nome informado</span>}
                   <span><strong className="num" style={{ color: vagasAbertas > 0 ? "#B86E00" : undefined }}>{vagasAbertas}</strong> vagas abertas</span>
                   <span><strong className="num text-ink">{viaturasHoje.length}</strong> viatura{viaturasHoje.length === 1 ? "" : "s"} hoje</span>
-                  <span><strong className="num text-ink">{campanhas.length}</strong> campanha{campanhas.length === 1 ? "" : "s"}</span>
+                  <span><strong className="num text-ink">{c.emEquipe}</strong> em equipe</span>
+                  {c.ausentes > 0 && <span><strong className="num text-bad">{c.ausentes}</strong> ausentes</span>}
                 </div>
               </section>
 
@@ -164,25 +168,38 @@ export default function Contratos() {
                     <tr>
                       <th>Equipe</th>
                       <th>Grupo</th>
-                      <th className="text-right">Vagas</th>
+                      <th className="text-right">Posições</th>
+                      <th className="text-right">Vagas abertas</th>
                       <th className="text-right">Viaturas</th>
+                      <th>Situação</th>
                       {podeEditar && <th>{ehSem ? "Definir contrato" : ""}</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {equipes.map((e) => {
-                      const vs = vagasPorEquipe.get(e.id) ?? [];
+                      const cm = contagemDe([e.id], hoje);
+                      const est = ROTULO_ESTADO_EQUIPE[estadoDaEquipe(e, cm, hoje)];
                       return (
                         <tr key={e.id}>
                           <td>
-                            <div className="font-medium">{e.nome}</div>
+                            <Link href={`/equipes?equipe=${e.id}`} className="font-medium hover:text-brand-dark hover:underline">
+                              {e.nome}
+                            </Link>
                             <div className="text-[11px] text-gray-500">{e.codigo}</div>
                           </td>
                           <td className="text-gray-600">{e.grupo}</td>
                           <td className="num text-right">
-                            {vs.filter(temNome).length}/{vs.length}
+                            {cm.comNome + cm.semNome}/{cm.posicoes}
+                          </td>
+                          <td className="num text-right" style={{ color: cm.abertas > 0 ? "#B86E00" : undefined }}>
+                            {cm.abertas}
                           </td>
                           <td className="num text-right">{(veiculosPorEquipe.get(e.id) ?? []).length}</td>
+                          <td>
+                            <span className={est.chip} title={est.dica}>
+                              {est.rotulo}
+                            </span>
+                          </td>
                           {podeEditar && (
                             <td>
                               {ehSem ? (
@@ -195,9 +212,14 @@ export default function Contratos() {
                                   ))}
                                 </select>
                               ) : (
-                                <button onClick={() => moverEquipe(e.id, "")} className="btn-ghost btn-sm">
-                                  Tirar do contrato
-                                </button>
+                                <div className="flex gap-1.5">
+                                  <Link href={`/equipes/movimentar?equipe=${e.id}`} className="btn-ghost btn-sm">
+                                    <IcMover tam={12} /> Movimentar
+                                  </Link>
+                                  <button onClick={() => moverEquipe(e.id, "")} className="btn-ghost btn-sm" title="Corrige o contrato cadastrado, sem registrar passagem">
+                                    Tirar do contrato
+                                  </button>
+                                </div>
                               )}
                             </td>
                           )}
@@ -206,8 +228,8 @@ export default function Contratos() {
                     })}
                     {equipes.length === 0 && (
                       <tr>
-                        <td colSpan={5}>
-                          <Vazio titulo="Nenhuma equipe aqui" texto={podeEditar && !ehSem ? "Use “Adicionar equipe…” para colocar uma equipe neste contrato." : undefined} />
+                        <td colSpan={8}>
+                          <Vazio titulo="Nenhuma equipe aqui" texto={podeEditar && !ehSem ? "Use “Adicionar equipe…” ou Movimentar equipe para colocar uma equipe neste contrato." : undefined} />
                         </td>
                       </tr>
                     )}
@@ -237,19 +259,18 @@ export default function Contratos() {
                 </section>
                 <section className="card overflow-hidden">
                   <div className="card-h !py-2.5">
-                    <h3 className="card-t">Campanhas</h3>
+                    <h3 className="card-t">Passagens de equipes</h3>
                   </div>
                   <ul className="divide-y divide-line text-[12.5px]">
-                    {campanhas.map((c) => (
-                      <li key={c.id} className="flex items-center justify-between gap-3 px-4 py-2">
-                        <span className="font-mono font-semibold">{c.codigo}</span>
-                        <span className="min-w-0 flex-1 truncate text-gray-500">
-                          {c.atividade} · {fmtDia(c.inicio)} a {fmtDia(c.fim)}
+                    {passagens.map((m) => (
+                      <li key={m.id} className="flex items-center justify-between gap-3 px-4 py-2">
+                        <span className="min-w-0 flex-1 truncate font-medium">{equipePorId.get(m.equipeId)?.nome ?? "Equipe"}</span>
+                        <span className="shrink-0 text-gray-500">
+                          {fmtDia(m.inicio)} → {m.fim ? fmtDia(m.fim) : "em curso"}
                         </span>
-                        <span className={CHIP_STATUS_CAMPANHA[c.status]}>{c.status}</span>
                       </li>
                     ))}
-                    {campanhas.length === 0 && <li className="px-4 py-6 text-center text-gray-400">Nenhuma campanha.</li>}
+                    {passagens.length === 0 && <li className="px-4 py-6 text-center text-gray-400">Nenhuma equipe foi movimentada para este contrato pelo sistema.</li>}
                   </ul>
                 </section>
               </div>

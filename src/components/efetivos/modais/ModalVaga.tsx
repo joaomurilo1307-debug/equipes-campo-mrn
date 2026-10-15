@@ -72,8 +72,7 @@ export default function ModalVaga({ equipe, vaga, onFechar, onSalvo }: { equipe?
     setSalvando(false);
     if (!r.ok) return setErro(r.dados.error ?? "Não foi possível salvar");
     await recarregar();
-    const futuras = (r.dados as any).alocacoesFuturas as number | undefined;
-    await onSalvo(futuras && futuras > 0 ? `Profissional trocado: a vaga tem ${futuras} escala(s) em campanha, que continuam nela. Revise em Campanhas se for outra pessoa.` : undefined);
+    await onSalvo(undefined);
   }
 
   async function excluir() {
