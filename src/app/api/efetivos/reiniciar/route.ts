@@ -12,7 +12,7 @@ export async function POST(req: Request) {
   if (corpo?.confirmar !== "REFAZER CARGA INICIAL") return NextResponse.json({ error: "Confirmação ausente" }, { status: 422 });
 
   const edicoes = await prisma.auditLog.count({
-    where: { NOT: [{ action: { in: ["IMPORTACAO", "USUARIO_CRIADO", "USUARIO_ALTERADO", "CARGA_REFEITA"] } }] },
+    where: { NOT: [{ action: { in: ["IMPORTACAO", "USUARIO_CRIADO", "USUARIO_ALTERADO", "CARGA_REFEITA", "BASE_BAIXADA"] } }] },
   });
   if (edicoes > 0) {
     return NextResponse.json({ error: `Já existem ${edicoes} alteração(ões) feitas por pessoas no sistema; não vou apagar.` }, { status: 409 });
@@ -21,6 +21,7 @@ export async function POST(req: Request) {
   await prisma.$transaction([
     prisma.efetivoAlocacao.deleteMany(),
     prisma.efetivoAusencia.deleteMany(),
+    prisma.efetivoEquipeMovimento.deleteMany(),
     prisma.efetivoVeiculoMovimento.deleteMany(),
     prisma.efetivoVaga.deleteMany(),
     prisma.efetivoVeiculo.deleteMany(),

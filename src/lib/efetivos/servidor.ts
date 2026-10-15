@@ -8,6 +8,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { alocacoesQueSeguram, type Dia } from "./disponibilidade";
 import { dadosMock, modoMock } from "@/lib/devMock";
+import { instanteBrasilia } from "./hoje";
 
 export type NivelEfetivos = "ADMIN" | "EDITOR" | "DASHBOARD";
 
@@ -62,8 +63,30 @@ export async function registrar(userId: string | null, acao: string, entidade: s
 // Status de saude/afastamento aparecem para quem so consulta como simples "Indisponível" (LGPD).
 const STATUS_SENSIVEIS = ["Afastado", "Apto com restrição"];
 
+/**
+ * Movimentação agendada: quando chega o dia, a equipe passa a ter o contrato (e a frente) da passagem em vigor, e as pessoas
+ * dela que estavam no contrato antigo acompanham. Roda ao abrir os dados; não precisa de tarefa agendada.
+ */
+async function aplicarMovimentosDeEquipe() {
+  try {
+    const hoje = dataDe(instanteBrasilia().iso);
+    const vigentes = await prisma.efetivoEquipeMovimento.findMany({ where: { inicio: { lte: hoje }, OR: [{ fim: null }, { fim: { gte: hoje } }] }, include: { equipe: true } });
+    for (const m of vigentes) {
+      if (m.equipe.projeto === m.projeto) continue;
+      const contrato = await prisma.efetivoContrato.findUnique({ where: { codigo: m.projeto } });
+      await prisma.$transaction([
+        prisma.efetivoEquipe.update({ where: { id: m.equipeId }, data: { projeto: m.projeto, contratoConfirmado: true, ...(m.local ? { local: m.local } : {}), ...(contrato?.gestor ? { gestor: contrato.gestor } : {}) } }),
+        prisma.efetivoVaga.updateMany({ where: { equipeId: m.equipeId, OR: [{ contrato: m.equipe.projeto }, { contrato: null }] }, data: { contrato: m.projeto } }),
+      ]);
+    }
+  } catch {
+    // aplicar a agenda nunca deve impedir de abrir os dados
+  }
+}
+
 async function carregarDadosReal(editor: boolean) {
-  const [equipes, vagas, ausencias, campanhas, alocacoes, veiculos, movimentos, contratos] = await Promise.all([
+  await aplicarMovimentosDeEquipe();
+  const [equipes, vagas, ausencias, campanhas, alocacoes, veiculos, movimentos, contratos, movimentosEquipe] = await Promise.all([
     prisma.efetivoEquipe.findMany({ orderBy: [{ ordem: "asc" }, { codigo: "asc" }] }),
     prisma.efetivoVaga.findMany({ orderBy: [{ numero: "asc" }, { criadoEm: "asc" }] }),
     prisma.efetivoAusencia.findMany({ orderBy: { inicio: "asc" } }),
@@ -72,6 +95,7 @@ async function carregarDadosReal(editor: boolean) {
     prisma.efetivoVeiculo.findMany({ orderBy: { codigo: "asc" } }),
     prisma.efetivoVeiculoMovimento.findMany({ orderBy: { inicio: "asc" } }),
     prisma.efetivoContrato.findMany({ orderBy: { codigo: "asc" } }),
+    prisma.efetivoEquipeMovimento.findMany({ orderBy: { inicio: "asc" } }),
   ]);
   return {
     equipes: equipes.map((e) => ({
@@ -110,6 +134,8 @@ async function carregarDadosReal(editor: boolean) {
       grupo: v.grupo,
       semNome: v.semNome,
       observacao: editor ? v.observacao : null,
+      origem: v.origem,
+      conferir: v.conferir,
     })),
     ausencias: ausencias.map((a) => ({
       id: a.id,
@@ -160,6 +186,7 @@ async function carregarDadosReal(editor: boolean) {
       observacao: m.observacao,
     })),
     contratos: contratos.map((c) => ({ id: c.id, codigo: c.codigo, nome: c.nome, cliente: c.cliente, gestor: c.gestor, local: c.local, observacao: c.observacao, ativo: c.ativo })),
+    movimentosEquipe: movimentosEquipe.map((m) => ({ id: m.id, equipeId: m.equipeId, inicio: diaDe(m.inicio)!, fim: diaDe(m.fim), projeto: m.projeto, local: m.local, observacao: m.observacao })),
   };
 }
 

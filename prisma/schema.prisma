@@ -60,8 +60,9 @@ model EfetivoEquipe {
   campanhaId        String? // campanha a que a equipe esta associada (opcional)
   criadoEm          DateTime @default(now())
 
-  vagas    EfetivoVaga[]
-  campanha EfetivoCampanha? @relation(fields: [campanhaId], references: [id], onDelete: SetNull)
+  vagas      EfetivoVaga[]
+  campanha   EfetivoCampanha? @relation(fields: [campanhaId], references: [id], onDelete: SetNull)
+  movimentos EfetivoEquipeMovimento[]
 
   @@index([grupo])
 }
@@ -88,6 +89,8 @@ model EfetivoVaga {
   grupo             String? // Fauna | Flora, da pessoa (vazio = o da equipe)
   semNome           Boolean   @default(false) // posicao preenchida cujo nome nao foi informado (ex.: auxiliares Coopermoura/MRN)
   observacao        String?
+  origem            String? // de onde veio na planilha: "Aba 2 · linha 5 + Aba 1 · ID 3 (linha 5)"
+  conferir          String? // o que o Samuel precisa confirmar nesta posicao (ligacao incerta, so numa das abas...)
   criadoEm          DateTime  @default(now())
 
   veiculo   EfetivoVeiculo?   @relation(fields: [veiculoId], references: [id], onDelete: SetNull)
@@ -209,5 +212,24 @@ model EfetivoVeiculoMovimento {
   veiculo EfetivoVeiculo @relation(fields: [veiculoId], references: [id], onDelete: Cascade)
 
   @@index([veiculoId, inicio])
+  @@index([projeto])
+}
+
+// Onde a equipe esta (ou esteve): contrato e frente, por periodo. fim vazio = continua la.
+// Nunca se apaga a passagem anterior: ao movimentar a equipe, fecha-se a anterior (como na frota).
+model EfetivoEquipeMovimento {
+  id            String    @id @default(cuid())
+  equipeId      String
+  inicio        DateTime
+  fim           DateTime?
+  projeto       String
+  local         String?
+  observacao    String?
+  criadoPorNome String?
+  criadoEm      DateTime  @default(now())
+
+  equipe EfetivoEquipe @relation(fields: [equipeId], references: [id], onDelete: Cascade)
+
+  @@index([equipeId, inicio])
   @@index([projeto])
 }

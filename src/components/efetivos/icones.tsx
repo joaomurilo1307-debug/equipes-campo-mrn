@@ -164,3 +164,35 @@ export const IcRelatorio = (p: P) => (
     <path d="M8.5 15.5v-3M12 15.5V9M15.5 15.5v-5" />
   </Svg>
 );
+
+export const IcVaga = (p: P) => (
+  <Svg {...p}>
+    <circle cx="9" cy="8" r="3.4" />
+    <path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6" />
+    <path d="M19 6v6M16 9h6" />
+  </Svg>
+);
+export const IcBase = (p: P) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M3 9.5h18M3 15h18M9.5 4v16" />
+  </Svg>
+);
+export const IcMover = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 8h14M14 4l4 4-4 4" />
+    <path d="M20 16H6M10 12l-4 4 4 4" />
+  </Svg>
+);
+export const IcBaixar = (p: P) => (
+  <Svg {...p}>
+    <path d="M12 3v12M7 11l5 5 5-5" />
+    <path d="M4 20h16" />
+  </Svg>
+);
+export const IcSobe = (p: P) => (
+  <Svg {...p}>
+    <path d="M12 21V9M7 13l5-5 5 5" />
+    <path d="M4 4h16" />
+  </Svg>
+);

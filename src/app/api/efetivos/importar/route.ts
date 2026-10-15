@@ -94,9 +94,26 @@ export async function POST(req: Request) {
       const equipePorCodigoImportado = new Map<string, { id: string; projeto: string; nome: string }>();
 
       let n = 0;
+      const codigosEmUso = new Set(existentes.map((x) => x.codigo));
       for (const e of equipesNovas) {
+        // a reserva de apoio tem sempre o codigo APOIO (e por ele que o sistema a encontra); na planilha-base o codigo do arquivo e mantido
+        const manter = e.codigo === "APOIO" || (lido.formato === "base" && /^EQ-\d+$/.test(e.codigo));
+        const codigo = manter && !codigosEmUso.has(e.codigo) ? e.codigo : eqCodigos(++n);
+        codigosEmUso.add(codigo);
         const criada = await tx.efetivoEquipe.create({
-          data: { codigo: eqCodigos(++n), nome: e.nome, projeto: e.projeto, gestor: e.gestor, grupo: e.grupo, status: e.status, ordem: ++ordem },
+          data: {
+            codigo,
+            nome: e.nome,
+            projeto: e.projeto,
+            gestor: e.gestor,
+            grupo: e.grupo,
+            status: e.status,
+            local: e.local ?? null,
+            observacao: e.observacao ?? null,
+            inicio: e.inicio ? dataDe(e.inicio) : null,
+            fim: e.fim ? dataDe(e.fim) : null,
+            ordem: ++ordem,
+          },
         });
         equipePorCodigoImportado.set(e.codigo, { id: criada.id, projeto: e.projeto, nome: e.nome });
       }
@@ -107,7 +124,7 @@ export async function POST(req: Request) {
       for (const v of veiculosNovos) {
         const eq = equipePorCodigoImportado.get(v.equipeCodigo)!;
         const veiculo = await tx.efetivoVeiculo.create({
-          data: { codigo: veiCodigos(++k), identificacao: v.identificacao, status: "Em operação" },
+          data: { codigo: veiCodigos(++k), identificacao: v.identificacao, placa: v.placa ?? null, modelo: v.modelo ?? null, tracao4x4: v.tracao4x4 ?? null, status: v.status || "Em operação" },
         });
         veiculoPorRef.set(v.ref, veiculo.id);
         await tx.efetivoVeiculoMovimento.create({
@@ -118,7 +135,7 @@ export async function POST(req: Request) {
       // contratos que a planilha cita (so os que ainda nao existem; nunca sobrescreve o que foi preenchido no sistema)
       for (const c of lido.contratos) {
         const ja = await tx.efetivoContrato.findUnique({ where: { codigo: c.codigo } });
-        if (!ja) await tx.efetivoContrato.create({ data: { codigo: c.codigo, gestor: c.gestor, cliente: c.cliente } });
+        if (!ja) await tx.efetivoContrato.create({ data: { codigo: c.codigo, gestor: c.gestor, cliente: c.cliente, nome: c.nome ?? null, local: c.local ?? null, observacao: c.observacao ?? null } });
       }
 
       let numero = vagaMax;
@@ -143,10 +160,12 @@ export async function POST(req: Request) {
             grupo: v.grupo ?? null,
             semNome: !!v.semNome && !v.nome,
             observacao: v.observacao,
+            origem: v.origem ?? null,
+            conferir: v.conferir ?? null,
           },
         });
-        if (v.ausencia) {
-          await tx.efetivoAusencia.create({ data: { vagaId: vaga.id, tipo: v.ausencia.tipo, inicio: dataDe(v.ausencia.inicio), fim: dataDe(v.ausencia.fim) } });
+        for (const a of [...(v.ausencia ? [v.ausencia] : []), ...(v.ausencias ?? [])]) {
+          await tx.efetivoAusencia.create({ data: { vagaId: vaga.id, tipo: a.tipo, inicio: dataDe(a.inicio), fim: dataDe(a.fim) } });
         }
       }
     },

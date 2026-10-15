@@ -18,6 +18,11 @@ export type EquipeImportada = {
   grupo: string;
   nome: string;
   status: string;
+  // so no formato "base" (a planilha-base do sistema)
+  local?: string | null;
+  observacao?: string | null;
+  inicio?: Dia | null;
+  fim?: Dia | null;
 };
 export type AusenciaImportada = { tipo: string; inicio: Dia; fim: Dia };
 export type VagaImportada = {
@@ -30,6 +35,7 @@ export type VagaImportada = {
   status: string;
   observacao: string | null;
   ausencia: AusenciaImportada | null;
+  ausencias?: AusenciaImportada[];
   nivel?: string | null;
   direcao4x4?: boolean | null;
   contratoAtual?: string | null;
@@ -43,17 +49,29 @@ export type VagaImportada = {
   grupo?: string | null;
   // posicao preenchida, mas o nome nao foi informado (celula em branco; "Vago" e vaga aberta de verdade)
   semNome?: boolean;
+  // de onde a posicao veio na planilha ("Aba 2 · linha 5 + Aba 1 · ID 3") e o que conferir, quando houver duvida
+  origem?: string | null;
+  conferir?: string | null;
 };
-export type ContratoImportado = { codigo: string; gestor: string | null; cliente: string | null };
+export type ContratoImportado = { codigo: string; gestor: string | null; cliente: string | null; nome?: string | null; local?: string | null; observacao?: string | null };
 // Viatura que a planilha cita para a equipe ("VL 01"); placa e contrato nao vem na planilha.
-export type VeiculoImportado = { ref: string; identificacao: string; equipeCodigo: string; ocupantes: number };
+export type VeiculoImportado = { ref: string; identificacao: string; equipeCodigo: string; ocupantes: number; placa?: string | null; modelo?: string | null; tracao4x4?: boolean | null; status?: string | null };
 export type ResultadoImportacao = {
-  formato: "painel" | "divisao" | "original" | "cruzado";
+  formato: "painel" | "divisao" | "original" | "cruzado" | "base";
   equipes: EquipeImportada[];
   vagas: VagaImportada[];
   veiculos: VeiculoImportado[];
   contratos: ContratoImportado[];
   avisos: string[];
+  // so no formato cruzado: o que a conferencia precisa para provar de onde vem cada numero
+  conferencia?: {
+    linhasAba1: number;
+    linhasAba2: number;
+    linhasAba3: number;
+    equipesAba1: number;
+    equipesAba2: number;
+    substituidas: { origem: string; descricao: string; equipe: string }[];
+  };
 };
 export type OpcoesLeitura = { anoReferencia?: number };
 
@@ -155,6 +173,14 @@ function lerLinhas(ws: XLSX.WorkSheet): unknown[][] {
   return XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, blankrows: false, defval: "" });
 }
 
+/** As linhas da aba com o número da linha no Excel (para dizer, em cada posição, de onde ela veio). */
+function lerLinhasNumeradas(ws: XLSX.WorkSheet): { linhas: unknown[][]; numero: number[] } {
+  const ref = ws["!ref"];
+  const primeira = ref ? XLSX.utils.decode_range(ref).s.r : 0;
+  const linhas = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, blankrows: true, defval: "" });
+  return { linhas, numero: linhas.map((_, i) => primeira + i + 1) };
+}
+
 function abaVisivel(wb: XLSX.WorkBook, nome: string): boolean {
   const info = wb.Workbook?.Sheets?.find((x) => x.name === nome);
   return !info || !info.Hidden;
@@ -163,6 +189,10 @@ function abaVisivel(wb: XLSX.WorkBook, nome: string): boolean {
 export function lerPlanilhaEfetivos(dados: ArrayBuffer | Uint8Array | Buffer, opcoes: OpcoesLeitura = {}): ResultadoImportacao {
   const wb = XLSX.read(dados, { type: "buffer" });
   const avisos: string[] = [];
+
+  // ---- formato "base": a planilha-base do proprio sistema (BASE + EQUIPES + CONTRATOS + VIATURAS)
+  const abaBase = wb.SheetNames.find((n) => normalizar(n) === "base");
+  if (abaBase && acharCabecalho(lerLinhas(wb.Sheets[abaBase]), ["cod. equipe", "profissional", "posicao"])) return lerBaseUnificada(wb, abaBase);
 
   // ---- formato A: painel com aba Profissionais
   const abaProf = wb.SheetNames.find((n) => normalizar(n) === "profissionais");
@@ -252,6 +282,14 @@ export function lerPlanilhaEfetivos(dados: ArrayBuffer | Uint8Array | Buffer, op
       vagas: x.vagas,
       veiculos: divisao.veiculos,
       contratos: x.contratos.map((c) => ({ ...c, cliente: c.gestor ? "MRN" : null })),
+      conferencia: {
+        linhasAba1: cadastro.pessoas.length + cadastro.semPessoa.length,
+        linhasAba2: divisao.vagas.filter((v) => v.equipeCodigo !== CODIGO_RESERVA).length,
+        linhasAba3: divisao.vagas.filter((v) => v.equipeCodigo === CODIGO_RESERVA).length,
+        equipesAba1: new Set([...cadastro.pessoas.map((p) => p.bloco), ...cadastro.semPessoa.map((p) => p.bloco)]).size,
+        equipesAba2: divisao.equipes.filter((e) => e.codigo !== CODIGO_RESERVA).length,
+        substituidas: x.substituidas,
+      },
       avisos: [
         ...divisao.avisos,
         `Cadastro por contrato: ${cadastro.pessoas.length} pessoas com nome; ${x.resumo.ligadas} ligadas pelo nome às equipes de campo, ${x.resumo.encaixadas} encaixadas pela posição, ${x.resumo.extrasNaEquipe} a mais em equipes existentes e ${x.resumo.equipesDoCadastro} equipes que só existem no cadastro.`,
@@ -340,10 +378,11 @@ const ATIVIDADE_DO_CADASTRO: Record<string, string> = { resgate: "Resgate", afug
 
 /** Primeira aba: contrato, gestor, grupo, equipe do contrato, atividade, empresa, função, profissional e status. So le quem tem nome. */
 export function lerCadastroPorContrato(ws: XLSX.WorkSheet): { pessoas: PessoaCadastro[]; semPessoa: PosicaoCadastro[]; contratos: ContratoImportado[] } {
-  const linhas = lerLinhas(ws);
+  const { linhas, numero } = lerLinhasNumeradas(ws);
   const ch = acharCabecalho(linhas, ["projeto", "grupo", "equipe / projeto"]);
   if (!ch) throw new Error("A primeira aba não tem as colunas PROJETO, GRUPO e EQUIPE / PROJETO.");
   const c = ch.cab;
+  const iId = col(c, "id");
   const iProj = col(c, "projeto");
   const iGestor = col(c, "gestor mrn");
   const iGrupo = col(c, "grupo");
@@ -359,7 +398,10 @@ export function lerCadastroPorContrato(ws: XLSX.WorkSheet): { pessoas: PessoaCad
   const contratos = new Map<string, ContratoImportado>();
   let projetoAnterior = "";
   let equipeAtual = "";
-  for (const r of linhas.slice(ch.indice + 1)) {
+  // cada celula de equipe (mesclada) abre um bloco: o mesmo nome pode se repetir em blocos diferentes e sao equipes diferentes
+  let bloco = 0;
+  for (let li = ch.indice + 1; li < linhas.length; li++) {
+    const r = linhas[li];
     const projeto = texto(r[iProj]);
     const cargo = texto(r[iCargo]);
     if (!projeto && !cargo) continue;
@@ -372,9 +414,15 @@ export function lerCadastroPorContrato(ws: XLSX.WorkSheet): { pessoas: PessoaCad
     if (projeto !== projetoAnterior) {
       projetoAnterior = projeto;
       equipeAtual = "";
+      bloco++;
     }
     const nomeEquipe = texto(r[iEquipe]);
-    if (nomeEquipe !== "") equipeAtual = nomeEquipe;
+    if (nomeEquipe !== "") {
+      equipeAtual = nomeEquipe;
+      bloco++;
+    }
+    const id = iId >= 0 ? textoOuNulo(r[iId]) : null;
+    const linha = numero[li];
     const bruto = texto(r[iProfis]);
     const n = normalizar(bruto);
     ordem++;
@@ -392,6 +440,9 @@ export function lerCadastroPorContrato(ws: XLSX.WorkSheet): { pessoas: PessoaCad
         status: contratando ? "Em contratação" : interpretarStatus(r[iStatus], null, null).status,
         tipo: contratando ? "contratacao" : "branco",
         ordem,
+        linha,
+        id,
+        bloco,
       });
       continue;
     }
@@ -417,9 +468,204 @@ export function lerCadastroPorContrato(ws: XLSX.WorkSheet): { pessoas: PessoaCad
       status: st.status,
       observacao: st.observacao,
       ordem,
+      linha,
+      id,
+      bloco,
     });
   }
   return { pessoas, semPessoa, contratos: [...contratos.values()] };
+}
+
+// ---------------------------------------------------------------- planilha-base do sistema
+
+const STATUS_CONHECIDOS = ["Vigente", "Apto com restrição", "Afastado", "Em contratação", "Desmobilizado"];
+
+function lerBaseUnificada(wb: XLSX.WorkBook, nomeAba: string): ResultadoImportacao {
+  const avisos: string[] = [];
+  const linhas = lerLinhas(wb.Sheets[nomeAba]);
+  const ch = acharCabecalho(linhas, ["cod. equipe", "profissional", "posicao"])!;
+  const c = ch.cab;
+  const iNum = col(c, "nº", "no", "n");
+  const iContrato = col(c, "contrato");
+  const iGestor = col(c, "gestor mrn");
+  const iGrupo = col(c, "grupo");
+  const iEquipe = col(c, "equipe");
+  const iCod = col(c, "cod. equipe");
+  const iAtiv = col(c, "atividade");
+  const iEmp = col(c, "empresa");
+  const iCargo = col(c, "cargo / funcao");
+  const iNivel = col(c, "nivel");
+  const iNome = col(c, "profissional");
+  const iPos = col(c, "posicao");
+  const iStatus = col(c, "status");
+  const i4x4 = col(c, "direcao 4x4");
+  const iViat = col(c, "viatura");
+  const iCtPessoa = col(c, "contrato da pessoa");
+  const iCtAtual = col(c, "contrato atual (outro)");
+  const iDisp = col(c, "disponivel a partir de");
+  const iDestino = col(c, "destino");
+  const iObs = col(c, "observacao");
+  const iOrigem = col(c, "origem");
+  const iConf = col(c, "conferir");
+
+  // equipes: a aba EQUIPES manda; na falta dela, a primeira linha de cada codigo
+  const equipes = new Map<string, EquipeImportada>();
+  const abaEq = wb.SheetNames.find((n) => normalizar(n) === "equipes");
+  if (abaEq) {
+    const le = lerLinhas(wb.Sheets[abaEq]);
+    const ce = acharCabecalho(le, ["cod. equipe", "equipe"]);
+    if (ce) {
+      const k = ce.cab;
+      for (const r of le.slice(ce.indice + 1)) {
+        const cod = texto(r[col(k, "cod. equipe")]);
+        if (!cod) continue;
+        const grupo = texto(r[col(k, "grupo")]) || "Fauna";
+        equipes.set(cod, {
+          codigo: cod,
+          nome: texto(r[col(k, "equipe")]) || cod,
+          projeto: texto(r[col(k, "contrato")]) || PROJETO_A_DEFINIR,
+          contratoConfirmado: true,
+          gestor: textoOuNulo(r[col(k, "gestor mrn")]),
+          grupo,
+          status: texto(r[col(k, "status")]) || "Ativa",
+          local: textoOuNulo(r[col(k, "local / frente")]),
+          observacao: textoOuNulo(r[col(k, "observacao")]),
+          inicio: paraDia(r[col(k, "inicio")]),
+          fim: paraDia(r[col(k, "fim")]),
+        });
+      }
+    }
+  }
+
+  const vagas: VagaImportada[] = [];
+  const ocupantes = new Map<string, number>();
+  const posicaoPorChave = new Map<string, VagaImportada>(); // codigo|nome -> vaga (para ligar as ausencias)
+  for (const r of linhas.slice(ch.indice + 1)) {
+    const cod = texto(r[iCod]);
+    const cargo = texto(r[iCargo]);
+    if (!cod || !cargo) continue;
+    if (!equipes.has(cod)) {
+      equipes.set(cod, {
+        codigo: cod,
+        nome: texto(r[iEquipe]) || cod,
+        projeto: texto(r[iContrato]) || PROJETO_A_DEFINIR,
+        contratoConfirmado: true,
+        gestor: textoOuNulo(r[iGestor]),
+        grupo: cod === CODIGO_RESERVA ? "Apoio" : texto(r[iGrupo]) || "Fauna",
+        status: "Ativa",
+      });
+    }
+    const posicao = normalizar(r[iPos]);
+    let nome = textoOuNulo(r[iNome]);
+    let semNome = posicao === "sem nome informado";
+    if (posicao === "vaga aberta") {
+      nome = null;
+      semNome = false;
+    }
+    if (nome) semNome = false;
+    if (!nome && posicao === "com nome") avisos.push(`${cod} (${cargo}): a posição diz "Com nome" mas o nome está em branco; ficou como vaga aberta.`);
+    const statusBruto = texto(r[iStatus]);
+    const status = STATUS_CONHECIDOS.includes(statusBruto) ? statusBruto : interpretarStatus(statusBruto, null, null).status;
+    const dir = normalizar(r[i4x4]);
+    const viatura = textoOuNulo(r[iViat]);
+    const n = Number(r[iNum]);
+    const v: VagaImportada = {
+      numero: Number.isFinite(n) && texto(r[iNum]) !== "" ? n : null,
+      equipeCodigo: cod,
+      atividade: texto(r[iAtiv]) || "Resgate",
+      empresa: texto(r[iEmp]),
+      cargo,
+      nome,
+      status,
+      observacao: textoOuNulo(r[iObs]),
+      ausencia: null,
+      nivel: textoOuNulo(r[iNivel]),
+      direcao4x4: dir === "sim" ? true : dir === "nao" ? false : null,
+      carroRef: viatura ? `${cod}#${viatura}` : null,
+      contrato: textoOuNulo(r[iCtPessoa]),
+      grupo: textoOuNulo(r[iGrupo]),
+      contratoAtual: textoOuNulo(r[iCtAtual]),
+      disponivelAPartir: paraDia(r[iDisp]),
+      destino: textoOuNulo(r[iDestino]),
+      semNome,
+      origem: textoOuNulo(r[iOrigem]),
+      conferir: textoOuNulo(r[iConf]),
+    };
+    vagas.push(v);
+    if (viatura && nome) ocupantes.set(`${cod}#${viatura}`, (ocupantes.get(`${cod}#${viatura}`) ?? 0) + 1);
+    if (nome) posicaoPorChave.set(`${cod}|${normalizar(nome)}`, v);
+  }
+  if (vagas.length === 0) throw new Error('A aba "BASE" não tem nenhuma posição.');
+
+  // viaturas: a aba VIATURAS manda (placa, modelo, 4x4); na falta dela, as citadas na BASE
+  const veiculos = new Map<string, VeiculoImportado>();
+  const abaVt = wb.SheetNames.find((n) => normalizar(n) === "viaturas");
+  if (abaVt) {
+    const lv = lerLinhas(wb.Sheets[abaVt]);
+    const cv = acharCabecalho(lv, ["cod. equipe", "viatura"]);
+    if (cv) {
+      const k = cv.cab;
+      for (const r of lv.slice(cv.indice + 1)) {
+        const cod = texto(r[col(k, "cod. equipe")]);
+        const ident = texto(r[col(k, "viatura")]);
+        if (!cod || !ident) continue;
+        const d4 = normalizar(r[col(k, "4x4")]);
+        veiculos.set(`${cod}#${ident}`, {
+          ref: `${cod}#${ident}`,
+          identificacao: ident,
+          equipeCodigo: cod,
+          ocupantes: ocupantes.get(`${cod}#${ident}`) ?? 0,
+          placa: textoOuNulo(r[col(k, "placa")]),
+          modelo: textoOuNulo(r[col(k, "modelo")]),
+          tracao4x4: d4 === "sim" ? true : d4 === "nao" ? false : null,
+          status: textoOuNulo(r[col(k, "status")]),
+        });
+      }
+    }
+  }
+  for (const v of vagas) {
+    if (v.carroRef && !veiculos.has(v.carroRef)) {
+      const [cod, ident] = v.carroRef.split("#");
+      veiculos.set(v.carroRef, { ref: v.carroRef, identificacao: ident, equipeCodigo: cod, ocupantes: ocupantes.get(v.carroRef) ?? 0 });
+    }
+  }
+
+  // ausencias (ferias com datas...), ligadas pela equipe e pelo nome
+  const abaAu = wb.SheetNames.find((n) => normalizar(n) === "ausencias");
+  if (abaAu) {
+    const la = lerLinhas(wb.Sheets[abaAu]);
+    const ca = acharCabecalho(la, ["cod. equipe", "profissional", "tipo"]);
+    if (ca) {
+      const k = ca.cab;
+      for (const r of la.slice(ca.indice + 1)) {
+        const alvo = posicaoPorChave.get(`${texto(r[col(k, "cod. equipe")])}|${normalizar(r[col(k, "profissional")])}`);
+        const ini = paraDia(r[col(k, "inicio")]);
+        const fim = paraDia(r[col(k, "fim")]);
+        const tipo = texto(r[col(k, "tipo")]);
+        if (!alvo || !ini || !fim || !tipo || ini > fim) continue;
+        (alvo.ausencias ??= []).push({ tipo, inicio: ini, fim });
+      }
+    }
+  }
+
+  // contratos
+  const contratos = new Map<string, ContratoImportado>();
+  const abaCt = wb.SheetNames.find((n) => normalizar(n) === "contratos");
+  if (abaCt) {
+    const lc = lerLinhas(wb.Sheets[abaCt]);
+    const cc = acharCabecalho(lc, ["contrato", "gestor mrn"]);
+    if (cc) {
+      const k = cc.cab;
+      for (const r of lc.slice(cc.indice + 1)) {
+        const cod = texto(r[col(k, "contrato")]);
+        if (!cod) continue;
+        contratos.set(cod, { codigo: cod, gestor: textoOuNulo(r[col(k, "gestor mrn")]), cliente: textoOuNulo(r[col(k, "cliente")]), nome: textoOuNulo(r[col(k, "nome / descricao")]), local: textoOuNulo(r[col(k, "local")]), observacao: textoOuNulo(r[col(k, "observacao")]) });
+      }
+    }
+  }
+  for (const e of equipes.values()) if (e.projeto && e.projeto !== PROJETO_A_DEFINIR && e.codigo !== CODIGO_RESERVA && !contratos.has(e.projeto)) contratos.set(e.projeto, { codigo: e.projeto, gestor: e.gestor, cliente: null });
+
+  return { formato: "base", equipes: [...equipes.values()], vagas, veiculos: [...veiculos.values()], contratos: [...contratos.values()], avisos };
 }
 
 // ---------------------------------------------------------------- formato "DIVISÃO DE EQUIPES"
@@ -447,7 +693,7 @@ export function ultimoDiaDeTexto(texto_: unknown, ano: number): Dia | null {
 
 function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitura): ResultadoImportacao {
   const avisos: string[] = [];
-  const linhas = lerLinhas(wb.Sheets[aba]);
+  const { linhas, numero } = lerLinhasNumeradas(wb.Sheets[aba]);
   const ch = acharCabecalho(linhas, ["atividade", "empresa", "equipe", "cargo / funcao", "nome profissionais"]);
   if (!ch) throw new Error('Aba "DIVISÃO DE EQUIPES" sem as colunas ATIVIDADE, EMPRESA, EQUIPE, Cargo / Função e NOME PROFISSIONAIS.');
   const c = ch.cab;
@@ -467,7 +713,8 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
   const cargosPorEquipe = new Map<string, string[]>();
   let atual: EquipeImportada | null = null;
   let carroAtual: VeiculoImportado | null = null;
-  for (const r of linhas.slice(ch.indice + 1)) {
+  for (let li = ch.indice + 1; li < linhas.length; li++) {
+    const r = linhas[li];
     const cargo = texto(r[iCargo]);
     const nomeEquipe = texto(r[iTime]);
     if (!cargo && !nomeEquipe) continue;
@@ -512,6 +759,7 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
       direcao4x4: dir === "sim" ? true : dir === "nao" ? false : null,
       carroRef: carroAtual?.ref ?? null,
       semNome,
+      origem: `Aba 2 · linha ${numero[li]}`,
     });
   }
   if (vagas.length === 0) throw new Error('A aba "DIVISÃO DE EQUIPES" não tem nenhuma vaga.');
@@ -524,7 +772,7 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
   // aba de apoio vindo de outro contrato (ex.: "EQUIPE DE LT PARA APOIO")
   const abaApoio = wb.SheetNames.find((n) => normalizar(n).includes("apoio"));
   if (abaApoio) {
-    const la = lerLinhas(wb.Sheets[abaApoio]);
+    const { linhas: la, numero: numApoio } = lerLinhasNumeradas(wb.Sheets[abaApoio]);
     const ca = acharCabecalho(la, ["contrato", "funcao", "profissional"]);
     if (ca) {
       const k = ca.cab;
@@ -532,7 +780,8 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
       // As pessoas desta aba NAO formam uma equipe (a planilha tem so as equipes da aba DIVISAO DE EQUIPES):
       // sao reforco de outro contrato que fica livre numa data. Ficam numa reserva unica, sem contrato.
       let reserva: EquipeImportada | undefined;
-      for (const r of la.slice(ca.indice + 1)) {
+      for (let lj = ca.indice + 1; lj < la.length; lj++) {
+        const r = la[lj];
         const contrato = texto(r[k.get("contrato")!]);
         const prof = textoOuNulo(r[k.get("profissional")!]);
         if (!contrato || !prof) continue;
@@ -567,6 +816,7 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
           contratoAtual: contrato,
           disponivelAPartir: ultimo ? somarDias(ultimo, 1) : null,
           destino: textoOuNulo(r[col(k, "migrar para")]),
+          origem: `Aba 3 · linha ${numApoio[lj]}`,
         });
       }
     }

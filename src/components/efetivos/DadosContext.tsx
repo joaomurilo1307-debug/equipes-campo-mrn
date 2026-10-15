@@ -3,9 +3,10 @@
 // Carrega uma vez os dados do sistema (poucas centenas de linhas) e entrega para todas as telas,
 // já com a regra de disponibilidade pronta para calcular qualquer data no próprio navegador.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { alocacoesQueSeguram, indexar, type DadosEfetivos, type Indice } from "@/lib/efetivos/disponibilidade";
+import { alocacoesQueSeguram, indexar, type Dia, type DadosEfetivos, type Indice } from "@/lib/efetivos/disponibilidade";
+import { contar, resumirDia, situacaoDaPosicao, type Contagem, type ResumoDoDia, type SituacaoDaPosicao } from "@/lib/efetivos/situacao";
 import { localizacaoNoDia, type MovimentoBase } from "@/lib/efetivos/veiculos";
-import { chamar, ehReserva, hojeBr, type Campanha, type DadosTela, type Equipe, type Vaga, type Veiculo } from "./comum";
+import { chamar, ehReserva, hojeBr, type Campanha, type DadosTela, type Equipe, type MovimentoEquipe, type Vaga, type Veiculo } from "./comum";
 
 type Ctx = {
   dados: DadosTela;
@@ -28,6 +29,17 @@ type Ctx = {
   ocupantesPorVeiculo: Map<string, Vaga[]>;
   /** Nome para exibir: no modo apresentação mostra o cargo no lugar do nome. */
   nomeDe: (v: Pick<Vaga, "nome" | "cargo">) => string;
+  // ---- a regra única de situação (Em equipe / Disponível / Ausente...): todas as telas contam por aqui
+  /** Onde a posição está no dia (hoje, se não informado). */
+  situacaoDe: (v: Vaga, dia?: Dia) => SituacaoDaPosicao;
+  /** Contagem das posições de uma equipe (ou de uma lista de equipes) no dia. */
+  contagemDe: (equipeIds: string[], dia?: Dia) => Contagem;
+  /** Os números do painel no dia. */
+  resumoDoDia: (dia?: Dia) => ResumoDoDia;
+  /** Passagens de cada equipe por contrato/frente (movimentações). */
+  movimentosPorEquipe: Map<string, MovimentoEquipe[]>;
+  /** Contrato em que a equipe está no dia: o da passagem que cobre o dia, ou o cadastrado. */
+  contratoNoDia: (e: Equipe, dia?: Dia) => string;
 };
 
 const Contexto = createContext<Ctx | null>(null);
@@ -106,7 +118,14 @@ export function DadosProvider({ children }: { children: ReactNode }) {
       veiculosPorEquipe.get(loc.equipeId)!.push(ve);
     }
     for (const l of veiculosPorEquipe.values()) l.sort((a, b) => a.identificacao.localeCompare(b.identificacao, "pt-BR", { numeric: true }));
+    const movimentosPorEquipe = new Map<string, MovimentoEquipe[]>();
+    for (const m of dados.movimentosEquipe ?? []) {
+      if (!movimentosPorEquipe.has(m.equipeId)) movimentosPorEquipe.set(m.equipeId, []);
+      movimentosPorEquipe.get(m.equipeId)!.push(m);
+    }
+    for (const l of movimentosPorEquipe.values()) l.sort((a, b) => a.inicio.localeCompare(b.inicio));
     return {
+      movimentosPorEquipe,
       regra,
       idx: indexar(regra),
       veiculosPorEquipe,
@@ -120,10 +139,26 @@ export function DadosProvider({ children }: { children: ReactNode }) {
     };
   }, [dados, hoje]);
 
+  const hojeDia = hoje;
   const shell: Shell = { ocultarNomes, setOcultarNomes, nivel: dados?.nivel ?? null, podeEditar: dados?.podeEditar ?? false, carregado: !!dados };
   const valor: Ctx | null =
     dados && pronto
-      ? { dados, ...pronto, hoje, recarregar, ocultarNomes, setOcultarNomes, nomeDe: (v) => (ocultarNomes ? v.cargo : v.nome ?? "—") }
+      ? {
+          dados,
+          ...pronto,
+          hoje,
+          recarregar,
+          ocultarNomes,
+          setOcultarNomes,
+          nomeDe: (v) => (ocultarNomes ? v.cargo : v.nome ?? "—"),
+          situacaoDe: (v, dia = hojeDia) => situacaoDaPosicao(v, pronto.equipePorId.get(v.equipeId), pronto.idx, dia),
+          contagemDe: (ids, dia = hojeDia) => contar(ids.flatMap((id) => pronto.vagasPorEquipe.get(id) ?? []), pronto.equipePorId, pronto.idx, dia),
+          resumoDoDia: (dia = hojeDia) => resumirDia({ equipes: dados.equipes, vagas: dados.vagas }, pronto.idx, dia),
+          contratoNoDia: (e, dia = hojeDia) => {
+            const m = (pronto.movimentosPorEquipe.get(e.id) ?? []).find((x) => x.inicio <= dia && (!x.fim || dia <= x.fim));
+            return m ? m.projeto : e.projeto;
+          },
+        }
       : null;
 
   return (

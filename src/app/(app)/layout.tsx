@@ -7,21 +7,46 @@ import { signOut, useSession } from "next-auth/react";
 import ConsominasLogo from "@/components/ConsominasLogo";
 import { DadosGate, DadosProvider, useShell } from "@/components/efetivos/DadosContext";
 import { ModalMinhaSenha } from "@/components/efetivos/AcessosEHistorico";
-import { IcCampanha, IcCarro, IcMais, IcContrato, IcEquipe, IcFechar, IcFerias, IcHistorico, IcOlho, IcPainel, IcQuadro, IcRelatorio, IcSair, IcUsuarios } from "@/components/efetivos/icones";
+import { IcBase, IcCarro, IcContrato, IcEquipe, IcFechar, IcFerias, IcHistorico, IcMais, IcOlho, IcPainel, IcQuadro, IcRelatorio, IcSair, IcUsuarios, IcVaga } from "@/components/efetivos/icones";
 
 type Item = { href: string; rotulo: string; icone: (p: { tam?: number }) => JSX.Element; so?: "editor" | "admin" };
-const ITENS: Item[] = [
-  { href: "/painel", rotulo: "Painel", icone: IcPainel },
-  { href: "/quadro", rotulo: "Quadro de equipes", icone: IcQuadro },
-  { href: "/campanhas", rotulo: "Campanhas", icone: IcCampanha },
-  { href: "/colaboradores", rotulo: "Colaboradores", icone: IcUsuarios },
-  { href: "/equipes", rotulo: "Equipes", icone: IcEquipe },
-  { href: "/contratos", rotulo: "Contratos", icone: IcContrato },
-  { href: "/ferias", rotulo: "Férias e ausências", icone: IcFerias },
-  { href: "/frota", rotulo: "Frota", icone: IcCarro },
-  { href: "/relatorios", rotulo: "Relatórios", icone: IcRelatorio },
-  { href: "/historico", rotulo: "Histórico", icone: IcHistorico, so: "editor" },
-  { href: "/usuarios", rotulo: "Acessos", icone: IcUsuarios, so: "admin" },
+type Secao = { titulo: string; itens: Item[] };
+
+// A ordem segue o raciocínio de quem opera: ver o todo, entender a estrutura (contrato -> equipe -> vaga -> pessoa),
+// cuidar dos recursos, e por fim os dados (base em Excel, relatórios) e o administrativo.
+const SECOES: Secao[] = [
+  {
+    titulo: "Visão geral",
+    itens: [
+      { href: "/painel", rotulo: "Painel", icone: IcPainel },
+      { href: "/quadro", rotulo: "Quadro de equipes", icone: IcQuadro },
+    ],
+  },
+  {
+    titulo: "Estrutura",
+    itens: [
+      { href: "/contratos", rotulo: "Contratos", icone: IcContrato },
+      { href: "/equipes", rotulo: "Equipes", icone: IcEquipe },
+      { href: "/vagas", rotulo: "Vagas", icone: IcVaga },
+      { href: "/colaboradores", rotulo: "Colaboradores", icone: IcUsuarios },
+    ],
+  },
+  {
+    titulo: "Recursos",
+    itens: [
+      { href: "/frota", rotulo: "Frota", icone: IcCarro },
+      { href: "/ferias", rotulo: "Férias e ausências", icone: IcFerias },
+    ],
+  },
+  {
+    titulo: "Dados",
+    itens: [
+      { href: "/base", rotulo: "Base (Excel)", icone: IcBase },
+      { href: "/relatorios", rotulo: "Relatórios", icone: IcRelatorio },
+      { href: "/historico", rotulo: "Histórico", icone: IcHistorico, so: "editor" },
+    ],
+  },
+  { titulo: "Administração", itens: [{ href: "/usuarios", rotulo: "Acessos", icone: IcUsuarios, so: "admin" }] },
 ];
 
 function Menu({ aoNavegar }: { aoNavegar?: () => void }) {
@@ -30,34 +55,41 @@ function Menu({ aoNavegar }: { aoNavegar?: () => void }) {
   const { nivel, podeEditar, ocultarNomes, setOcultarNomes } = useShell();
   const nome = (sessao?.user as any)?.name ?? "";
   const [trocarSenha, setTrocarSenha] = useState(false);
-  const visiveis = ITENS.filter((i) => !i.so || (i.so === "editor" ? podeEditar : nivel === "ADMIN"));
+  const secoes = SECOES.map((s) => ({ ...s, itens: s.itens.filter((i) => !i.so || (i.so === "editor" ? podeEditar : nivel === "ADMIN")) })).filter((s) => s.itens.length > 0);
 
   return (
     <div className="flex h-full flex-col">
-      <div className="px-5 pb-5 pt-6">
+      <div className="px-5 pb-4 pt-6">
         <ConsominasLogo size={34} />
         <div className="mt-3 font-display text-[13px] font-medium uppercase tracking-[0.16em] text-gray-500">Equipes de campo</div>
       </div>
 
       {podeEditar && (
         <div className="px-3 pb-3">
-          <Link href="/montar" onClick={aoNavegar} className="btn-primary w-full">
-            <IcMais tam={16} /> Nova campanha
+          <Link href="/equipes/nova" onClick={aoNavegar} className="btn-primary w-full">
+            <IcMais tam={16} /> Nova equipe
           </Link>
         </div>
       )}
 
-      <nav className="flex-1 space-y-0.5 px-3" aria-label="Principal">
-        {visiveis.map((i) => {
-          const ativo = pathname?.startsWith(i.href);
-          const Icone = i.icone;
-          return (
-            <Link key={i.href} href={i.href} onClick={aoNavegar} className={`nav-item ${ativo ? "nav-item-active" : ""}`} aria-current={ativo ? "page" : undefined}>
-              <Icone tam={18} />
-              {i.rotulo}
-            </Link>
-          );
-        })}
+      <nav className="flex-1 space-y-3 overflow-y-auto px-3 pb-2" aria-label="Principal">
+        {secoes.map((s) => (
+          <div key={s.titulo}>
+            <div className="px-3 pb-1 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-gray-400">{s.titulo}</div>
+            <div className="space-y-0.5">
+              {s.itens.map((i) => {
+                const ativo = pathname?.startsWith(i.href);
+                const Icone = i.icone;
+                return (
+                  <Link key={i.href} href={i.href} onClick={aoNavegar} className={`nav-item ${ativo ? "nav-item-active" : ""}`} aria-current={ativo ? "page" : undefined}>
+                    <Icone tam={18} />
+                    {i.rotulo}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
       <div className="space-y-3 border-t border-line px-4 py-4">

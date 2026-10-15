@@ -37,6 +37,8 @@ export type Vaga = {
   grupo: string | null;
   semNome: boolean;
   observacao: string | null;
+  origem: string | null;
+  conferir: string | null;
 };
 export type Ausencia = { id: string; vagaId: string; tipo: string; inicio: Dia; fim: Dia; observacao: string | null };
 export type Campanha = {
@@ -79,6 +81,8 @@ export type Movimento = {
   local: string | null;
   observacao: string | null;
 };
+/** Onde a equipe está (ou esteve): contrato e frente, por período. fim vazio = continua. */
+export type MovimentoEquipe = { id: string; equipeId: string; inicio: Dia; fim: Dia | null; projeto: string; local: string | null; observacao: string | null };
 export type DadosTela = {
   nivel: "ADMIN" | "EDITOR" | "DASHBOARD";
   podeEditar: boolean;
@@ -90,6 +94,7 @@ export type DadosTela = {
   veiculos: Veiculo[];
   movimentos: Movimento[];
   contratos: Contrato[];
+  movimentosEquipe: MovimentoEquipe[];
 };
 
 export const A_DEFINIR = "A definir";

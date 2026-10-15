@@ -44,19 +44,16 @@ export function dadosMock(): any {
     grupo: v.grupo ?? null,
     semNome: !!v.semNome && !v.nome,
     observacao: v.observacao,
+    origem: v.origem ?? null,
+    conferir: v.conferir ?? null,
   }));
   const hoje = "2026-10-13";
   const nomeadas = (eq: string) => vagas.filter((v) => v.equipeId === eq && v.nome && v.status === "Vigente");
   const n1 = nomeadas("EQ-01");
   const n3 = nomeadas("EQ-03");
-  const campanhas = [
-    { id: "c1", codigo: "CAM-001", recebidaEm: "2026-10-02", solicitante: "MRN — Meio Ambiente", projeto: "A definir", grupo: "Fauna", atividade: "Resgate", local: "Flanco Norte · Trecho 4", equipeNome: "Equipe Resgate Flanco Norte", necessidade: [{ cargo: "Biólogo de Fauna", qtd: 2 }, { cargo: "Auxiliar", qtd: 6 }], inicio: "2026-10-19", fim: "2026-11-20", qtdEquipes: 1, prioridade: "Alta", status: "Confirmada", observacao: null },
-    { id: "c2", codigo: "CAM-002", recebidaEm: "2026-10-06", solicitante: "MRN — Lavra", projeto: "A definir", grupo: "Fauna", atividade: "Afugentamento", local: "Frente de lavra 02", equipeNome: null, necessidade: [], inicio: "2026-11-02", fim: "2026-12-11", qtdEquipes: 2, prioridade: "Média", status: "Planejada", observacao: null },
-  ];
-  const alocacoes = [
-    ...n1.map((v, i) => ({ id: `a1-${i}`, campanhaId: "c1", vagaId: v.id, inicio: "2026-10-19", fim: "2026-11-20" })),
-    ...n3.slice(0, 3).map((v, i) => ({ id: `a2-${i}`, campanhaId: "c2", vagaId: v.id, inicio: "2026-11-02", fim: "2026-12-11" })),
-  ];
+  // campanhas deixaram de existir na tela: a equipe é a unidade (período + movimentos)
+  const campanhas: any[] = [];
+  const alocacoes: any[] = [];
   const ausencias = [
     ...(n1[0] ? [{ id: "x1", vagaId: n1[0].id, tipo: "Férias", inicio: "2026-12-14", fim: "2027-01-02", observacao: null }] : []),
     ...(n3[1] ? [{ id: "x2", vagaId: n3[1].id, tipo: "Atestado", inicio: "2026-10-20", fim: "2026-10-23", observacao: null }] : []),
@@ -73,6 +70,8 @@ export function dadosMock(): any {
     veiculos[1].tracao4x4 = true;
   }
   void somarDias;
-  cache = { equipes, vagas, ausencias, campanhas, alocacoes, veiculos, movimentos, contratos };
+  // exemplo de movimentação de equipe, só para ver o desenho no quadro (em produção vem do banco)
+  const movimentosEquipe = equipes.slice(0, 2).map((e, i) => ({ id: `me${i + 1}`, equipeId: e.id, inicio: i === 0 ? "2026-07-01" : "2026-09-14", fim: null as string | null, projeto: e.projeto, local: i === 0 ? "Flanco Norte · trecho 4" : null, observacao: null as string | null }));
+  cache = { equipes, vagas, ausencias, campanhas, alocacoes, veiculos, movimentos, contratos, movimentosEquipe };
   return cache;
 }

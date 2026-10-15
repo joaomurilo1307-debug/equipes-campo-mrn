@@ -19,7 +19,10 @@ export type PessoaCadastro = {
   cargo: string;
   status: string;
   observacao: string | null;
-  ordem?: number; // linha na primeira aba, para manter a ordem das posições
+  ordem?: number; // ordem na primeira aba, para manter a ordem das posições
+  linha?: number; // linha no Excel
+  id?: string | null; // coluna ID da primeira aba
+  bloco?: number; // equipe da primeira aba: cada célula de equipe (mesclada) é um bloco, mesmo que o nome se repita
 };
 
 /** Posição da primeira aba sem pessoa: vaga em contratação, ou preenchida com o nome em branco. */
@@ -34,6 +37,9 @@ export type PosicaoCadastro = {
   status: string;
   tipo: "branco" | "contratacao";
   ordem: number;
+  linha?: number;
+  id?: string | null;
+  bloco?: number;
 };
 
 const CODIGO_FORA = "APOIO"; // a "reserva": quem não está em nenhuma equipe (apoio de outro contrato, desmobilizados, disponíveis)
@@ -188,11 +194,41 @@ export type ResultadoCruzamento = {
   vagas: VagaImportada[];
   contratos: ContratoImportado[];
   resumo: { ligadas: number; encaixadas: number; extrasNaEquipe: number; equipesDoCadastro: number; apoioJaNaEquipe: number; equipesComContrato: number };
+  /** Linhas da aba 1 que não viraram posição porque a aba 2 (a divisão mais recente) já define as vagas abertas da equipe. */
+  substituidas: { origem: string; descricao: string; equipe: string }[];
 };
+
+type Bloco = { id: number; contrato: string; nome: string | null; gestor: string | null; grupos: (string | null)[]; pessoas: number[]; brancos: PosicaoCadastro[]; contratacoes: PosicaoCadastro[] };
+type Pos = { v: VagaImportada; orig: string[]; conf: string[] };
+
+const origemAba1 = (x: { id?: string | null; linha?: number }) => `Aba 1 · ID ${x.id ?? "?"} (linha ${x.linha ?? "?"})`;
+const empFam = (x: { empresa: string; cargo: string }) => `${familiaDaEmpresa(x.empresa)}|${familiaDoCargo(x.cargo)}`;
+
+/** Quanto duas equipes se parecem pela composição (empresa + função), sem olhar nomes: 0 a 1. */
+function similaridadeDeComposicao(a: { empresa: string; cargo: string }[], b: { empresa: string; cargo: string }[]): number {
+  const conta = (l: { empresa: string; cargo: string }[]) => {
+    const m = new Map<string, number>();
+    for (const x of l) m.set(empFam(x), (m.get(empFam(x)) ?? 0) + 1);
+    return m;
+  };
+  const ma = conta(a);
+  const mb = conta(b);
+  let comum = 0;
+  for (const [k, n] of ma) comum += Math.min(n, mb.get(k) ?? 0);
+  return comum / Math.max(1, Math.max(a.length, b.length));
+}
 
 /**
  * `divisao`: equipes de campo + posições (com a reserva "APOIO" para quem vem de outro contrato);
- * `pessoas`: cadastro por contrato. Devolve a hierarquia contrato -> equipe -> pessoa, cada pessoa uma vez.
+ * `pessoas`/`semPessoa`: a primeira aba (contrato -> equipe -> pessoa). Devolve a hierarquia contrato -> equipe -> pessoa.
+ *
+ * Regras (cada linha das abas 1, 2 e 3 vira exatamente uma posição, ou é absorvida por uma posição da outra aba):
+ *  1. Equipe da aba 1 = cada célula mesclada de equipe (bloco). O mesmo nome em dois blocos são duas equipes.
+ *  2. A mesma pessoa nas duas abas é ligada pelo nome (com evidência); a posição da aba 2 vale (é a divisão mais recente).
+ *  3. Cada bloco da aba 1 casa com, no máximo, uma equipe da aba 2: pelas pessoas em comum e, na falta delas, pela composição + nome.
+ *  4. Dentro de um par: quem tem nome só na aba 1 ocupa uma posição em branco da aba 2 (mesma empresa e função); posição em
+ *     branco e vaga em contratação da aba 1 são absorvidas pelas equivalentes da aba 2; o que não encontra par entra como posição a mais.
+ *  5. Bloco sem par na aba 2 vira equipe só do cadastro, com todas as linhas.
  */
 export function cruzarCadastroComDivisao(
   divisao: { equipes: EquipeImportada[]; vagas: VagaImportada[] },
@@ -201,7 +237,7 @@ export function cruzarCadastroComDivisao(
   semPessoa: PosicaoCadastro[] = []
 ): ResultadoCruzamento {
   const equipes = divisao.equipes.map((e) => ({ ...e }));
-  const posicoes = divisao.vagas.filter((v) => v.equipeCodigo !== CODIGO_FORA).map((v) => ({ ...v }));
+  const pos: Pos[] = divisao.vagas.filter((v) => v.equipeCodigo !== CODIGO_FORA).map((v) => ({ v: { ...v }, orig: v.origem ? [v.origem] : [], conf: [] }));
   const apoio = divisao.vagas.filter((v) => v.equipeCodigo === CODIGO_FORA).map((v) => ({ ...v }));
 
   const pessoaNaPosicao = new Map<number, number>(); // pessoa -> posição
@@ -209,7 +245,7 @@ export function cruzarCadastroComDivisao(
   const forcaDaLigacao = new Map<number, number>(); // posição -> pontos (2+ = nome e sobrenome combinam; 1 = par fraco ou por posição)
 
   function vincular(iPos: number, iPes: number, pontos: number, nota?: string) {
-    const slot = posicoes[iPos];
+    const slot = pos[iPos].v;
     const p = pessoas[iPes];
     slot.contrato = p.contrato;
     slot.equipeContrato = p.equipeContrato;
@@ -219,46 +255,85 @@ export function cruzarCadastroComDivisao(
       slot.status = p.status;
       slot.observacao = [slot.observacao, p.observacao].filter(Boolean).join(" · ") || null;
     }
-    if (nota) slot.observacao = [slot.observacao, nota].filter(Boolean).join(" · ");
+    // a origem guarda como a pessoa está escrita na aba 1 quando é diferente; só vira "conferir" quando a ligação é fraca
+    const grafiaDiferente = !!slot.nome && norm(slot.nome) !== norm(p.nome) && !/mobiliz/i.test(slot.nome);
+    pos[iPos].orig.push(`${origemAba1(p)}${grafiaDiferente ? `: ${p.nome}` : ""}`);
+    if (!nota && pontos < 2 && grafiaDiferente) pos[iPos].conf.push(`Confirmar: "${slot.nome}" (aba 2) e "${p.nome}" (aba 1) só combinam pelo primeiro nome`);
+    if (nota) pos[iPos].conf.push(nota);
     pessoaNaPosicao.set(iPes, iPos);
     posicaoDaPessoa.set(iPos, iPes);
     forcaDaLigacao.set(iPos, pontos);
   }
 
-  // 1) pessoas com nome nas equipes de campo <-> cadastro (pelo nome)
-  const nomeadas = posicoes.map((v, idx) => ({ v, idx })).filter((x) => !!x.v.nome);
+  // ---- 1) blocos (equipes) da primeira aba
+  const blocos = new Map<number, Bloco>();
+  const bloco = (id: number, contrato: string, nome: string | null, gestor: string | null) => {
+    if (!blocos.has(id)) blocos.set(id, { id, contrato, nome, gestor, grupos: [], pessoas: [], brancos: [], contratacoes: [] });
+    return blocos.get(id)!;
+  };
+  pessoas.forEach((p, i) => {
+    const b = bloco(p.bloco ?? -(i + 1), p.contrato, p.equipeContrato, p.gestor);
+    b.pessoas.push(i);
+    b.grupos.push(p.grupo);
+  });
+  semPessoa.forEach((x, i) => {
+    const b = bloco(x.bloco ?? -(1000 + i), x.contrato, x.equipeContrato, x.gestor);
+    (x.tipo === "branco" ? b.brancos : b.contratacoes).push(x);
+    b.grupos.push(x.grupo);
+  });
+  const idDoBloco = (p: PessoaCadastro, i: number) => p.bloco ?? -(i + 1);
+
+  // ---- 2) pessoas com nome nas equipes de campo <-> primeira aba (pelo nome)
+  const nomeadas = pos.map((x, idx) => ({ v: x.v, idx })).filter((x) => !!x.v.nome);
   const porNome = ligar(
     nomeadas.map((x) => ({ nome: x.v.nome!, cargo: x.v.cargo })),
     pessoas.map((p) => ({ nome: p.nome, cargo: p.cargo }))
   );
   for (const [a, { j, pontos }] of porNome) vincular(nomeadas[a].idx, j, pontos);
 
-  // 2) equipes do cadastro (contrato + nome) e quantas pessoas cada uma tem em comum com cada equipe de campo
-  const chaveT1 = (p: PessoaCadastro) => `${p.contrato}|${p.equipeContrato ?? ""}`;
-  const chavesT1 = [...new Set(pessoas.map(chaveT1))];
-  const peso = new Map<string, Map<string, number>>();
-  const pesoForte = new Map<string, number>(); // `${k}>${cod}` -> ligações fortes
+  // ---- 3) que bloco da aba 1 corresponde a que equipe da aba 2 (1 para 1)
+  const peso = new Map<number, Map<string, number>>();
+  const pesoForte = new Map<string, number>(); // `${bloco}>${cod}` -> ligações fortes
   for (const [iPes, iPos] of pessoaNaPosicao) {
-    if (/mobiliz/i.test(posicoes[iPos].nome ?? "")) continue; // em mobilização: ainda é de outro contrato
-    const k = chaveT1(pessoas[iPes]);
-    const cod = posicoes[iPos].equipeCodigo;
+    if (/mobiliz/i.test(pos[iPos].v.nome ?? "")) continue; // em mobilização: ainda é de outro contrato
+    const k = idDoBloco(pessoas[iPes], iPes);
+    const cod = pos[iPos].v.equipeCodigo;
     if (!peso.has(k)) peso.set(k, new Map());
     peso.get(k)!.set(cod, (peso.get(k)!.get(cod) ?? 0) + 1);
     if ((forcaDaLigacao.get(iPos) ?? 0) >= 2) pesoForte.set(`${k}>${cod}`, (pesoForte.get(`${k}>${cod}`) ?? 0) + 1);
   }
   const nomeDoTime = new Map(equipes.map((e) => [e.codigo, e.nome]));
-  const candidatos: { k: string; cod: string; w: number; af: number }[] = [];
-  for (const [k, m] of peso) for (const [cod, w] of m) candidatos.push({ k, cod, w, af: afinidadeDeEquipes(k.split("|")[1] ?? "", nomeDoTime.get(cod) ?? "") });
+  const candidatos: { k: number; cod: string; w: number; af: number }[] = [];
+  for (const [k, m] of peso) for (const [cod, w] of m) candidatos.push({ k, cod, w, af: afinidadeDeEquipes(blocos.get(k)?.nome ?? "", nomeDoTime.get(cod) ?? "") });
   candidatos.sort((a, b) => b.w - a.w || b.af - a.af);
-  const equipeDoCadastro = new Map<string, { cod: string; w: number }>(); // equipe do cadastro -> equipe de campo (1 a 1, pelas pessoas)
+  const parDoBloco = new Map<number, { cod: string; w: number }>();
   const codigosUsados = new Set<string>();
   for (const c of candidatos) {
-    if (equipeDoCadastro.has(c.k) || codigosUsados.has(c.cod)) continue;
-    equipeDoCadastro.set(c.k, { cod: c.cod, w: c.w });
+    if (parDoBloco.has(c.k) || codigosUsados.has(c.cod)) continue;
+    parDoBloco.set(c.k, { cod: c.cod, w: c.w });
+    codigosUsados.add(c.cod);
+  }
+  // sem pessoas em comum: composição parecida + nome de equipe parecido
+  const linhasDoBloco = (b: Bloco) => [...b.pessoas.map((i) => pessoas[i]), ...b.brancos, ...b.contratacoes];
+  const composto: { k: number; cod: string; sim: number; af: number }[] = [];
+  for (const b of blocos.values()) {
+    if (parDoBloco.has(b.id)) continue;
+    for (const e of equipes) {
+      if (e.codigo === CODIGO_FORA || codigosUsados.has(e.codigo)) continue;
+      const doTime = pos.filter((x) => x.v.equipeCodigo === e.codigo).map((x) => x.v);
+      const sim = similaridadeDeComposicao(linhasDoBloco(b), doTime);
+      const af = afinidadeDeEquipes(b.nome ?? "", e.nome);
+      if (sim >= 0.5 && af >= 2) composto.push({ k: b.id, cod: e.codigo, sim, af });
+    }
+  }
+  composto.sort((a, b) => b.af - a.af || b.sim - a.sim);
+  for (const c of composto) {
+    if (parDoBloco.has(c.k) || codigosUsados.has(c.cod)) continue;
+    parDoBloco.set(c.k, { cod: c.cod, w: 0 });
     codigosUsados.add(c.cod);
   }
 
-  // 3) dentro de cada par confirmado (2+ pessoas em comum): posição a posição (mesma empresa, função e atividade)
+  // ---- 4) dentro de cada par: posição a posição
   const porPapel = <T,>(lista: T[], chave: (x: T) => string) => {
     const m = new Map<string, T[]>();
     for (const x of lista) {
@@ -270,169 +345,187 @@ export function cruzarCadastroComDivisao(
   };
   let encaixadas = 0;
   let extras = 0;
-  for (const [k, { cod, w }] of equipeDoCadastro) {
-    if (w < 2) continue;
-    const doTime = pessoas.map((p, i) => ({ p, i })).filter((x) => chaveT1(x.p) === k && !pessoaNaPosicao.has(x.i));
-    const slotsNomeados = posicoes.map((v, i) => ({ v, i })).filter((x) => x.v.equipeCodigo === cod && !!x.v.nome && !posicaoDaPessoa.has(x.i));
-    // 3a) uma única posição nomeada e uma única pessoa do cadastro com o mesmo papel: é a mesma pessoa, com o nome grafado diferente
-    const gSlots = porPapel(slotsNomeados, (x) => papel(x.v));
-    const gPessoas = porPapel(doTime, (x) => papel(x.p));
+  const substituidas: ResultadoCruzamento["substituidas"] = [];
+  const novaPosicao = (cod: string, base: Partial<VagaImportada> & { empresa: string; cargo: string; atividade: string; status: string }, origem: string, conf: string): number => {
+    pos.push({
+      v: { numero: null, equipeCodigo: cod, nome: null, observacao: null, ausencia: null, ...base },
+      orig: [origem],
+      conf: [conf],
+    });
+    return pos.length - 1;
+  };
+  for (const [k, { cod }] of parDoBloco) {
+    const b = blocos.get(k)!;
+    const doTime = () => pos.map((x, i) => ({ x, i })).filter((y) => y.x.v.equipeCodigo === cod);
+    const consumida = new Set<number>(); // posições em branco / vagas já absorvidas por linhas da aba 1
+    for (const [iPos] of posicaoDaPessoa) consumida.add(iPos);
+
+    // 4a) uma única posição nomeada e uma única pessoa do cadastro com o mesmo papel: é a mesma pessoa, com o nome grafado diferente
+    const livresPes = () => b.pessoas.filter((i) => !pessoaNaPosicao.has(i));
+    const gSlots = porPapel(doTime().filter((y) => !!y.x.v.nome && !posicaoDaPessoa.has(y.i)), (y) => papel(y.x.v));
+    const gPessoas = porPapel(livresPes().map((i) => ({ p: pessoas[i], i })), (y) => papel(y.p));
     for (const [pp, ss] of gSlots) {
       const ps = gPessoas.get(pp) ?? [];
-      if (ss.length === 1 && ps.length === 1 && norm(ss[0].v.empresa).includes("consominas")) {
-        vincular(ss[0].i, ps[0].i, 1, `No cadastro por contrato: ${ps[0].p.nome}`);
+      if (ss.length === 1 && ps.length === 1 && norm(ss[0].x.v.empresa).includes("consominas")) {
+        vincular(ss[0].i, ps[0].i, 1, `Confirmar: ${ps[0].p.nome} (aba 1) e ${ss[0].x.v.nome} (aba 2) parecem ser a mesma pessoa`);
+        consumida.add(ss[0].i);
         encaixadas++;
       }
     }
-    // 3b) posições preenchidas sem nome recebem, na ordem, as pessoas de mesmo papel
-    const livresPessoas = doTime.filter((x) => !pessoaNaPosicao.has(x.i));
-    const slotsSemNome = posicoes.map((v, i) => ({ v, i })).filter((x) => x.v.equipeCodigo === cod && !x.v.nome && x.v.semNome);
-    const gSem = porPapel(slotsSemNome, (x) => papel(x.v));
-    const gPes2 = porPapel(livresPessoas, (x) => papel(x.p));
-    for (const [pp, ss] of gSem) {
-      const ps = gPes2.get(pp) ?? [];
-      for (let n = 0; n < Math.min(ss.length, ps.length); n++) {
-        posicoes[ss[n].i].nome = ps[n].p.nome;
-        posicoes[ss[n].i].semNome = false;
-        vincular(ss[n].i, ps[n].i, 1);
+
+    // 4b) quem tem nome só na aba 1 ocupa uma posição em branco da aba 2: primeiro com a mesma atividade, depois sem olhar a atividade
+    const brancosLivres = () => doTime().filter((y) => !y.x.v.nome && y.x.v.semNome && !consumida.has(y.i));
+    for (const modo of ["papel", "empresaFuncao"] as const) {
+      for (const ip of livresPes().sort((x, y) => (pessoas[x].ordem ?? 0) - (pessoas[y].ordem ?? 0))) {
+        const p = pessoas[ip];
+        const slot = brancosLivres().find((y) => (modo === "papel" ? papel(y.x.v) === papel(p) : empFam(y.x.v) === empFam(p)));
+        if (!slot) continue;
+        pos[slot.i].v.nome = p.nome;
+        pos[slot.i].v.semNome = false;
+        vincular(slot.i, ip, 1, modo === "papel" ? undefined : `Confirmar: a aba 1 diz "${p.atividade}"; a posição na aba 2 é "${pos[slot.i].v.atividade}"`);
+        consumida.add(slot.i);
         encaixadas++;
       }
     }
-    // 3c) quem sobrou desta equipe do cadastro entra como posição a mais na mesma equipe de campo
-    for (const x of doTime) {
-      if (pessoaNaPosicao.has(x.i)) continue;
-      posicoes.push({
-        numero: null,
-        equipeCodigo: cod,
-        atividade: x.p.atividade,
-        empresa: x.p.empresa,
-        cargo: x.p.cargo,
-        nome: x.p.nome,
-        status: x.p.status,
-        observacao: x.p.observacao,
-        ausencia: null,
-        contrato: x.p.contrato,
-        equipeContrato: x.p.equipeContrato,
-        grupo: x.p.grupo,
-        semNome: false,
-      });
-      pessoaNaPosicao.set(x.i, posicoes.length - 1);
-      posicaoDaPessoa.set(posicoes.length - 1, x.i);
-      forcaDaLigacao.set(posicoes.length - 1, 1);
+    // o que sobrou com nome entra como posição a mais da mesma equipe
+    for (const ip of livresPes()) {
+      const p = pessoas[ip];
+      const i = novaPosicao(
+        cod,
+        { atividade: p.atividade, empresa: p.empresa, cargo: p.cargo, nome: p.nome, status: p.status, observacao: p.observacao, contrato: p.contrato, equipeContrato: p.equipeContrato, grupo: p.grupo, semNome: false },
+        origemAba1(p),
+        "Só na aba 1: esta pessoa não aparece na divisão de equipes (aba 2). Confirmar se está nesta equipe"
+      );
+      pessoaNaPosicao.set(ip, i);
+      posicaoDaPessoa.set(i, ip);
+      forcaDaLigacao.set(i, 1);
       extras++;
+    }
+
+    // 4c) posição em branco da aba 1 = pessoa sem nome informado: casa com uma posição em branco equivalente da aba 2
+    for (const br of [...b.brancos].sort((x, y) => x.ordem - y.ordem)) {
+      const slot = brancosLivres().find((y) => empFam(y.x.v) === empFam(br));
+      if (slot) {
+        pos[slot.i].orig.push(origemAba1(br));
+        consumida.add(slot.i);
+        encaixadas++;
+        continue;
+      }
+      novaPosicao(cod, { atividade: br.atividade, empresa: br.empresa, cargo: br.cargo, status: br.status, contrato: br.contrato, equipeContrato: br.equipeContrato, grupo: br.grupo, semNome: true }, origemAba1(br), "Só na aba 1: posição preenchida sem nome que a divisão de equipes (aba 2) não tem");
+      extras++;
+    }
+    // 4d) vaga em contratação da aba 1 casa com uma vaga aberta (Vago) equivalente da aba 2
+    for (const ct of [...b.contratacoes].sort((x, y) => x.ordem - y.ordem)) {
+      const slot = doTime().find((y) => !y.x.v.nome && !y.x.v.semNome && !consumida.has(y.i) && empFam(y.x.v) === empFam(ct));
+      if (slot) {
+        pos[slot.i].orig.push(origemAba1(ct));
+        pos[slot.i].v.status = "Em contratação";
+        consumida.add(slot.i);
+        encaixadas++;
+        continue;
+      }
+      // as vagas abertas da equipe vêm da aba 2 (a divisão mais recente): a da aba 1 sem equivalente fica de fora, listada na conferência
+      substituidas.push({ origem: origemAba1(ct), descricao: `Vaga em contratação: ${ct.cargo} (${ct.empresa}, ${ct.atividade})`, equipe: nomeDoTime.get(cod) ?? cod });
     }
   }
 
-  // 4) apoio de outro contrato: se a pessoa já está numa equipe de campo, a posição dela ganha a data de liberação
+  // ---- 5) apoio de outro contrato: se a pessoa já está numa equipe de campo, a posição dela ganha a data de liberação
+  const idxNomeados = pos.map((x, i) => ({ x, i })).filter((y) => !!y.x.v.nome);
   const ligApoio = ligar(
     apoio.map((a) => ({ nome: a.nome ?? "", cargo: a.cargo })),
-    nomeadas.map((x) => ({ nome: x.v.nome!, cargo: x.v.cargo }))
+    idxNomeados.map((y) => ({ nome: y.x.v.nome!, cargo: y.x.v.cargo }))
   );
   const apoioQueFicou: VagaImportada[] = [];
   let apoioJaNaEquipe = 0;
   apoio.forEach((a, k) => {
     const alvo = ligApoio.get(k);
-    const slot = alvo ? posicoes[nomeadas[alvo.j].idx] : null;
+    const slot = alvo ? pos[idxNomeados[alvo.j].i] : null;
     // só junta quando o nome bate inteiro (primeiro nome + sobrenome)
     if (slot && alvo && alvo.pontos >= 3) {
-      slot.contratoAtual = a.contratoAtual ?? null;
-      slot.disponivelAPartir = a.disponivelAPartir ?? null;
-      slot.destino = a.destino ?? null;
-      slot.observacao = [slot.observacao, a.observacao].filter(Boolean).join(" · ") || null;
+      slot.v.contratoAtual = a.contratoAtual ?? null;
+      slot.v.disponivelAPartir = a.disponivelAPartir ?? null;
+      slot.v.destino = a.destino ?? null;
+      slot.v.observacao = [slot.v.observacao, a.observacao].filter(Boolean).join(" · ") || null;
+      if (a.origem) slot.orig.push(a.origem);
       apoioJaNaEquipe++;
     } else {
       apoioQueFicou.push({ ...a, contrato: null });
     }
   });
 
-  // 5) equipes que só existem no cadastro (as do contrato LT, as do 3648, uma Lavra...) viram equipes de verdade, sob o contrato delas,
-  //    com TODAS as posições da primeira aba: pessoas, vagas em contratação e posições preenchidas sem nome informado
-  const restantes = pessoas.map((p, i) => ({ p, i })).filter((x) => !pessoaNaPosicao.has(x.i));
-  const jaCoberta = (k: string) => (equipeDoCadastro.get(k)?.w ?? 0) >= 2; // equipe do cadastro já representada por uma equipe de campo
-  const chavesSoDoCadastro = [...new Set([...restantes.map((x) => chaveT1(x.p)), ...semPessoa.map((x) => `${x.contrato}|${x.equipeContrato ?? ""}`)])].filter((k) => !jaCoberta(k));
-  const novas = new Map<string, EquipeImportada>();
+  // ---- 6) blocos sem par: equipes que só existem no cadastro, com TODAS as linhas
   const maiorCodigo = equipes.reduce((m, e) => Math.max(m, Number(/^EQ-(\d+)$/.exec(e.codigo)?.[1] ?? 0)), 0);
-  const posicoesNovas: (VagaImportada & { _ordem: number })[] = [];
-  for (const k of chavesSoDoCadastro) {
-    const pes = restantes.filter((x) => chaveT1(x.p) === k);
-    const sem = semPessoa.filter((x) => `${x.contrato}|${x.equipeContrato ?? ""}` === k);
-    const base = pes[0]?.p ?? sem[0];
-    if (!base) continue;
-    const grupos = [...pes.map((x) => x.p.grupo), ...sem.map((x) => x.grupo)];
+  const novas: EquipeImportada[] = [];
+  const posicoesNovas: { v: VagaImportada; orig: string[]; conf: string[]; ordem: number }[] = [];
+  const nomesUsados = new Map<string, number>(); // contrato|nome -> quantas equipes já têm esse nome
+  for (const e of equipes) nomesUsados.set(`${e.projeto}|${norm(e.nome)}`, 1);
+  const primeiraOrdem = (b: Bloco) => Math.min(...linhasDoBloco(b).map((l) => l.ordem ?? 0));
+  for (const b of [...blocos.values()].sort((x, y) => primeiraOrdem(x) - primeiraOrdem(y))) {
+    if (parDoBloco.has(b.id)) continue;
+    const linhas = [...b.pessoas.filter((i) => !pessoaNaPosicao.has(i)).map((i) => pessoas[i]), ...b.brancos, ...b.contratacoes];
+    if (linhas.length === 0) continue;
+    const nomeBase = b.nome ?? "(sem nome na planilha)";
+    const chaveNome = `${b.contrato}|${norm(nomeBase)}`;
+    const repetida = (nomesUsados.get(chaveNome) ?? 0) + 1;
+    nomesUsados.set(chaveNome, repetida);
     const eq: EquipeImportada = {
-      codigo: `EQ-${String(maiorCodigo + novas.size + 1).padStart(2, "0")}`,
-      projeto: base.contrato,
+      codigo: `EQ-${String(maiorCodigo + novas.length + 1).padStart(2, "0")}`,
+      projeto: b.contrato,
       contratoConfirmado: true,
-      gestor: base.gestor,
-      grupo: grupos.every((g) => g === "Flora") ? "Flora" : "Fauna",
-      nome: base.equipeContrato ?? "(sem nome na planilha)",
+      gestor: b.gestor,
+      grupo: b.grupos.every((g) => g === "Flora") ? "Flora" : "Fauna",
+      nome: repetida > 1 ? `${nomeBase} (${repetida})` : nomeBase,
       status: "Ativa",
     };
-    novas.set(k, eq);
-    for (const x of pes) {
+    novas.push(eq);
+    const aviso = repetida > 1 ? `O nome "${nomeBase}" se repete na aba 1 neste contrato: tratado como outra equipe (confirmar o nome certo)` : "";
+    for (const ip of b.pessoas) {
+      if (pessoaNaPosicao.has(ip)) continue; // já está numa equipe da aba 2 (ex.: em mobilização para outra equipe)
+      const p = pessoas[ip];
       posicoesNovas.push({
-        numero: null,
-        equipeCodigo: eq.codigo,
-        atividade: x.p.atividade,
-        empresa: x.p.empresa,
-        cargo: x.p.cargo,
-        nome: x.p.nome,
-        status: x.p.status,
-        observacao: x.p.observacao,
-        ausencia: null,
-        contrato: x.p.contrato,
-        equipeContrato: x.p.equipeContrato,
-        grupo: x.p.grupo,
-        semNome: false,
-        _ordem: x.p.ordem ?? 0,
+        v: { numero: null, equipeCodigo: eq.codigo, atividade: p.atividade, empresa: p.empresa, cargo: p.cargo, nome: p.nome, status: p.status, observacao: p.observacao, ausencia: null, contrato: p.contrato, equipeContrato: p.equipeContrato, grupo: p.grupo, semNome: false },
+        orig: [origemAba1(p)],
+        conf: aviso ? [aviso] : [],
+        ordem: p.ordem ?? 0,
       });
     }
-    for (const x of sem) {
+    for (const x of [...b.brancos, ...b.contratacoes]) {
       posicoesNovas.push({
-        numero: null,
-        equipeCodigo: eq.codigo,
-        atividade: x.atividade,
-        empresa: x.empresa,
-        cargo: x.cargo,
-        nome: null,
-        status: x.status,
-        observacao: null,
-        ausencia: null,
-        contrato: x.contrato,
-        equipeContrato: x.equipeContrato,
-        grupo: x.grupo,
-        semNome: x.tipo === "branco",
-        _ordem: x.ordem,
+        v: { numero: null, equipeCodigo: eq.codigo, atividade: x.atividade, empresa: x.empresa, cargo: x.cargo, nome: null, status: x.status, observacao: null, ausencia: null, contrato: x.contrato, equipeContrato: x.equipeContrato, grupo: x.grupo, semNome: x.tipo === "branco" },
+        orig: [origemAba1(x)],
+        conf: aviso ? [aviso] : [],
+        ordem: x.ordem,
       });
     }
   }
-  posicoesNovas.sort((a, b) => a.equipeCodigo.localeCompare(b.equipeCodigo) || a._ordem - b._ordem);
+  posicoesNovas.sort((a, b) => a.v.equipeCodigo.localeCompare(b.v.equipeCodigo) || a.ordem - b.ordem);
 
-  // 6) contrato de cada equipe de campo: o escrito na primeira aba ao lado da equipe de mesmo nome.
-  //    Primeiro pelas pessoas em comum; depois pelo nome da equipe (ex.: "LAVRA - EQUIPE 02" ~ "EQUIPE LAVRA 02").
+  // ---- 7) contrato de cada equipe de campo: o do bloco correspondente na primeira aba; depois pelo nome; depois o informado
   let comContrato = 0;
   const contratosInformados = new Set<string>();
+  const blocoDaEquipe = new Map<string, Bloco>();
+  for (const [k, { cod }] of parDoBloco) blocoDaEquipe.set(cod, blocos.get(k)!);
   for (const e of equipes) {
     if (e.codigo === CODIGO_FORA) continue;
     let contrato: string | null = null;
-    // equipe do cadastro correspondente: 2+ pessoas em comum, ou 1 pessoa com nome e sobrenome iguais
-    const pelasPessoas = [...equipeDoCadastro.entries()].find(([k, m]) => m.cod === e.codigo && (m.w >= 2 || (pesoForte.get(`${k}>${m.cod}`) ?? 0) >= 1));
-    if (pelasPessoas) contrato = pelasPessoas[0].split("|")[0];
+    const par = blocoDaEquipe.get(e.codigo);
+    if (par) contrato = par.contrato;
     if (!contrato) {
       // quem está "em mobilização" ainda é de outro contrato e par fraco (só o 1º nome) sozinho não prova nada
       const fortes = new Set<string>();
-      posicoes.forEach((v, i) => {
-        if (v.equipeCodigo === e.codigo && v.contrato && !/mobiliz/i.test(v.nome ?? "") && (forcaDaLigacao.get(i) ?? 0) >= 2) fortes.add(v.contrato);
+      pos.forEach((x, i) => {
+        if (x.v.equipeCodigo === e.codigo && x.v.contrato && !/mobiliz/i.test(x.v.nome ?? "") && (forcaDaLigacao.get(i) ?? 0) >= 2) fortes.add(x.v.contrato);
       });
       if (fortes.size === 1) contrato = [...fortes][0];
     }
     if (!contrato) {
-      const ranking = chavesT1
-        .map((k) => ({ k, af: afinidadeDeEquipes(k.split("|")[1] ?? "", e.nome) }))
+      const ranking = [...blocos.values()]
+        .filter((b) => (e.grupo === "Flora" ? b.grupos.some((g) => g === "Flora") : b.grupos.some((g) => g !== "Flora")))
+        .map((b) => ({ b, af: afinidadeDeEquipes(b.nome ?? "", e.nome) }))
         .filter((x) => x.af >= 2)
         .sort((a, b) => b.af - a.af);
       const melhores = ranking.filter((x) => x.af === ranking[0]?.af);
-      const contratos = new Set(melhores.map((x) => x.k.split("|")[0]));
+      const contratos = new Set(melhores.map((x) => x.b.contrato));
       if (contratos.size === 1) contrato = [...contratos][0];
     }
     if (!contrato) {
@@ -444,11 +537,11 @@ export function cruzarCadastroComDivisao(
       comContrato++;
       e.gestor = pessoas.find((p) => p.contrato === contrato && p.gestor)?.gestor ?? e.gestor;
       // quem está na equipe trabalha no contrato dela (a pessoa que já tem outro contrato mantém o seu)
-      for (const v of posicoes) if (v.equipeCodigo === e.codigo && !v.contrato) v.contrato = contrato;
+      for (const x of pos) if (x.v.equipeCodigo === e.codigo && !x.v.contrato) x.v.contrato = contrato;
     }
   }
 
-  // 7) contratos: os da primeira aba e os informados
+  // ---- 8) contratos: os da primeira aba e os informados
   const contratos = new Map<string, ContratoImportado>(contratosDoCadastro.map((c) => [c.codigo, { ...c }]));
   for (const codigo of contratosInformados) if (!contratos.has(codigo)) contratos.set(codigo, { codigo, gestor: null, cliente: null });
   for (const p of pessoas) {
@@ -457,12 +550,15 @@ export function cruzarCadastroComDivisao(
     contratos.set(p.contrato, c);
   }
 
-  const todas: VagaImportada[] = [...posicoes, ...posicoesNovas.map(({ _ordem, ...v }) => (void _ordem, v)), ...apoioQueFicou].map((v, i) => ({ ...v, numero: i + 1 }));
-  const equipesFinais = [...equipes.filter((e) => e.codigo !== CODIGO_FORA), ...novas.values(), ...equipes.filter((e) => e.codigo === CODIGO_FORA)];
+  const finais = (l: { v: VagaImportada; orig: string[]; conf: string[] }[]): VagaImportada[] =>
+    l.map((x) => ({ ...x.v, origem: x.orig.join(" + ") || null, conferir: [...new Set(x.conf)].join(" · ") || null }));
+  const todas: VagaImportada[] = [...finais(pos), ...finais(posicoesNovas), ...apoioQueFicou.map((a) => ({ ...a, conferir: null }))].map((v, i) => ({ ...v, numero: i + 1 }));
+  const equipesFinais = [...equipes.filter((e) => e.codigo !== CODIGO_FORA), ...novas, ...equipes.filter((e) => e.codigo === CODIGO_FORA)];
   return {
     equipes: equipesFinais,
     vagas: todas,
     contratos: [...contratos.values()],
-    resumo: { ligadas: porNome.size, encaixadas, extrasNaEquipe: extras, equipesDoCadastro: novas.size, apoioJaNaEquipe, equipesComContrato: comContrato },
+    resumo: { ligadas: porNome.size, encaixadas, extrasNaEquipe: extras, equipesDoCadastro: novas.length, apoioJaNaEquipe, equipesComContrato: comContrato },
+    substituidas,
   };
 }
