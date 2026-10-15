@@ -5,7 +5,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
-import { dataValida, estadoDaVaga, ordenarGrupos, somarDias, temNome, type Dia } from "@/lib/efetivos/disponibilidade";
+import { dataValida, estadoDaVaga, gruposParaMostrar, somarDias, temNome, type Dia } from "@/lib/efetivos/disponibilidade";
 import { useDados } from "./DadosContext";
 import { A_DEFINIR, chamar, contratosConhecidos, descreverConflitos, diasDoPeriodo, ehReserva, fmtDia, rotuloContrato, valoresUsados } from "./comum";
 import { IcFechar, IcMais } from "./icones";
@@ -35,12 +35,12 @@ export default function NovaEquipe() {
   const contratos = useMemo(() => contratosConhecidos(dados), [dados]);
   const cargos = useMemo(() => valoresUsados(dados.vagas, "cargo"), [dados.vagas]);
   const empresas = useMemo(() => valoresUsados(dados.vagas, "empresa"), [dados.vagas]);
-  const grupos = useMemo(() => ordenarGrupos([...dados.equipes.filter((e) => !ehReserva(e)).map((e) => e.grupo), "Fauna", "Flora"]), [dados.equipes]);
+  const grupos = useMemo(() => gruposParaMostrar([...dados.equipes.filter((e) => !ehReserva(e)).map((e) => e.grupo), "Fauna", "Flora"]), [dados.equipes]);
 
   const [f, setF] = useState({
     projeto: params.get("contrato") ?? "",
     nome: "",
-    grupo: grupos[0] ?? "Fauna",
+    grupo: "",
     gestor: "",
     local: "",
     comPeriodo: false,
@@ -169,6 +169,7 @@ export default function NovaEquipe() {
               </Rotulo>
               <Rotulo t="Grupo">
                 <select value={f.grupo} onChange={(e) => set("grupo", e.target.value)} className="field">
+                  <option value="">Sem grupo</option>
                   {grupos.map((g) => (
                     <option key={g}>{g}</option>
                   ))}
@@ -328,7 +329,7 @@ export default function NovaEquipe() {
             <div className="border-b border-line bg-brand-deep px-4 py-3 text-white">
               <div className="text-[10.5px] font-semibold uppercase tracking-[0.14em] text-white/60">Nova equipe</div>
               <div className="mt-0.5 truncate font-display text-[16px] font-semibold tracking-tight">{f.nome.trim() || "Dê um nome à equipe"}</div>
-              <div className="mt-0.5 text-[11.5px] text-white/70">{rotuloContrato(f.projeto.trim() || A_DEFINIR)} · {f.grupo}</div>
+              <div className="mt-0.5 text-[11.5px] text-white/70">{[rotuloContrato(f.projeto.trim() || A_DEFINIR), f.grupo].filter(Boolean).join(" · ")}</div>
               {f.comPeriodo && <div className="num mt-0.5 text-[11.5px] text-white/70">{fmtDia(f.inicio)} a {fmtDia(f.fim)}</div>}
             </div>
             <div className="space-y-3 px-4 py-3">

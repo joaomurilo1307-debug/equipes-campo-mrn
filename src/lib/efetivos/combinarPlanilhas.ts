@@ -140,9 +140,8 @@ export function combinarResultados(lidos: ResultadoImportacao[]): ResultadoImpor
   finais.forEach((v, i) => (v.numero = i + 1));
   if (reserva && finais.some((v) => v.equipeCodigo === CODIGO_RESERVA)) equipes.push(reserva);
   const total = fontes.reduce((s, f) => s + f.linhas, 0);
-  avisos.push(
-    `${lidos.length} planilhas juntas: ${total} linhas lidas -> ${finais.length} posições (${descartar.size} linhas de apoio não viraram posição própria: ${absorvidas} já estão numa equipe, ${descartar.size - absorvidas} são repetição da aba de apoio); ${pares} par(es) de nomes parecidos marcados para conferir.`
-  );
+  const apoio = descartar.size > 0 ? ` (${descartar.size} linhas de apoio não viraram posição própria: ${absorvidas} já estão numa equipe, ${descartar.size - absorvidas} são repetição da aba de apoio)` : "";
+  avisos.push(`${lidos.length} planilhas juntas: ${total} linhas lidas -> ${finais.length} posições${apoio}${pares > 0 ? `; ${pares} par(es) de nomes parecidos marcados para conferir` : ""}.`);
   return {
     formato: "contratos",
     equipes,

@@ -11,7 +11,7 @@ const schema = z
   .object({
     nome: z.string().trim().min(1).max(120),
     projeto: z.string().trim().min(1).max(60),
-    grupo: z.string().trim().min(1).max(40),
+    grupo: z.string().trim().max(40).default(""),
     gestor: z.string().trim().max(80).nullable().optional(),
     local: z.string().trim().max(160).nullable().optional(),
     observacao: z.string().trim().max(600).nullable().optional(),

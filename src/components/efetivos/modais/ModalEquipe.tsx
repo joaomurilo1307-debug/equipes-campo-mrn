@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { STATUS_EQUIPE, ordenarGrupos } from "@/lib/efetivos/disponibilidade";
+import { STATUS_EQUIPE, gruposParaMostrar } from "@/lib/efetivos/disponibilidade";
 import { useDados } from "../DadosContext";
 import { A_DEFINIR, chamar, contratosConhecidos, type Equipe } from "../comum";
 import { IcLixo } from "../icones";
@@ -11,12 +11,12 @@ import { Aviso, Campo, Modal, RodapeModal } from "../ui";
 export default function ModalEquipe({ equipe, projetoPadrao, onFechar, onSalvo }: { equipe?: Equipe | null; projetoPadrao?: string; onFechar: () => void; onSalvo: (equipeId?: string) => void | Promise<void> }) {
   const { dados, recarregar } = useDados();
   const contratos = useMemo(() => contratosConhecidos(dados), [dados]);
-  const grupos = ordenarGrupos([...dados.equipes.map((e) => e.grupo), "Fauna", "Flora"]);
+  const grupos = gruposParaMostrar([...dados.equipes.map((e) => e.grupo), "Fauna", "Flora"]);
   const [v, setV] = useState({
     nome: equipe?.nome ?? "",
     projeto: equipe ? (equipe.projeto === A_DEFINIR ? "" : equipe.projeto) : projetoPadrao ?? "",
     gestor: equipe?.gestor ?? "",
-    grupo: equipe?.grupo ?? "Fauna",
+    grupo: equipe?.grupo ?? "",
     status: equipe?.status ?? "Ativa",
     local: equipe?.local ?? "",
     observacao: equipe?.observacao ?? "",
@@ -63,7 +63,7 @@ export default function ModalEquipe({ equipe, projetoPadrao, onFechar, onSalvo }
         <Campo rotulo="Gestor MRN">
           <input value={v.gestor} onChange={(e) => set("gestor", e.target.value)} className="field" />
         </Campo>
-        <Campo rotulo="Grupo">
+        <Campo rotulo="Grupo (opcional)">
           <input list="lista-grupos-eq" value={v.grupo} onChange={(e) => set("grupo", e.target.value)} className="field" />
           <datalist id="lista-grupos-eq">
             {grupos.map((g) => (
@@ -99,7 +99,7 @@ export default function ModalEquipe({ equipe, projetoPadrao, onFechar, onSalvo }
         <button onClick={onFechar} className="btn-ghost">
           Cancelar
         </button>
-        <button onClick={salvar} disabled={salvando || !v.nome.trim() || !v.grupo.trim()} className="btn-primary">
+        <button onClick={salvar} disabled={salvando || !v.nome.trim()} className="btn-primary">
           {salvando ? "Salvando…" : equipe ? "Salvar" : "Criar equipe"}
         </button>
       </RodapeModal>

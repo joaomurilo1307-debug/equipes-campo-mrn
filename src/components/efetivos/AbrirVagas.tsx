@@ -132,7 +132,7 @@ export default function AbrirVagas() {
         <ResumoCard
           rotulo="Vagas a abrir"
           titulo={equipe?.nome ?? "Escolha a equipe"}
-          linhas={equipe ? [`${rotuloContrato(equipe.projeto)} · ${equipe.grupo}`] : []}
+          linhas={equipe ? [[rotuloContrato(equipe.projeto), equipe.grupo].filter(Boolean).join(" · ")] : []}
           rodape={
             <>
               {erro && <Aviso tipo="erro">{erro}</Aviso>}

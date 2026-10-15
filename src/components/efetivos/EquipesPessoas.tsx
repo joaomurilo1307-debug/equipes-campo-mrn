@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { STATUS_EQUIPE, STATUS_VAGA, ordenarGrupos, temNome } from "@/lib/efetivos/disponibilidade";
+import { STATUS_EQUIPE, STATUS_VAGA, gruposParaMostrar, temNome } from "@/lib/efetivos/disponibilidade";
 import { ROTULO_ESTADO_EQUIPE, ROTULO_SITUACAO, estadoDaEquipe } from "@/lib/efetivos/situacao";
 import { localizacaoNoDia } from "@/lib/efetivos/veiculos";
 import { useDados } from "./DadosContext";
@@ -22,7 +22,7 @@ const CHIP_SITUACAO: Record<string, string> = { EM_EQUIPE: "chip-ok", DISPONIVEL
 
 export default function EquipesPessoas() {
   const { dados, vagasPorEquipe, equipesCampo } = useDados();
-  const grupos = ordenarGrupos(equipesCampo.map((e) => e.grupo));
+  const grupos = gruposParaMostrar(equipesCampo.map((e) => e.grupo));
   const [sel, setSel] = useState<string | null>(null);
   const [filtroGrupo, setFiltroGrupo] = useState("");
   const [busca, setBusca] = useState("");
@@ -87,12 +87,14 @@ export default function EquipesPessoas() {
                 </span>
                 <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar" className="w-full rounded-md border border-line bg-white py-1.5 pl-8 pr-2 text-[13px] focus:border-brand focus:outline-none" />
               </span>
-              <select value={filtroGrupo} onChange={(e) => setFiltroGrupo(e.target.value)} className="rounded-md border border-line bg-white px-2 py-1.5 text-[13px]" aria-label="Grupo">
-                <option value="">Grupos</option>
-                {grupos.map((g) => (
-                  <option key={g}>{g}</option>
-                ))}
-              </select>
+              {grupos.length > 0 && (
+                <select value={filtroGrupo} onChange={(e) => setFiltroGrupo(e.target.value)} className="rounded-md border border-line bg-white px-2 py-1.5 text-[13px]" aria-label="Grupo">
+                  <option value="">Grupos</option>
+                  {grupos.map((g) => (
+                    <option key={g}>{g}</option>
+                  ))}
+                </select>
+              )}
             </div>
             <div className="max-h-[calc(133.333vh-300px)] space-y-3 overflow-y-auto pr-0.5">
               {porContrato.map(([projeto, equipes]) => (
@@ -112,7 +114,7 @@ export default function EquipesPessoas() {
                             <span className="min-w-0 flex-1">
                               <span className={`block truncate text-[12.5px] leading-tight ${ativa ? "font-semibold text-brand-dark" : "font-medium text-ink"}`}>{e.nome}</span>
                               <span className="block text-[10.5px] text-gray-500">
-                                {e.codigo} · {e.grupo}
+                                {e.codigo}{e.grupo ? ` · ${e.grupo}` : ""}
                               </span>
                             </span>
                             <span className="flex shrink-0 items-center gap-1">
@@ -173,8 +175,8 @@ export default function EquipesPessoas() {
 // ---------------------------------------------------------------- ficha de uma equipe
 
 function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => void }) {
-  const { dados, hoje, vagasPorEquipe, veiculosPorEquipe, ocupantesPorVeiculo, veiculoPorId, recarregar, nomeDe, ocultarNomes, situacaoDe, contagemDe, movimentosPorEquipe } = useDados();
-  const grupos = ordenarGrupos([...dados.equipes.map((e) => e.grupo), "Fauna", "Flora"]);
+  const { dados, hoje, vagasPorEquipe, veiculosPorEquipe, equipesPorVeiculo, equipePorId, ocupantesPorVeiculo, veiculoPorId, recarregar, nomeDe, ocultarNomes, situacaoDe, contagemDe, movimentosPorEquipe } = useDados();
+  const grupos = gruposParaMostrar([...dados.equipes.map((e) => e.grupo), "Fauna", "Flora"]);
   const contratos = useMemo(() => contratosConhecidos(dados), [dados]);
   const podeEditar = dados.podeEditar;
   const [editar, setEditar] = useState(false);
@@ -238,7 +240,7 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-[11px] text-gray-500">{equipe.codigo}</span>
-              <span className="chip-mute">{equipe.grupo}</span>
+              {equipe.grupo && <span className="chip-mute">{equipe.grupo}</span>}
               <span className={estado.chip} title={estado.dica}>
                 {estado.rotulo}
               </span>
@@ -269,7 +271,7 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
               ))}
             </select>
           </label>
-          <CampoInline rotulo="Grupo" valor={equipe.grupo} lista={grupos} onSalvar={salvarEquipe("grupo")} desabilitado={campoEquipe} />
+          <CampoInline rotulo="Grupo (opcional)" valor={equipe.grupo} lista={grupos} onSalvar={salvarEquipe("grupo")} desabilitado={campoEquipe} />
           <label className="block">
             <span className="text-[11px] font-medium text-gray-500">Período da equipe — início</span>
             <input type="date" disabled={!podeEditar} value={equipe.inicio ?? ""} onChange={(e) => salvarEquipe("inicio")(e.target.value)} className="mt-1 block w-full rounded-md border border-line bg-white px-2.5 py-1.5 text-[13px] focus:border-brand focus:outline-none disabled:bg-gray-50" />
@@ -458,8 +460,9 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
         </div>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {viaturas.map((ve) => {
-            const pessoas = ocupantesPorVeiculo.get(ve.id) ?? [];
+            const pessoas = (ocupantesPorVeiculo.get(ve.id) ?? []).filter((p) => p.equipeId === equipe.id);
             const nomes = pessoas.filter(temNome);
+            const outrasEquipes = (equipesPorVeiculo.get(ve.id) ?? []).filter((id) => id !== equipe.id).map((id) => equipePorId.get(id)?.codigo).filter(Boolean);
             const dirigem = nomes.filter((p) => p.direcao4x4);
             const loc = localizacaoNoDia(dados.movimentos.filter((m) => m.veiculoId === ve.id), hoje);
             return (
@@ -496,6 +499,7 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
                       ))}
                     </ul>
                   )}
+                  {outrasEquipes.length > 0 && <p className="mt-1.5 text-[11px] text-info">Mesma viatura também em: {outrasEquipes.join(", ")}</p>}
                   {nomes.length > 0 && <p className="mt-1.5 text-[11px] text-gray-500">Dirigem 4x4: {dirigem.length ? dirigem.map(nomeDe).join(", ") : "ninguém marcado"}</p>}
                 </div>
                 <div className="mt-2.5 flex flex-wrap gap-1.5">

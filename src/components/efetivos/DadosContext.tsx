@@ -22,8 +22,10 @@ type Ctx = {
   vagaPorId: Map<string, Vaga>;
   veiculoPorId: Map<string, Veiculo>;
   vagasPorEquipe: Map<string, Vaga[]>;
-  /** Viaturas que estao hoje com cada equipe (pela ultima passagem registrada). */
+  /** Viaturas de cada equipe: as em que as pessoas da equipe vão (planilha) mais as que passaram para ela. A mesma viatura pode estar em várias equipes. */
   veiculosPorEquipe: Map<string, Veiculo[]>;
+  /** As equipes que usam cada viatura (ids). Uma viatura é uma só, mesmo usada por várias equipes. */
+  equipesPorVeiculo: Map<string, string[]>;
   /** Pessoas que vao em cada viatura. */
   ocupantesPorVeiculo: Map<string, Vaga[]>;
   /** Nome para exibir: no modo apresentação mostra o cargo no lugar do nome. */
@@ -109,12 +111,26 @@ export function DadosProvider({ children }: { children: ReactNode }) {
       if (!movsPorVeiculo.has(m.veiculoId)) movsPorVeiculo.set(m.veiculoId, []);
       movsPorVeiculo.get(m.veiculoId)!.push(m);
     }
-    const veiculosPorEquipe = new Map<string, Veiculo[]>();
+    // a viatura de cada equipe: onde as pessoas da equipe vão (a planilha) + a última passagem registrada. Uma viatura = um registro só.
+    const equipesPorVeiculo = new Map<string, string[]>();
+    const noVeiculo = (veiculoId: string, equipeId: string) => {
+      const l = equipesPorVeiculo.get(veiculoId) ?? [];
+      if (!l.includes(equipeId)) l.push(equipeId);
+      equipesPorVeiculo.set(veiculoId, l);
+    };
+    for (const v of dados.vagas) if (v.veiculoId) noVeiculo(v.veiculoId, v.equipeId);
     for (const ve of dados.veiculos) {
       const loc = localizacaoNoDia(movsPorVeiculo.get(ve.id) ?? [], hoje);
-      if (!loc?.equipeId) continue;
-      if (!veiculosPorEquipe.has(loc.equipeId)) veiculosPorEquipe.set(loc.equipeId, []);
-      veiculosPorEquipe.get(loc.equipeId)!.push(ve);
+      if (loc?.equipeId) noVeiculo(ve.id, loc.equipeId);
+    }
+    const ordemEquipe = new Map(dados.equipes.map((e, i) => [e.id, i]));
+    for (const l of equipesPorVeiculo.values()) l.sort((a, b) => (ordemEquipe.get(a) ?? 0) - (ordemEquipe.get(b) ?? 0));
+    const veiculosPorEquipe = new Map<string, Veiculo[]>();
+    for (const ve of dados.veiculos) {
+      for (const eid of equipesPorVeiculo.get(ve.id) ?? []) {
+        if (!veiculosPorEquipe.has(eid)) veiculosPorEquipe.set(eid, []);
+        veiculosPorEquipe.get(eid)!.push(ve);
+      }
     }
     for (const l of veiculosPorEquipe.values()) l.sort((a, b) => a.identificacao.localeCompare(b.identificacao, "pt-BR", { numeric: true }));
     const movimentosPorEquipe = new Map<string, MovimentoEquipe[]>();
@@ -128,6 +144,7 @@ export function DadosProvider({ children }: { children: ReactNode }) {
       regra,
       idx: indexar(regra),
       veiculosPorEquipe,
+      equipesPorVeiculo,
       ocupantesPorVeiculo,
       equipesCampo: dados.equipes.filter((e) => !ehReserva(e)),
       equipePorId: new Map(dados.equipes.map((e) => [e.id, e])),

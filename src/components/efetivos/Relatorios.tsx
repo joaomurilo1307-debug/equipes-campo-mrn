@@ -70,7 +70,7 @@ function TabelaSimples({ t, vazio }: { t: Tabela; vazio?: string }) {
 }
 
 export default function Relatorios() {
-  const { dados, hoje, equipePorId, vagaPorId, vagasPorEquipe, equipesCampo, resumoDoDia, contagemDe, situacaoDe, contratoNoDia } = useDados();
+  const { dados, hoje, equipePorId, equipesPorVeiculo, vagaPorId, vagasPorEquipe, equipesCampo, resumoDoDia, contagemDe, situacaoDe, contratoNoDia } = useDados();
   const [qual, setQual] = useState<Relatorio>("efetivo");
   const [inicio, setInicio] = useState(hoje);
   const [fim, setFim] = useState(somarDias(hoje, 89));
@@ -189,19 +189,19 @@ export default function Relatorios() {
   const frota = useMemo(() => {
     const linhas = dados.veiculos.map((v) => {
       const loc = localizacaoNoDia(dados.movimentos.filter((m) => m.veiculoId === v.id), hoje);
-      const eq = loc?.equipeId ? equipePorId.get(loc.equipeId) : undefined;
+      // a mesma viatura em várias equipes é uma só: a passagem registrada vale; sem ela, valem as equipes em que as pessoas vão
+      const eqs = (loc?.equipeId ? [loc.equipeId] : equipesPorVeiculo.get(v.id) ?? []).map((id) => equipePorId.get(id)).filter((e): e is NonNullable<typeof e> => !!e);
       const ocupantes = dados.vagas.filter((x) => x.veiculoId === v.id && temNome(x)).length;
-      return { v, eq, ocupantes, projeto: loc?.projeto };
+      return { v, eqs, ocupantes, projeto: loc?.projeto };
     });
     const porStatus = new Map<string, number>();
     for (const l of linhas) porStatus.set(l.v.status, (porStatus.get(l.v.status) ?? 0) + 1);
     const porEquipe = new Map<string, number>();
     for (const l of linhas) {
-      const k = l.eq ? l.eq.nome : "Sem equipe";
-      porEquipe.set(k, (porEquipe.get(k) ?? 0) + 1);
+      for (const k of l.eqs.length ? l.eqs.map((e) => e.nome) : ["Sem equipe"]) porEquipe.set(k, (porEquipe.get(k) ?? 0) + 1);
     }
     return { linhas, porStatus: [...porStatus.entries()], porEquipe: [...porEquipe.entries()].sort((a, b) => b[1] - a[1]) };
-  }, [dados.veiculos, dados.movimentos, dados.vagas, equipePorId, hoje]);
+  }, [dados.veiculos, dados.movimentos, dados.vagas, equipePorId, equipesPorVeiculo, hoje]);
 
   // ---------------------------------------------------------------- tabelas para exportar
   const tabelas: Tabela[] = useMemo(() => {
@@ -229,7 +229,7 @@ export default function Relatorios() {
         { nome: "Equipes que terminam", cabecalho: ["Equipe", "Contrato", "Fim", "Pessoas"], linhas: mov.terminam.map((e) => [e.nome, rotuloContrato(e.projeto), fmtDia(e.fim), (vagasPorEquipe.get(e.id) ?? []).filter(temNome).length]) },
         { nome: "Equipes que começam", cabecalho: ["Equipe", "Contrato", "Início", "Pessoas"], linhas: mov.comecam.map((e) => [e.nome, rotuloContrato(e.projeto), fmtDia(e.inicio), (vagasPorEquipe.get(e.id) ?? []).filter(temNome).length]) },
       ];
-    return [{ nome: "Frota", cabecalho: ["Viatura", "Placa", "Modelo", "Situação", "Equipe", "Pessoas"], linhas: frota.linhas.map((l) => [l.v.identificacao, l.v.placa ?? "", l.v.modelo ?? "", l.v.status, l.eq?.nome ?? "", l.ocupantes]) }];
+    return [{ nome: "Frota", cabecalho: ["Viatura", "Placa", "Modelo", "Situação", "Equipes que usam", "Pessoas"], linhas: frota.linhas.map((l) => [l.v.identificacao, l.v.placa ?? "", l.v.modelo ?? "", l.v.status, l.eqs.map((e) => e.nome).join(" · "), l.ocupantes]) }];
   }, [qual, efetivo, pessoas, aus, mov, frota, equipePorId, vagasPorEquipe]);
 
   async function exportar() {
@@ -440,7 +440,7 @@ export default function Relatorios() {
             <Numero rotulo="Pessoas nas viaturas" valor={frota.linhas.reduce((s, l) => s + l.ocupantes, 0)} />
           </Faixa>
           <div className="grid items-start gap-5 xl:grid-cols-2">
-            <Secao titulo="Viaturas por equipe">
+            <Secao titulo="Viaturas por equipe" sub="Uma viatura usada por várias equipes aparece em cada uma; o total de viaturas conta cada uma uma vez.">
               <BarrasHorizontais itens={frota.porEquipe.map(([e, n]) => ({ rotulo: e, partes: [n] }))} series={[{ nome: "viaturas", cor: "#1D6FB8" }]} />
             </Secao>
             <Secao titulo="Viaturas por situação">

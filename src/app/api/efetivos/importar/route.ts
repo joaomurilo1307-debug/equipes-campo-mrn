@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { dataDe, exigir, registrar } from "@/lib/efetivos/servidor";
 import { dataValida } from "@/lib/efetivos/disponibilidade";
-import { normalizar } from "@/lib/efetivos/importarPlanilha";
+import { normalizar, veiculosUnicos } from "@/lib/efetivos/importarPlanilha";
 import { lerPlanilhasEfetivos } from "@/lib/efetivos/combinarPlanilhas";
 import { instanteBrasilia } from "@/lib/efetivos/hoje";
 import { tokenDeCargaValido } from "@/lib/efetivos/token";
@@ -81,7 +81,7 @@ export async function POST(req: Request) {
     vagasSemNome: vagasNovas.filter((v) => !v.nome && v.semNome).length,
     vagasAbertas: vagasNovas.filter((v) => !v.nome && !v.semNome).length,
     contratos: lido.contratos.length,
-    veiculosNovos: veiculosNovos.length,
+    veiculosNovos: veiculosUnicos(veiculosNovos).length,
     apoioDeOutroContrato: vagasNovas.filter((v) => v.contratoAtual).length,
     avisos: lido.avisos,
   };
@@ -120,18 +120,15 @@ export async function POST(req: Request) {
         equipePorCodigoImportado.set(e.codigo, { id: criada.id, projeto: e.projeto, nome: e.nome });
       }
 
-      // viaturas primeiro: cada pessoa aponta para a viatura em que vai
+      // viaturas primeiro: cada pessoa aponta para a viatura em que vai. A mesma viatura em várias equipes é UMA viatura só;
+      // a planilha não diz onde ela está (só quem vai nela), então não se cria passagem: a ligação com as equipes vem das pessoas.
       const veiculoPorRef = new Map<string, string>();
       let k = 0;
-      for (const v of veiculosNovos) {
-        const eq = equipePorCodigoImportado.get(v.equipeCodigo)!;
+      for (const u of veiculosUnicos(veiculosNovos)) {
         const veiculo = await tx.efetivoVeiculo.create({
-          data: { codigo: veiCodigos(++k), identificacao: v.identificacao, placa: v.placa ?? null, modelo: v.modelo ?? null, tracao4x4: v.tracao4x4 ?? null, status: v.status || "Em operação", observacao: v.observacao ?? null },
+          data: { codigo: veiCodigos(++k), identificacao: u.identificacao, placa: u.placa, modelo: u.modelo, tracao4x4: u.tracao4x4, status: u.status || "Em operação", observacao: u.observacao },
         });
-        veiculoPorRef.set(v.ref, veiculo.id);
-        await tx.efetivoVeiculoMovimento.create({
-          data: { veiculoId: veiculo.id, inicio: dataDe(dataRef), fim: null, projeto: eq.projeto, equipeId: eq.id, observacao: `Posição inicial segundo a planilha de ${dataRef}`, criadoPorNome: quem.nome },
-        });
+        for (const ref of u.refs) veiculoPorRef.set(ref, veiculo.id);
       }
 
       // contratos que a planilha cita (so os que ainda nao existem; nunca sobrescreve o que foi preenchido no sistema)
@@ -156,6 +153,7 @@ export async function POST(req: Request) {
             contratoAtual: v.contratoAtual ?? null,
             disponivelAPartir: v.disponivelAPartir ? dataDe(v.disponivelAPartir) : null,
             destino: v.destino ?? null,
+            previsaoInicio: v.previsaoInicio ? dataDe(v.previsaoInicio) : null,
             veiculoId: v.carroRef ? veiculoPorRef.get(v.carroRef) ?? null : null,
             contrato: v.contrato ?? null,
             equipeContrato: v.equipeContrato ?? null,
@@ -179,7 +177,7 @@ export async function POST(req: Request) {
     "IMPORTACAO",
     "IMPORTACAO",
     undefined,
-    `Planilha "${nomeDosArquivos}" (${lido.formato}) importada por ${quem.nome}: ${resumo.equipesNovas} equipes, ${resumo.vagasNovas} vagas (${resumo.vagasPreenchidas} com profissional) e ${resumo.veiculosNovos} viaturas${acrescentar ? " (modo acrescentar)" : ""}`
+    `Planilha "${nomeDosArquivos}" (${lido.formato}) importada por ${quem.nome}: ${resumo.equipesNovas} equipes, ${resumo.vagasNovas} vagas (${resumo.vagasPreenchidas} com profissional) e ${resumo.veiculosNovos} viaturas únicas${acrescentar ? " (modo acrescentar)" : ""}`
   );
   return NextResponse.json({ simulacao: false, ...resumo });
 }

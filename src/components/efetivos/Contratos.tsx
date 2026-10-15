@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ROTULO_ESTADO_EQUIPE, estadoDaEquipe } from "@/lib/efetivos/situacao";
-import { localizacaoNoDia } from "@/lib/efetivos/veiculos";
 import { useDados } from "./DadosContext";
 import { A_DEFINIR, SEM_CONTRATO, chamar, contratosConhecidos, corDoContrato, fmtDia, rotuloContrato, type Contrato } from "./comum";
 import { IcLixo, IcMais, IcMover } from "./icones";
@@ -11,7 +10,7 @@ import { CampoInline } from "./inline";
 import { Aviso, CabecalhoPagina, Campo, Modal, PontoContrato, RodapeModal, Vazio } from "./ui";
 
 export default function Contratos() {
-  const { dados, hoje, recarregar, veiculosPorEquipe, equipesCampo, contagemDe, equipePorId } = useDados();
+  const { dados, hoje, recarregar, veiculosPorEquipe, equipesPorVeiculo, equipesCampo, contagemDe, equipePorId } = useDados();
   const [sel, setSel] = useState<string>("");
   const [novo, setNovo] = useState(false);
   const [adicionar, setAdicionar] = useState("");
@@ -31,10 +30,9 @@ export default function Contratos() {
   const equipes = equipesCampo.filter((e) => (ehSem ? !e.projeto || e.projeto === A_DEFINIR : e.projeto === atualCodigo));
   // passagens de equipes por este contrato (de qualquer equipe)
   const passagens = (dados.movimentosEquipe ?? []).filter((m) => m.projeto === atualCodigo).sort((a, b) => b.inicio.localeCompare(a.inicio));
-  const viaturasHoje = dados.veiculos.filter((v) => {
-    const loc = localizacaoNoDia(dados.movimentos.filter((m) => m.veiculoId === v.id), hoje);
-    return ehSem ? !loc || loc.projeto === A_DEFINIR : loc?.projeto === atualCodigo;
-  });
+  // viaturas do contrato: as que as equipes dele usam (uma viatura usada por várias equipes conta uma vez)
+  const idsEquipes = new Set(equipes.map((e) => e.id));
+  const viaturasHoje = dados.veiculos.filter((v) => (equipesPorVeiculo.get(v.id) ?? []).some((id) => idsEquipes.has(id)));
   const c = contagemDe(equipes.map((e) => e.id), hoje);
   const pessoas = c.comNome;
   const semNome = c.semNome;
@@ -167,7 +165,6 @@ export default function Contratos() {
                   <thead>
                     <tr>
                       <th>Equipe</th>
-                      <th>Grupo</th>
                       <th className="text-right">Posições</th>
                       <th className="text-right">Vagas abertas</th>
                       <th className="text-right">Viaturas</th>
@@ -187,7 +184,6 @@ export default function Contratos() {
                             </Link>
                             <div className="text-[11px] text-gray-500">{e.codigo}</div>
                           </td>
-                          <td className="text-gray-600">{e.grupo}</td>
                           <td className="num text-right">
                             {cm.comNome + cm.semNome}/{cm.posicoes}
                           </td>
@@ -244,13 +240,12 @@ export default function Contratos() {
                   </div>
                   <ul className="divide-y divide-line text-[12.5px]">
                     {viaturasHoje.map((v) => {
-                      const loc = localizacaoNoDia(dados.movimentos.filter((m) => m.veiculoId === v.id), hoje);
-                      const eq = loc?.equipeId ? dados.equipes.find((e) => e.id === loc.equipeId) : null;
+                      const eqs = (equipesPorVeiculo.get(v.id) ?? []).filter((id) => idsEquipes.has(id)).map((id) => equipePorId.get(id)).filter((e) => !!e);
                       return (
                         <li key={v.id} className="flex items-center justify-between gap-3 px-4 py-2">
                           <span className="font-semibold">{v.identificacao}</span>
-                          <span className="min-w-0 flex-1 truncate text-gray-500">{[v.placa, eq?.nome].filter(Boolean).join(" · ")}</span>
-                          <span className="shrink-0 text-[11px] text-gray-400">{loc ? `desde ${fmtDia(loc.inicio)}` : ""}</span>
+                          <span className="min-w-0 flex-1 truncate text-gray-500" title={eqs.map((e) => e!.nome).join(", ")}>{[v.placa, eqs.map((e) => e!.codigo).join(", ")].filter(Boolean).join(" · ")}</span>
+                          <span className="shrink-0 text-[11px] text-gray-400">{eqs.length > 1 ? `${eqs.length} equipes` : ""}</span>
                         </li>
                       );
                     })}

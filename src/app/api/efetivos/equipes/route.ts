@@ -14,7 +14,7 @@ const schema = z.object({
   gestor: z.string().trim().max(80).nullable().optional(),
   local: z.string().trim().max(160).nullable().optional(),
   observacao: z.string().trim().max(600).nullable().optional(),
-  grupo: z.string().trim().min(1).max(40),
+  grupo: z.string().trim().max(40).default(""),
   status: z.enum(STATUS_EQUIPE).default("Ativa"),
   inicio: dia.nullable().optional(),
   fim: dia.nullable().optional(),

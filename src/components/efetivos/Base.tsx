@@ -11,6 +11,7 @@ import { useDados } from "./DadosContext";
 import { rotuloContrato, type Vaga } from "./comum";
 import { IcBaixar, IcMais } from "./icones";
 import ImportarPlanilha from "./ImportarPlanilha";
+import EnviarPlanejamento from "./EnviarPlanejamento";
 import { ModalPuxar } from "./modais/ModaisVagas";
 import ModalVaga from "./modais/ModalVaga";
 import { Aviso, CabecalhoPagina, Modal, Vazio } from "./ui";
@@ -35,6 +36,7 @@ export default function Base() {
   const [editar, setEditar] = useState<Vaga | null>(null);
   const [preencher, setPreencher] = useState<Vaga | null>(null);
   const [importar, setImportar] = useState(false);
+  const [planejamento, setPlanejamento] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
 
   const linhas = useMemo(() => linhasDaBase(dados as unknown as DadosBase, idx, hoje), [dados, idx, hoje]);
@@ -92,9 +94,14 @@ export default function Base() {
         subtitulo="Uma linha por posição, como na planilha-base em Excel: contrato, equipe, pessoa, viatura e de onde veio nas abas originais. Todo número do Painel é uma contagem destas linhas."
         acoes={
           <>
-            <a href="/api/efetivos/base" className="btn-primary" download>
+            <a href="/api/efetivos/base" className={podeEditar ? "btn-ghost" : "btn-primary"} download>
               <IcBaixar tam={16} /> Baixar Excel
             </a>
+            {podeEditar && (
+              <button onClick={() => setPlanejamento(true)} className="btn-primary" title="Envia a base em Excel com as colunas amarelas preenchidas (datas e planejamento)">
+                Enviar planejamento preenchido
+              </button>
+            )}
             {admin && (
               <button onClick={() => setImportar(true)} className="btn-ghost">
                 Importar planilha
@@ -308,6 +315,11 @@ export default function Base() {
         />
       )}
       {preencher && equipePorId.get(preencher.equipeId) && <ModalPuxar equipe={equipePorId.get(preencher.equipeId)!} vagaPreSelecionada={preencher} onFechar={() => setPreencher(null)} />}
+      {planejamento && (
+        <Modal titulo="Enviar planejamento preenchido" onFechar={() => setPlanejamento(false)}>
+          <EnviarPlanejamento onConcluido={() => setPlanejamento(false)} />
+        </Modal>
+      )}
       {importar && (
         <Modal titulo="Importar planilha" onFechar={() => setImportar(false)}>
           <ImportarPlanilha onConcluido={() => setImportar(false)} />

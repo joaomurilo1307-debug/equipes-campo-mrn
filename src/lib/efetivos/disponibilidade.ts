@@ -261,6 +261,11 @@ export type Painel = {
   };
 };
 
+/** Grupos para mostrar em filtros: só os que existem (equipe sem grupo não vira um grupo em branco). */
+export function gruposParaMostrar(grupos: string[]): string[] {
+  return ordenarGrupos(grupos.filter((g) => g.trim() !== ""));
+}
+
 export function ordenarGrupos(grupos: string[]): string[] {
   const unicos = Array.from(new Set(grupos));
   const conhecidos = GRUPOS.filter((g) => unicos.includes(g)) as string[];

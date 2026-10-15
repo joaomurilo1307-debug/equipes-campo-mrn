@@ -1,9 +1,8 @@
-// SOMENTE DESENVOLVIMENTO: com DEV_MOCK_XLSX apontando para a planilha, a tela abre sem banco nem login,
-// usando os dados da própria planilha mais algumas campanhas, ausências e contratos de exemplo, só para conferir o visual.
-// Em produção (NODE_ENV=production) nada disso é usado.
+// SOMENTE DESENVOLVIMENTO: com DEV_MOCK_XLSX apontando para a planilha (ou a base preenchida), a tela abre sem banco nem login,
+// usando SÓ os dados da própria planilha: nada de exemplo. Em produção (NODE_ENV=production) nada disso é usado.
 import { readFileSync } from "node:fs";
 import { lerPlanilhasEfetivos } from "./efetivos/combinarPlanilhas";
-import { somarDias } from "./efetivos/disponibilidade";
+import { veiculosUnicos } from "./efetivos/importarPlanilha";
 
 export const modoMock = () => process.env.NODE_ENV !== "production" && !!process.env.DEV_MOCK_XLSX;
 
@@ -13,16 +12,20 @@ export function dadosMock(): any {
   if (cache) return cache;
   // DEV_MOCK_XLSX aceita varias planilhas separadas por ";" (as planilhas por contrato se juntam numa base so)
   const lido = lerPlanilhasEfetivos(process.env.DEV_MOCK_XLSX!.split(";").map((f) => readFileSync(f)), { anoReferencia: 2026 });
-  const equipes = lido.equipes.map((e) => ({ id: e.codigo, codigo: e.codigo, nome: e.nome, projeto: e.projeto, contratoConfirmado: true, gestor: e.gestor, grupo: e.grupo, local: null as string | null, observacao: null as string | null, status: e.status, inicio: null as string | null, fim: null as string | null, campanhaId: null as string | null }));
-  const veiculos = lido.veiculos.map((v, i) => ({
-    id: v.ref,
+  const equipes = lido.equipes.map((e) => ({ id: e.codigo, codigo: e.codigo, nome: e.nome, projeto: e.projeto, contratoConfirmado: true, gestor: e.gestor, grupo: e.grupo, local: (e.local ?? null) as string | null, observacao: (e.observacao ?? null) as string | null, status: e.status, inicio: (e.inicio ?? null) as string | null, fim: (e.fim ?? null) as string | null, campanhaId: null as string | null }));
+  // a mesma viatura em várias equipes é uma viatura só
+  const unicos = veiculosUnicos(lido.veiculos);
+  const idPorRef = new Map<string, string>();
+  unicos.forEach((u, i) => u.refs.forEach((r) => idPorRef.set(r, `veic-${i + 1}`)));
+  const veiculos = unicos.map((u, i) => ({
+    id: `veic-${i + 1}`,
     codigo: `VEI-${String(i + 1).padStart(3, "0")}`,
-    identificacao: v.identificacao,
-    placa: null as string | null,
-    modelo: null as string | null,
-    tracao4x4: null as boolean | null,
-    status: "Em operação",
-    observacao: (v.observacao ?? null) as string | null,
+    identificacao: u.identificacao,
+    placa: u.placa,
+    modelo: u.modelo,
+    tracao4x4: u.tracao4x4,
+    status: u.status || "Em operação",
+    observacao: u.observacao,
   }));
   const vagas = lido.vagas.map((v, i) => ({
     id: `v${i + 1}`,
@@ -33,13 +36,13 @@ export function dadosMock(): any {
     cargo: v.cargo,
     empresa: v.empresa,
     atividade: v.atividade,
-    previsaoInicio: null,
+    previsaoInicio: v.previsaoInicio ?? null,
     nivel: v.nivel ?? null,
     direcao4x4: v.direcao4x4 ?? null,
     contratoAtual: v.contratoAtual ?? null,
     disponivelAPartir: v.disponivelAPartir ?? null,
     destino: v.destino ?? null,
-    veiculoId: v.carroRef ?? null,
+    veiculoId: v.carroRef ? idPorRef.get(v.carroRef) ?? null : null,
     contrato: v.contrato ?? null,
     equipeContrato: v.equipeContrato ?? null,
     grupo: v.grupo ?? null,
@@ -48,31 +51,10 @@ export function dadosMock(): any {
     origem: v.origem ?? null,
     conferir: v.conferir ?? null,
   }));
-  const hoje = "2026-10-13";
-  const nomeadas = (eq: string) => vagas.filter((v) => v.equipeId === eq && v.nome && v.status === "Vigente");
-  const n1 = nomeadas("EQ-01");
-  const n3 = nomeadas("EQ-03");
-  // campanhas deixaram de existir na tela: a equipe é a unidade (período + movimentos)
-  const campanhas: any[] = [];
-  const alocacoes: any[] = [];
-  const ausencias = [
-    ...(n1[0] ? [{ id: "x1", vagaId: n1[0].id, tipo: "Férias", inicio: "2026-12-14", fim: "2027-01-02", observacao: null }] : []),
-    ...(n3[1] ? [{ id: "x2", vagaId: n3[1].id, tipo: "Atestado", inicio: "2026-10-20", fim: "2026-10-23", observacao: null }] : []),
-    ...(n3[0] ? [{ id: "x3", vagaId: n3[0].id, tipo: "Férias", inicio: "2026-11-09", fim: "2026-11-27", observacao: null }] : []),
-  ];
-  const movimentos = lido.veiculos.map((v, i) => {
-    const eq = equipes.find((e) => e.codigo === v.equipeCodigo)!;
-    return { id: `m${i + 1}`, veiculoId: v.ref, inicio: "2026-10-07", fim: null as string | null, projeto: eq.projeto, equipeId: eq.id, campanhaId: null as string | null, local: null as string | null, observacao: "Posição inicial segundo a planilha" };
-  });
-  const contratos = lido.contratos.map((c, i) => ({ id: `ct${i + 1}`, codigo: c.codigo, nome: null as string | null, cliente: c.cliente, gestor: c.gestor, local: null as string | null, observacao: null as string | null, ativo: true }));
-  if (veiculos[1]) {
-    veiculos[1].placa = "RTX-4B21";
-    veiculos[1].modelo = "Hilux 4x4";
-    veiculos[1].tracao4x4 = true;
-  }
-  void somarDias;
-  // exemplo de movimentação de equipe, só para ver o desenho no quadro (em produção vem do banco)
-  const movimentosEquipe = equipes.slice(0, 2).map((e, i) => ({ id: `me${i + 1}`, equipeId: e.id, inicio: i === 0 ? "2026-07-01" : "2026-09-14", fim: null as string | null, projeto: e.projeto, local: i === 0 ? "Flanco Norte · trecho 4" : null, observacao: null as string | null }));
-  cache = { equipes, vagas, ausencias, campanhas, alocacoes, veiculos, movimentos, contratos, movimentosEquipe };
+  // ausências com data (só existem se a base preenchida as trouxer)
+  const porChave = new Map(lido.vagas.map((v, i) => [v, `v${i + 1}`]));
+  const ausencias = lido.vagas.flatMap((v) => [...(v.ausencia ? [v.ausencia] : []), ...(v.ausencias ?? [])].map((a, k) => ({ id: `a-${porChave.get(v)}-${k}`, vagaId: porChave.get(v)!, tipo: a.tipo, inicio: a.inicio, fim: a.fim, observacao: null as string | null })));
+  const contratos = lido.contratos.map((c, i) => ({ id: `ct${i + 1}`, codigo: c.codigo, nome: (c.nome ?? null) as string | null, cliente: c.cliente, gestor: c.gestor, local: (c.local ?? null) as string | null, observacao: (c.observacao ?? null) as string | null, ativo: true }));
+  cache = { equipes, vagas, ausencias, campanhas: [] as any[], alocacoes: [] as any[], veiculos, movimentos: [] as any[], contratos, movimentosEquipe: [] as any[] };
   return cache;
 }

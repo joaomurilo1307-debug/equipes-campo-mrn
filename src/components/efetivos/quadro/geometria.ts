@@ -18,6 +18,10 @@ export type Barra = {
   listrada?: boolean;
   /** Passagem em aberto (sem data de saída): linha fina e discreta em vez de uma barra grossa até o fim. */
   fina?: boolean;
+  /** Período sem data de fim: a barra esmaece à direita em vez de seguir até o infinito. */
+  aberta?: boolean;
+  /** Período ainda não informado: contorno tracejado, sem preenchimento. */
+  fantasma?: boolean;
   onClick?: () => void;
 };
 

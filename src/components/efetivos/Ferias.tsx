@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ordenarGrupos, somarDias, temNome, TIPOS_AUSENCIA, type Dia } from "@/lib/efetivos/disponibilidade";
+import { gruposParaMostrar, somarDias, temNome, TIPOS_AUSENCIA, type Dia } from "@/lib/efetivos/disponibilidade";
 import { useDados } from "./DadosContext";
 import {
   A_DEFINIR,
@@ -41,7 +41,7 @@ function Kpi({ rotulo, valor, sub, cor }: { rotulo: string; valor: number | stri
 
 export default function Ferias() {
   const { dados, hoje, equipePorId, vagaPorId, nomeDe, vagasPorEquipe } = useDados();
-  const grupos = ordenarGrupos(dados.equipes.map((e) => e.grupo));
+  const grupos = gruposParaMostrar(dados.equipes.map((e) => e.grupo));
   const [visao, setVisao] = useState<"tempo" | "lista">("tempo");
   const [zoom, setZoom] = useState<Zoom>("semana");
   const [inicio, setInicio] = useState<Dia>(() => segundaDaSemana(somarDias(hoje, -14)));
@@ -179,15 +179,17 @@ export default function Ferias() {
 
       <div className="card mb-4 flex flex-wrap items-end gap-3 p-4">
         <Segmentado valor={visao} onChange={setVisao} opcoes={[{ id: "tempo", rotulo: "Linha do tempo" }, { id: "lista", rotulo: "Lista" }]} />
-        <label>
-          <span className="label">Grupo</span>
-          <select value={grupo} onChange={(e) => { setGrupo(e.target.value); setEquipeId(""); }} className="field">
-            <option value="">Todos</option>
-            {grupos.map((g) => (
-              <option key={g}>{g}</option>
-            ))}
-          </select>
-        </label>
+        {grupos.length > 0 && (
+          <label>
+            <span className="label">Grupo</span>
+            <select value={grupo} onChange={(e) => { setGrupo(e.target.value); setEquipeId(""); }} className="field">
+              <option value="">Todos</option>
+              {grupos.map((g) => (
+                <option key={g}>{g}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label>
           <span className="label">Equipe</span>
           <select value={equipeId} onChange={(e) => setEquipeId(e.target.value)} className="field">

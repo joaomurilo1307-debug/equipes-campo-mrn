@@ -54,7 +54,8 @@ export default function Painel() {
       .map(([codigo, equipes]) => {
         const c = contagemDe(equipes.map((e) => e.id), dataRef);
         const gestor = dados.contratos.find((x) => x.codigo === codigo)?.gestor ?? equipes.find((e) => e.gestor)?.gestor ?? null;
-        const viaturas = equipes.reduce((s, e) => s + (veiculosPorEquipe.get(e.id) ?? []).length, 0);
+        // a mesma viatura em várias equipes do contrato conta uma vez
+        const viaturas = new Set(equipes.flatMap((e) => (veiculosPorEquipe.get(e.id) ?? []).map((v) => v.id))).size;
         const porEmpresa = new Map<string, number>();
         for (const e of equipes) for (const v of vagasPorEquipe.get(e.id) ?? []) if (temNome(v)) porEmpresa.set(v.empresa, (porEmpresa.get(v.empresa) ?? 0) + 1);
         return { codigo, equipes, gestor, c, viaturas, porEmpresa };

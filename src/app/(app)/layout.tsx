@@ -8,7 +8,7 @@ import ConsominasLogo from "@/components/ConsominasLogo";
 import { DadosGate, DadosProvider, useShell } from "@/components/efetivos/DadosContext";
 import { DicaProvider } from "@/components/efetivos/quadro/dicas";
 import { ModalMinhaSenha } from "@/components/efetivos/AcessosEHistorico";
-import { IcBase, IcCarro, IcContrato, IcEquipe, IcFechar, IcFerias, IcHistorico, IcMais, IcOlho, IcPainel, IcQuadro, IcRelatorio, IcSair, IcUsuarios, IcVaga } from "@/components/efetivos/icones";
+import { IcBase, IcCalendario, IcCarro, IcContrato, IcEquipe, IcFechar, IcFerias, IcHistorico, IcMais, IcOlho, IcPainel, IcQuadro, IcRelatorio, IcSair, IcUsuarios, IcVaga } from "@/components/efetivos/icones";
 
 type Item = { href: string; rotulo: string; icone: (p: { tam?: number }) => JSX.Element; so?: "editor" | "admin" };
 type Secao = { titulo: string; itens: Item[] };
@@ -21,6 +21,7 @@ const SECOES: Secao[] = [
     itens: [
       { href: "/painel", rotulo: "Painel", icone: IcPainel },
       { href: "/quadro", rotulo: "Quadro de equipes", icone: IcQuadro },
+      { href: "/disponibilidade", rotulo: "Disponibilidade", icone: IcCalendario },
     ],
   },
   {

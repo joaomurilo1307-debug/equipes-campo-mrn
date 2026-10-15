@@ -14,7 +14,7 @@ const schema = z
     gestor: z.string().trim().max(80).nullable(),
     local: z.string().trim().max(160).nullable(),
     observacao: z.string().trim().max(600).nullable(),
-    grupo: z.string().trim().min(1).max(40),
+    grupo: z.string().trim().max(40),
     status: z.enum(STATUS_EQUIPE),
     // true = a pessoa responsavel conferiu o contrato da equipe
     contratoConfirmado: z.boolean(),

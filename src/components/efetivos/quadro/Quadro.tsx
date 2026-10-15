@@ -6,12 +6,11 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { diferencaDias, ordenarGrupos, somarDias, temNome, type Dia } from "@/lib/efetivos/disponibilidade";
+import { diferencaDias, gruposParaMostrar, somarDias, temNome, type Dia } from "@/lib/efetivos/disponibilidade";
 import { ROTULO_ESTADO_EQUIPE, estadoDaEquipe } from "@/lib/efetivos/situacao";
 import { detalheDaSemana, indexarAusencias, semanasDe, somarSemanas, type DetalheSemana, type NivelSemana } from "@/lib/efetivos/semanas";
-import { localizacaoNoDia } from "@/lib/efetivos/veiculos";
 import { useDados } from "../DadosContext";
-import { A_DEFINIR, CHIP_VEICULO, COR_AUSENCIA, corDoContrato, diaDaSemana, ehFimDeSemana, fmtDia, fmtDiaCurto, mesCurto, rotuloContrato, segundaDaSemana, semanaIso, type Ausencia, type Equipe, type Vaga, type Veiculo } from "../comum";
+import { A_DEFINIR, COR_AUSENCIA, corDoContrato, diaDaSemana, ehFimDeSemana, fmtDia, fmtDiaCurto, mesCurto, rotuloContrato, segundaDaSemana, semanaIso, type Ausencia, type Equipe, type Vaga, type Veiculo } from "../comum";
 import { IcBaixo, IcDir, IcEsq, IcMais, IcMover } from "../icones";
 import ModalAusencia from "../modais/ModalAusencia";
 import ModalAusencias from "../modais/ModalAusencias";
@@ -20,7 +19,6 @@ import { ModalHistoricoVeiculo, ModalMover, ModalVeiculo } from "../modais/Modai
 import ModalVaga from "../modais/ModalVaga";
 import { Aviso, CabecalhoPagina, PontoContrato, Segmentado } from "../ui";
 import { LinhaDica, ligarDica, useDica } from "./dicas";
-import { DrawerVeiculo } from "./Drawers";
 import { ESQ, distribuir, type Barra } from "./geometria";
 import Lane from "./Lane";
 import MiniMapa, { type PontoMapa } from "./MiniMapa";
@@ -31,7 +29,6 @@ const PRESETS: { id: number; rotulo: string }[] = [
   { id: 26, rotulo: "6 meses" },
   { id: 52, rotulo: "1 ano" },
 ];
-const SEM_LOCAL = "Sem localização";
 const MAX_SEMANAS_HORIZONTE = 130;
 
 const COR_NIVEL: Record<NivelSemana, { fundo: string; texto: string; rotulo: string }> = {
@@ -50,7 +47,6 @@ type ModalEstado =
   | { t: "veiculo"; veiculo?: Veiculo }
   | { t: "mover"; veiculo: Veiculo; periodo?: { inicio: Dia; fim: Dia } }
   | { t: "historico"; veiculo: Veiculo };
-type DrawerEstado = { t: "veiculo"; id: string };
 
 // ---------------------------------------------------------------- peças
 
@@ -156,11 +152,10 @@ function CelulasSemanais({ detalhes, dw, topo, alto, equipe, viaturas }: { detal
         return (
           <div
             key={d.seg}
-            className={`num absolute z-[2] flex items-center justify-center rounded-md text-[11px] font-semibold ${d.nivel === "fora" ? "listrado" : ""}`}
+            className={`num absolute z-[2] rounded-sm ${d.nivel === "fora" ? "listrado" : ""}`}
             style={{ left: k * 7 * dw + 1, width: larg, top: topo, height: alto, background: cor.fundo, color: cor.texto }}
             {...ligarDica(tip, <DicaSemana equipe={equipe} d={d} viaturas={viaturas} />)}
           >
-            {larg >= 34 && d.ativa ? `${d.presentes}/${d.total}` : ""}
           </div>
         );
       })}
@@ -187,7 +182,7 @@ function CelulasSoma({ somas, dw, topo, alto, titulo }: { somas: Soma[]; dw: num
         return (
           <div
             key={s.seg}
-            className="num absolute z-[2] flex items-center justify-center rounded-md text-[11px] font-semibold"
+            className="num absolute z-[2] rounded-sm"
             style={{ left: k * 7 * dw + 1, width: larg, top: topo, height: alto, background: cor.fundo, color: cor.texto }}
             {...ligarDica(
               tip,
@@ -207,7 +202,6 @@ function CelulasSoma({ somas, dw, topo, alto, titulo }: { somas: Soma[]; dw: num
               </div>
             )}
           >
-            {larg >= 34 && s.equipes > 0 ? (larg >= 78 ? `${s.presentes}/${s.total} · ${Math.round((s.presentes / Math.max(1, s.total)) * 100)}%` : `${s.presentes}/${s.total}`) : ""}
           </div>
         );
       })}
@@ -233,7 +227,6 @@ export default function Quadro() {
   const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
   const [fechadas, setFechadas] = useState<Set<string>>(new Set(["frota"]));
   const [modal, setModal] = useState<ModalEstado | null>(null);
-  const [drawer, setDrawer] = useState<DrawerEstado | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [larguraArea, setLarguraArea] = useState(1100);
 
@@ -260,7 +253,7 @@ export default function Quadro() {
   const posHoje = diferencaDias(inicio, hoje);
 
   // ---- filtros
-  const grupos = useMemo(() => ordenarGrupos(equipesCampo.map((e) => e.grupo)), [equipesCampo]);
+  const grupos = useMemo(() => gruposParaMostrar(equipesCampo.map((e) => e.grupo)), [equipesCampo]);
   const contratosLista = useMemo(() => Array.from(new Set(equipesCampo.map((e) => contratoNoDia(e, hoje) || A_DEFINIR))).sort((a, b) => (a === A_DEFINIR ? 1 : b === A_DEFINIR ? -1 : a.localeCompare(b, "pt-BR", { numeric: true }))), [equipesCampo, dados]); // eslint-disable-line react-hooks/exhaustive-deps
   const equipesFiltradas = useMemo(() => {
     const t = busca.trim().toLowerCase();
@@ -353,20 +346,60 @@ export default function Quadro() {
   const barrasDaEquipe = (e: Equipe): { barra: Barra; faixa: number }[] => {
     const movs = movimentosPorEquipe.get(e.id) ?? [];
     const atual = contratoNoDia(e, hoje) || A_DEFINIR;
-    if (movs.length === 0) {
-      return [{ faixa: 0, barra: { id: `${e.id}-atual`, inicio: e.inicio && e.inicio > inicio ? e.inicio : inicio, fim: e.fim && e.fim < fimJanela ? e.fim : fimJanela, rotulo: rotuloContrato(atual), cor: corDoContrato(atual), fina: true, dica: `${e.nome}\nEm ${rotuloContrato(atual)}${e.local ? ` · ${e.local}` : ""}\nSem passagens registradas (nunca foi movimentada no sistema)` } }];
+    const cor = corDoContrato(atual);
+    if (movs.length > 0) {
+      return distribuir(
+        movs.map((m) => ({
+          id: m.id,
+          inicio: m.inicio,
+          fim: m.fim ?? fimJanela,
+          rotulo: `${rotuloContrato(m.projeto)}${m.local ? ` · ${m.local}` : ""}`,
+          cor: corDoContrato(m.projeto),
+          aberta: !m.fim,
+          dica: `${e.nome}\n${rotuloContrato(m.projeto)}${m.local ? ` · ${m.local}` : ""}\n${fmtDia(m.inicio)} a ${m.fim ? fmtDia(m.fim) : "em curso"}${m.fim ? ` (${diferencaDias(m.inicio, m.fim) + 1} dias)` : ""}${m.observacao ? `\n${m.observacao}` : ""}`,
+          onClick: podeEditar ? () => router.push(`/equipes?equipe=${e.id}`) : undefined,
+        }))
+      ).map((x) => ({ ...x, faixa: 0 }));
     }
-    return distribuir(
-      movs.map((m) => ({
-        id: m.id,
-        inicio: m.inicio,
-        fim: m.fim ?? fimJanela,
-        rotulo: `${rotuloContrato(m.projeto)}${m.local ? ` · ${m.local}` : ""}`,
-        cor: corDoContrato(m.projeto),
-        dica: `${e.nome}\n${rotuloContrato(m.projeto)}${m.local ? ` · ${m.local}` : ""}\n${fmtDia(m.inicio)} a ${m.fim ? fmtDia(m.fim) : "em curso"}${m.fim ? ` (${diferencaDias(m.inicio, m.fim) + 1} dias)` : ""}${m.observacao ? `\n${m.observacao}` : ""}`,
-        onClick: podeEditar ? () => router.push(`/equipes?equipe=${e.id}`) : undefined,
-      }))
-    ).map((x) => ({ ...x, faixa: 0 }));
+    const editar = podeEditar ? () => setModal({ t: "equipe", equipe: e }) : undefined;
+    const nomeados = (vagasPorEquipe.get(e.id) ?? []).filter((v) => temNome(v) && v.status !== "Desmobilizado");
+    const base = `${e.nome}\n${rotuloContrato(atual)}${e.local ? ` · ${e.local}` : ""}`;
+    const out: { barra: Barra; faixa: number }[] = [];
+    if (!e.inicio && !e.fim) {
+      out.push({ faixa: 0, barra: { id: `${e.id}-semperiodo`, inicio, fim: fimJanela, rotulo: podeEditar ? "sem período definido · clique para definir" : "sem período definido", cor: "#8A97A0", fantasma: true, dica: `${base}\nSem início nem fim informados: o sistema não sabe quando a equipe começa e termina.${podeEditar ? "\nClique para preencher." : ""}`, onClick: editar } });
+      return out;
+    }
+    const ini = e.inicio ?? inicio;
+    const fimBarra = e.fim ?? fimJanela;
+    const periodo = `${e.inicio ? fmtDia(e.inicio) : "…"} a ${e.fim ? fmtDia(e.fim) : "sem fim previsto"}${e.inicio && e.fim ? ` (${diferencaDias(e.inicio, e.fim) + 1} dias)` : ""}`;
+    out.push({
+      faixa: 0,
+      barra: {
+        id: `${e.id}-periodo`,
+        inicio: ini,
+        fim: fimBarra,
+        rotulo: e.fim ? `${e.inicio ? fmtDiaCurto(e.inicio) : "…"} → ${fmtDiaCurto(e.fim)}` : `desde ${e.inicio ? fmtDiaCurto(e.inicio) : "…"} · sem previsão de fim`,
+        cor,
+        aberta: !e.fim,
+        dica: `${base}\nPeríodo: ${periodo}${e.fim ? `\nNo dia seguinte as ${nomeados.length} pessoas ficam livres` : "\nSem data de fim: não dá para saber quando as pessoas ficam livres"}${podeEditar ? "\nClique para editar as datas" : ""}`,
+        onClick: editar,
+      },
+    });
+    if (e.fim && e.fim < fimJanela && nomeados.length > 0) {
+      out.push({
+        faixa: 0,
+        barra: {
+          id: `${e.id}-livres`,
+          inicio: somarDias(e.fim, 1),
+          fim: fimJanela,
+          rotulo: `${nomeados.length} livre${nomeados.length === 1 ? "" : "s"}`,
+          cor: "#CFE0F8",
+          corTexto: "#1D4E9A",
+          dica: `${e.nome}\n${nomeados.length} pessoa${nomeados.length === 1 ? "" : "s"} livre${nomeados.length === 1 ? "" : "s"} a partir de ${fmtDia(somarDias(e.fim, 1))}\n${nomeados.slice(0, 8).map((v) => nomeDe(v)).join(", ")}${nomeados.length > 8 ? ` e mais ${nomeados.length - 8}` : ""}`,
+        },
+      });
+    }
+    return out;
   };
 
   function barrasDaPessoa(v: Vaga, e: Equipe): Barra[] {
@@ -380,7 +413,7 @@ export default function Quadro() {
       return out;
     }
     // a linha de base: está na equipe (verde) e, depois que a equipe termina, disponível (azul)
-    if (a0 <= a1) out.push({ id: `${v.id}-base`, inicio: a0, fim: a1, rotulo: "", cor: "#0E8F63", fina: true, dica: `${nome}\n${v.cargo} · ${v.empresa}\nNa equipe ${e.nome}${e.fim ? ` até ${fmtDia(e.fim)}` : ""}` });
+    if (a0 <= a1) out.push({ id: `${v.id}-base`, inicio: a0, fim: a1, rotulo: "", cor: "#0E8F63", fina: true, aberta: !e.fim, dica: `${nome}\n${v.cargo} · ${v.empresa}\nNa equipe ${e.nome}${e.fim ? ` até ${fmtDia(e.fim)}` : " (sem data de fim)"}` });
     if (e.fim && e.fim < fimJanela) out.push({ id: `${v.id}-livre`, inicio: somarDias(e.fim, 1) > inicio ? somarDias(e.fim, 1) : inicio, fim: fimJanela, rotulo: "disponível", cor: "#CFE0F8", corTexto: "#1D4E9A", dica: `${nome}\nDisponível a partir de ${fmtDia(somarDias(e.fim, 1))}\nA equipe ${e.nome} termina em ${fmtDia(e.fim)}` });
     for (const x of dados.ausencias.filter((a) => a.vagaId === v.id)) {
       out.push({ id: x.id, inicio: x.inicio, fim: x.fim, rotulo: x.tipo, cor: COR_AUSENCIA[x.tipo] ?? "#6F7E77", dica: `${nome} · ${x.tipo}\n${fmtDia(x.inicio)} a ${fmtDia(x.fim)} (${diferencaDias(x.inicio, x.fim) + 1} dias)\n${v.cargo}${x.observacao ? `\n${x.observacao}` : ""}`, onClick: podeEditar ? () => setModal({ t: "ausencia", ausencia: x }) : undefined });
@@ -393,46 +426,8 @@ export default function Quadro() {
     return out;
   }
 
-  // ---- frota
-  const frota = useMemo(
-    () =>
-      dados.veiculos
-        .map((v) => {
-          const movs = dados.movimentos.filter((m) => m.veiculoId === v.id);
-          const barras: Barra[] = movs
-            .filter((m) => !contrato || m.projeto === contrato)
-            .map((m) => {
-              const eq = m.equipeId ? equipePorId.get(m.equipeId) : null;
-              return {
-                id: m.id,
-                inicio: m.inicio,
-                fim: m.fim ?? (fimJanela > m.inicio ? fimJanela : m.inicio),
-                rotulo: `${rotuloContrato(m.projeto)}${eq ? ` · ${eq.nome}` : ""}${m.local ? ` · ${m.local}` : ""}`,
-                cor: corDoContrato(m.projeto),
-                fina: !m.fim,
-                dica: `${v.identificacao} em ${rotuloContrato(m.projeto)}${eq ? `\n${eq.codigo} ${eq.nome}` : ""}${m.local ? `\n${m.local}` : ""}\n${fmtDia(m.inicio)} a ${m.fim ? fmtDia(m.fim) : "hoje (continua)"}`,
-                onClick: () => setDrawer({ t: "veiculo", id: v.id }),
-              };
-            });
-          const loc = localizacaoNoDia(movs, hoje);
-          return { v, barras, loc, visivel: !contrato || barras.length > 0 };
-        })
-        .filter((x) => x.visivel),
-    [dados.veiculos, dados.movimentos, equipePorId, contrato, fimJanela, hoje]
-  );
-  const frotaPorContrato = useMemo(() => {
-    const m = new Map<string, typeof frota>();
-    for (const x of frota) {
-      const k = x.loc?.projeto ?? SEM_LOCAL;
-      if (!m.has(k)) m.set(k, []);
-      m.get(k)!.push(x);
-    }
-    for (const lista of m.values()) lista.sort((a, b) => a.v.identificacao.localeCompare(b.v.identificacao, "pt-BR", { numeric: true }));
-    return [...m.entries()].sort(([a], [b]) => (a === SEM_LOCAL ? 1 : b === SEM_LOCAL ? -1 : a === A_DEFINIR ? 1 : b === A_DEFINIR ? -1 : a.localeCompare(b)));
-  }, [frota]);
-
-  const somaGeral = somaDe(equipesVisiveis.map((e) => e.id));
-  const veiculoAberto = drawer?.t === "veiculo" ? veiculoPorId.get(drawer.id) : undefined;
+  const semFim = equipesVisiveis.filter((e) => !e.fim).length;
+  const semPeriodo = equipesVisiveis.filter((e) => !e.inicio && !e.fim).length;
 
   return (
     <div>
@@ -464,6 +459,18 @@ export default function Quadro() {
         </div>
       )}
 
+      {semFim > 0 && (
+        <div className="mb-3">
+          <Aviso tipo="atencao">
+            <strong>{semFim} de {equipesVisiveis.length} equipes sem data de fim</strong>
+            {semPeriodo > 0 ? ` (${semPeriodo} sem período nenhum, tracejadas)` : ""}: a barra esmaece e não dá para saber quando as pessoas ficam livres.{" "}
+            <Link href="/disponibilidade" className="font-semibold underline">
+              Preencher início e fim
+            </Link>
+          </Aviso>
+        </div>
+      )}
+
       {/* controles */}
       <div className="no-print mb-3 flex flex-wrap items-center gap-2.5">
         <div className="flex items-center gap-1">
@@ -487,12 +494,14 @@ export default function Quadro() {
             </option>
           ))}
         </select>
-        <select value={grupo} onChange={(e) => setGrupo(e.target.value)} className="field !mt-0 !w-auto" aria-label="Filtrar por grupo">
-          <option value="">Todos os grupos</option>
-          {grupos.map((g) => (
-            <option key={g}>{g}</option>
-          ))}
-        </select>
+        {grupos.length > 0 && (
+          <select value={grupo} onChange={(e) => setGrupo(e.target.value)} className="field !mt-0 !w-auto" aria-label="Filtrar por grupo">
+            <option value="">Todos os grupos</option>
+            {grupos.map((g) => (
+              <option key={g}>{g}</option>
+            ))}
+          </select>
+        )}
         <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar equipe ou pessoa" className="field !mt-0 !w-52" />
         <label className="flex items-center gap-2 text-xs text-gray-600">
           <input type="checkbox" checked={soProblemas} onChange={(e) => setSoProblemas(e.target.checked)} className="accent-[#0A9E7F]" /> só com vaga ou ausência
@@ -543,24 +552,12 @@ export default function Quadro() {
               </div>
             </div>
 
-            {/* o todo */}
-            <div className="flex border-b border-line">
-              <Esq className="flex flex-col justify-center px-4" altura={44}>
-                <div className="text-[13px] font-semibold text-ink">Todas as equipes visíveis</div>
-                <div className="text-[10.5px] text-gray-500">posições com alguém / total, por semana</div>
-              </Esq>
-              <Lane inicio={inicio} totalDias={totalDias} dw={dw} altura={44}>
-                <CelulasSoma somas={somaGeral} dw={dw} topo={8} alto={28} titulo="Todas as equipes visíveis" />
-              </Lane>
-            </div>
-
             {/* contratos e equipes */}
             <TituloSecao rotulo="Contratos e equipes" n={equipesVisiveis.length} aberto={!fechadas.has("equipes")} onAlternar={() => alternar(fechadas, "equipes", setFechadas)} extra={podeEditar ? "Arraste sobre a linha de uma equipe para movimentá-la nesse período." : undefined} />
             {!fechadas.has("equipes") &&
               porContrato.map(([projeto, equipes]) => {
                 const cor = corDoContrato(projeto);
                 const c = contagemDe(equipes.map((e) => e.id), hoje);
-                const viaturas = dados.veiculos.filter((v) => localizacaoNoDia(dados.movimentos.filter((m) => m.veiculoId === v.id), hoje)?.projeto === projeto).length;
                 const gestor = dados.contratos.find((x) => x.codigo === projeto)?.gestor ?? null;
                 return (
                   <div key={projeto}>
@@ -574,14 +571,14 @@ export default function Quadro() {
                           <span className="min-w-0">
                             <span className="block truncate font-display text-[15px] font-semibold leading-tight tracking-tight">{rotuloContrato(projeto)}</span>
                             <span className="block truncate text-[10.5px] text-gray-500">
-                              {equipes.length} equipe{equipes.length === 1 ? "" : "s"} · {c.comNome} pessoas · {c.abertas} vagas{gestor ? ` · ${gestor}` : ""}
+                              {equipes.length} equipe{equipes.length === 1 ? "" : "s"} · {c.comNome} pessoas · {c.abertas} vagas{equipes.some((x) => !x.fim) ? ` · ${equipes.filter((x) => !x.fim).length} sem fim` : ""}{gestor ? ` · ${gestor}` : ""}
                             </span>
                           </span>
                         </button>
                       </Esq>
                       <Lane inicio={inicio} totalDias={totalDias} dw={dw} altura={46}>
                         <div className="absolute inset-0" style={{ background: `${cor}0F` }} />
-                        <CelulasSoma somas={somaDe(equipes.map((e) => e.id))} dw={dw} topo={9} alto={28} titulo={`${rotuloContrato(projeto)} · ${equipes.length} equipe(s)`} />
+                        <CelulasSoma somas={somaDe(equipes.map((e) => e.id))} dw={dw} topo={14} alto={18} titulo={`${rotuloContrato(projeto)} · ${equipes.length} equipe(s)`} />
                       </Lane>
                     </div>
 
@@ -610,7 +607,7 @@ export default function Quadro() {
                                     {e.nome}
                                   </Link>
                                   <div className="text-[11px] text-gray-500">
-                                    {e.grupo} · <span className="num">{cm.comNome + cm.semNome}/{cm.posicoes}</span> posições{cm.abertas > 0 ? <span className="font-semibold" style={{ color: "#B86E00" }}> · {cm.abertas} vaga{cm.abertas === 1 ? "" : "s"}</span> : ""}
+                                    {e.grupo ? `${e.grupo} · ` : ""}<span className="num">{cm.comNome + cm.semNome}/{cm.posicoes}</span> posições{cm.abertas > 0 ? <span className="font-semibold" style={{ color: "#B86E00" }}> · {cm.abertas} vaga{cm.abertas === 1 ? "" : "s"}</span> : ""}
                                   </div>
                                 </div>
                                 {podeEditar && (
@@ -630,13 +627,13 @@ export default function Quadro() {
                                 dw={dw}
                                 altura={64}
                                 barras={barrasDaEquipe(e)}
-                                topoBarras={2}
-                                alturaBarra={14}
+                                topoBarras={7}
+                                alturaBarra={22}
                                 onSelecionar={podeEditar ? (a, b) => router.push(`/equipes/movimentar?equipe=${e.id}&inicio=${a}&fim=${b}`) : undefined}
                                 umDia={dw >= 20}
                                 dica="Arraste para movimentar esta equipe nesse período"
                               >
-                                <CelulasSemanais detalhes={deEquipe(e.id)} dw={dw} topo={21} alto={37} equipe={{ nome: e.nome, projeto: contratoNoDia(e, hoje) }} viaturas={nViaturas} />
+                                <CelulasSemanais detalhes={deEquipe(e.id)} dw={dw} topo={37} alto={18} equipe={{ nome: e.nome, projeto: contratoNoDia(e, hoje) }} viaturas={nViaturas} />
                               </Lane>
                             </div>
 
@@ -703,66 +700,6 @@ export default function Quadro() {
               </div>
             )}
 
-            {/* FROTA */}
-            <TituloSecao rotulo="Frota" n={frota.length} aberto={!fechadas.has("frota")} onAlternar={() => alternar(fechadas, "frota", setFechadas)} extra={podeEditar ? "Arraste sobre a linha de um veículo para movê-lo de contrato." : undefined} />
-            {!fechadas.has("frota") &&
-              frotaPorContrato.map(([projeto, itens]) => {
-                const cor = projeto === SEM_LOCAL ? "#9AA8A1" : corDoContrato(projeto);
-                return (
-                  <div key={projeto}>
-                    <div className="flex border-b border-line bg-white">
-                      <Esq className="flex items-center gap-2 px-4" altura={34}>
-                        <PontoContrato cor={cor} />
-                        <span className="truncate font-display text-[15px] font-semibold tracking-tight">{projeto === SEM_LOCAL ? SEM_LOCAL : rotuloContrato(projeto)}</span>
-                      </Esq>
-                      <div className="flex flex-1 items-center gap-4 px-3 text-xs text-gray-500" style={{ background: `${cor}0F` }}>
-                        <span>
-                          <strong className="num text-ink">{itens.length}</strong> veículo{itens.length === 1 ? "" : "s"} {projeto === SEM_LOCAL ? "" : "hoje"}
-                        </span>
-                      </div>
-                    </div>
-                    {itens.map(({ v, barras, loc }) => (
-                      <div key={v.id} className="flex border-b border-gray-100 hover:bg-gray-50/40">
-                        <Esq className="flex items-center gap-2.5 px-4 pl-9" altura={46}>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-1.5">
-                              <span className="text-[13px] font-semibold">{v.identificacao}</span>
-                              <span className="font-mono text-[10px] text-gray-400">{v.codigo}</span>
-                              {v.status !== "Em operação" && <span className={CHIP_VEICULO[v.status]}>{v.status}</span>}
-                            </div>
-                            <div className="truncate text-[11px] text-gray-500">
-                              {v.placa ?? "sem placa"}
-                              {loc?.equipeId ? ` · ${equipePorId.get(loc.equipeId)?.nome ?? ""}` : ""}
-                            </div>
-                          </div>
-                          <button onClick={() => setDrawer({ t: "veiculo", id: v.id })} className="shrink-0 rounded-md border border-line px-1.5 py-0.5 text-[10px] font-semibold text-gray-500 hover:bg-gray-50">
-                            detalhes
-                          </button>
-                        </Esq>
-                        <Lane
-                          inicio={inicio}
-                          totalDias={totalDias}
-                          dw={dw}
-                          altura={46}
-                          barras={distribuir(barras).map((x) => ({ ...x, faixa: 0 }))}
-                          topoBarras={10}
-                          alturaBarra={26}
-                          onSelecionar={podeEditar ? (a, b) => setModal({ t: "mover", veiculo: v, periodo: { inicio: a, fim: b } }) : undefined}
-                          umDia={dw >= 20}
-                          dica="Arraste para mover este veículo de contrato"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                );
-              })}
-            {!fechadas.has("frota") && frota.length === 0 && (
-              <div className="flex border-b border-gray-100">
-                <Esq className="px-4 py-3 text-sm text-gray-400">Nenhum veículo cadastrado.</Esq>
-                <div className="flex-1" />
-              </div>
-            )}
-
             {/* linha de hoje */}
             {posHoje >= 0 && posHoje < totalDias && (
               <div className="pointer-events-none absolute bottom-0 top-0 z-[8] w-px bg-accent/70" style={{ left: ESQ + posHoje * dw + dw / 2 }}>
@@ -788,16 +725,19 @@ export default function Quadro() {
         <span className="mx-1 text-gray-300">|</span>
         <span className="font-semibold uppercase tracking-wide">Barras</span>
         <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-4 rounded" style={{ background: "#2F6FDE" }} /> contrato da equipe (passagem)
+          <span className="inline-block h-2.5 w-4 rounded" style={{ background: "#2F6FDE" }} /> período da equipe (cor do contrato)
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-4 rounded" style={{ background: "linear-gradient(to right, #2F6FDE, transparent)" }} /> sem data de fim (esmaece)
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-4 rounded" style={{ border: "1.5px dashed #8A97A0" }} /> sem período
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-2.5 w-4 rounded" style={{ background: "#CFE0F8" }} /> pessoas livres depois do fim
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span className="inline-block h-2.5 w-4 rounded" style={{ background: COR_AUSENCIA["Férias"] }} /> ausência
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-1 w-4 rounded" style={{ background: "#0E8F63" }} /> na equipe
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-4 rounded" style={{ background: "#CFE0F8" }} /> disponível
         </span>
       </div>
 
@@ -819,15 +759,6 @@ export default function Quadro() {
       {modal?.t === "veiculo" && <ModalVeiculo veiculo={modal.veiculo} onFechar={() => setModal(null)} />}
       {modal?.t === "mover" && <ModalMover veiculo={modal.veiculo} periodo={modal.periodo} onFechar={() => setModal(null)} />}
       {modal?.t === "historico" && <ModalHistoricoVeiculo veiculo={modal.veiculo} onFechar={() => setModal(null)} />}
-      {veiculoAberto && (
-        <DrawerVeiculo
-          veiculo={veiculoAberto}
-          onFechar={() => setDrawer(null)}
-          onMover={() => setModal({ t: "mover", veiculo: veiculoAberto })}
-          onEditar={() => setModal({ t: "veiculo", veiculo: veiculoAberto })}
-          onHistorico={() => setModal({ t: "historico", veiculo: veiculoAberto })}
-        />
-      )}
     </div>
   );
 }
