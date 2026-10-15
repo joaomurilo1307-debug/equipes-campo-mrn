@@ -369,7 +369,7 @@ export default function Relatorios() {
           <Faixa>
             <Numero rotulo="Disponíveis no início" valor={pessoas.jaDisponiveis.length} sub="sem equipe, podem ser puxados" cor={COR.disponivel} />
             <Numero rotulo="Passam a ficar disponíveis" valor={pessoas.ficam.length} sub="equipe que termina, apoio liberado" cor={COR.emEquipe} />
-            <Numero rotulo="Ausentes no início" valor={r.ausentes} sub="férias, INSS, restrição" cor={COR.ausente} />
+            <Numero rotulo="Ausentes no início" valor={r.ausentes} sub="férias, INSS, em contratação" cor={COR.ausente} />
             <Numero rotulo="Período" valor={`${dias} dias`} sub={`${fmtDiaCurto(inicio)} a ${fmtDiaCurto(fim)}`} />
           </Faixa>
           <Secao titulo="Pessoas por situação, semana a semana" sub="Em equipe, ausentes e disponíveis a cada segunda-feira do período.">

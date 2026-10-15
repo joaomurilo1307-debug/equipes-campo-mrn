@@ -8,6 +8,7 @@
 import * as XLSX from "xlsx";
 import { dataValida, somarDias, type Dia } from "./disponibilidade";
 import { cruzarCadastroComDivisao, type PessoaCadastro, type PosicaoCadastro } from "./cruzarAbas";
+import type { ConferenciaDaImportacao } from "./base";
 
 export type EquipeImportada = {
   codigo: string;
@@ -55,23 +56,16 @@ export type VagaImportada = {
 };
 export type ContratoImportado = { codigo: string; gestor: string | null; cliente: string | null; nome?: string | null; local?: string | null; observacao?: string | null };
 // Viatura que a planilha cita para a equipe ("VL 01"); placa e contrato nao vem na planilha.
-export type VeiculoImportado = { ref: string; identificacao: string; equipeCodigo: string; ocupantes: number; placa?: string | null; modelo?: string | null; tracao4x4?: boolean | null; status?: string | null };
+export type VeiculoImportado = { ref: string; identificacao: string; equipeCodigo: string; ocupantes: number; placa?: string | null; modelo?: string | null; tracao4x4?: boolean | null; status?: string | null; observacao?: string | null };
 export type ResultadoImportacao = {
-  formato: "painel" | "divisao" | "original" | "cruzado" | "base";
+  formato: "painel" | "divisao" | "original" | "cruzado" | "base" | "contratos";
   equipes: EquipeImportada[];
   vagas: VagaImportada[];
   veiculos: VeiculoImportado[];
   contratos: ContratoImportado[];
   avisos: string[];
-  // so no formato cruzado: o que a conferencia precisa para provar de onde vem cada numero
-  conferencia?: {
-    linhasAba1: number;
-    linhasAba2: number;
-    linhasAba3: number;
-    equipesAba1: number;
-    equipesAba2: number;
-    substituidas: { origem: string; descricao: string; equipe: string }[];
-  };
+  // o que a conferencia precisa para provar de onde vem cada numero (formatos cruzado e por contrato)
+  conferencia?: ConferenciaDaImportacao;
 };
 export type OpcoesLeitura = { anoReferencia?: number };
 
@@ -186,6 +180,8 @@ function abaVisivel(wb: XLSX.WorkBook, nome: string): boolean {
   return !info || !info.Hidden;
 }
 
+const COLUNAS_DA_DIVISAO = ["atividade", "empresa", "equipe", "cargo / funcao", "nome profissionais"];
+
 export function lerPlanilhaEfetivos(dados: ArrayBuffer | Uint8Array | Buffer, opcoes: OpcoesLeitura = {}): ResultadoImportacao {
   const wb = XLSX.read(dados, { type: "buffer" });
   const avisos: string[] = [];
@@ -268,7 +264,10 @@ export function lerPlanilhaEfetivos(dados: ArrayBuffer | Uint8Array | Buffer, op
   }
 
   // ---- formato C: "DIVISÃO DE EQUIPES" (semana 42): equipe na coluna ATIVIDADE, viaturas VL e direção 4x4
-  const abaDivisao = wb.SheetNames.find((n) => normalizar(n) === "divisao de equipes");
+  // (as planilhas por contrato, uma por contrato, trazem a mesma tabela com a coluna CONTRATO e outro nome de aba)
+  const abaDivisao =
+    wb.SheetNames.find((n) => normalizar(n) === "divisao de equipes") ??
+    wb.SheetNames.find((n) => abaVisivel(wb, n) && !!acharCabecalho(lerLinhas(wb.Sheets[n]), COLUNAS_DA_DIVISAO));
   if (abaDivisao) {
     const divisao = lerDivisaoDeEquipes(wb, abaDivisao, opcoes);
     // com a primeira aba (cadastro por contrato) visivel, as duas visoes se cruzam: cada pessoa uma vez so
@@ -619,6 +618,7 @@ function lerBaseUnificada(wb: XLSX.WorkBook, nomeAba: string): ResultadoImportac
           modelo: textoOuNulo(r[col(k, "modelo")]),
           tracao4x4: d4 === "sim" ? true : d4 === "nao" ? false : null,
           status: textoOuNulo(r[col(k, "status")]),
+          observacao: textoOuNulo(r[col(k, "observacao")]),
         });
       }
     }
@@ -691,13 +691,29 @@ export function ultimoDiaDeTexto(texto_: unknown, ano: number): Dia | null {
   return dataValida(dia) ? dia : null;
 }
 
+/** Nome da célula: "Luis Fernando (em mobilização)" -> nome + anotação; "Vago" = vaga aberta; célula em branco = nome não informado. */
+function lerNomeDaCelula(v: unknown): { nome: string | null; semNome: boolean; nota: string | null; doisNomes: boolean } {
+  const n = normalizar(v);
+  if (n === "vago" || n === "vaga") return { nome: null, semNome: false, nota: null, doisNomes: false };
+  if (n === "") return { nome: null, semNome: true, nota: null, doisNomes: false };
+  const bruto = texto(v);
+  const m = /\(([^)]*)\)/.exec(bruto);
+  const limpo = texto(bruto.replace(/\([^)]*\)/g, " "));
+  if (!limpo) return { nome: null, semNome: true, nota: m ? texto(m[1]) : null, doisNomes: false };
+  return { nome: limpo, semNome: false, nota: m ? textoOuNulo(m[1]) : null, doisNomes: limpo.includes("/") };
+}
+
+const eFlora = (t: string) => normalizar(t).includes("flora");
+const eFauna = (t: string) => /fauna|veterin|biolog/.test(normalizar(t));
+
 function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitura): ResultadoImportacao {
   const avisos: string[] = [];
   const { linhas, numero } = lerLinhasNumeradas(wb.Sheets[aba]);
-  const ch = acharCabecalho(linhas, ["atividade", "empresa", "equipe", "cargo / funcao", "nome profissionais"]);
+  const ch = acharCabecalho(linhas, COLUNAS_DA_DIVISAO);
   if (!ch) throw new Error('Aba "DIVISÃO DE EQUIPES" sem as colunas ATIVIDADE, EMPRESA, EQUIPE, Cargo / Função e NOME PROFISSIONAIS.');
   const c = ch.cab;
   const iTime = col(c, "atividade");
+  const iContrato = col(c, "contrato");
   const iEmp = col(c, "empresa");
   const iAtiv = col(c, "equipe");
   const iNivel = col(c, "nivel");
@@ -705,71 +721,126 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
   const iNome = col(c, "nome profissionais");
   const i4x4 = col(c, "direcao 4x4");
   const iCarro = col(c, "carros");
-  const iStatus = col(c, "status atual");
+  const iStatusAtividade = col(c, "status de atividade");
+  const iStatusAtual = col(c, "status atual");
+  // Planilha por contrato: a coluna CONTRATO existe. Nela "STATUS DE ATIVIDADE" e o status da pessoa e "STATUS ATUAL" e um
+  // recado sobre a viatura (ex.: "Sera substituida pela CNS-102"); sem "STATUS DE ATIVIDADE", "STATUS ATUAL" e o status da pessoa.
+  const porContrato = iContrato >= 0;
+  const iStatus = iStatusAtividade >= 0 ? iStatusAtividade : iStatusAtual;
+  const iNotaViatura = iStatusAtividade >= 0 ? iStatusAtual : -1;
+  const rotuloOrigem = (linha: number) => (porContrato ? `${aba} · linha ${linha}` : `Aba 2 · linha ${linha}`);
 
   const equipes: EquipeImportada[] = [];
   const vagas: VagaImportada[] = [];
   const veiculos: VeiculoImportado[] = [];
   const cargosPorEquipe = new Map<string, string[]>();
+  const contratos = new Map<string, ContratoImportado>();
   let atual: EquipeImportada | null = null;
   let carroAtual: VeiculoImportado | null = null;
+  let linhasLidas = 0;
   for (let li = ch.indice + 1; li < linhas.length; li++) {
     const r = linhas[li];
     const cargo = texto(r[iCargo]);
     const nomeEquipe = texto(r[iTime]);
     if (!cargo && !nomeEquipe) continue;
+    linhasLidas++;
+    const contratoLinha = porContrato ? texto(r[iContrato]) : "";
     // a equipe (coluna ATIVIDADE) vem mesclada: so a 1a linha traz o nome
     if (nomeEquipe !== "" || !atual) {
       atual = {
         codigo: codigoEquipe(equipes.length + 1),
-        projeto: PROJETO_A_DEFINIR,
+        projeto: contratoLinha || PROJETO_A_DEFINIR,
         gestor: null,
         grupo: "Fauna",
         nome: nomeEquipe || "(sem nome na planilha)",
-        contratoConfirmado: true,
+        contratoConfirmado: !!contratoLinha || !porContrato,
         status: "Ativa",
       };
       equipes.push(atual);
       cargosPorEquipe.set(atual.codigo, []);
       carroAtual = null; // a viatura nunca atravessa de uma equipe para outra
     }
-    // a viatura (coluna CARROS) tambem vem mesclada: vale ate a proxima viatura citada
-    const placa = texto(r[iCarro]);
-    if (placa !== "") {
-      carroAtual = { ref: `${atual.codigo}#${veiculos.length + 1}`, identificacao: placa, equipeCodigo: atual.codigo, ocupantes: 0 };
-      veiculos.push(carroAtual);
+    if (contratoLinha && !contratos.has(contratoLinha)) contratos.set(contratoLinha, { codigo: contratoLinha, gestor: null, cliente: null });
+    const conferir: string[] = [];
+    if (porContrato && contratoLinha && atual.projeto !== PROJETO_A_DEFINIR && contratoLinha !== atual.projeto) {
+      conferir.push(`Contrato «${contratoLinha}» nesta linha, mas a equipe é do contrato «${atual.projeto}»`);
     }
-    const { nome, semNome } = situacaoDoNome(r[iNome]);
-    const st = interpretarStatus(r[iStatus], null, null);
-    if (st.aviso) avisos.push(`${atual.nome} (${cargo}): ${st.aviso}`);
+    // a viatura (coluna CARROS) tambem vem mesclada: vale ate a proxima viatura citada; "IDEM" = a mesma viatura de cima
+    const placa = texto(r[iCarro]);
+    const notaViatura = iNotaViatura >= 0 ? textoOuNulo(r[iNotaViatura]) : null;
+    if (placa !== "" && normalizar(placa) === "idem") {
+      if (!carroAtual) conferir.push("A planilha diz «IDEM» na viatura, mas não há viatura citada acima nesta equipe");
+    } else if (placa !== "") {
+      carroAtual = { ref: `${atual.codigo}#${veiculos.length + 1}`, identificacao: placa, equipeCodigo: atual.codigo, ocupantes: 0, observacao: notaViatura };
+      veiculos.push(carroAtual);
+    } else if (notaViatura && carroAtual && !carroAtual.observacao) {
+      carroAtual.observacao = notaViatura;
+    }
+    const { nome, semNome, nota, doisNomes } = lerNomeDaCelula(r[iNome]);
+    let st = interpretarStatus(r[iStatus], null, null);
+    const obs: string[] = st.observacao ? [st.observacao] : [];
+    if (nota) {
+      if (normalizar(nota).includes("mobiliz") && st.status === "Vigente") {
+        // ainda nao chegou ao campo: o mais proximo dos status do sistema e "Em contratacao"
+        st = { ...st, status: "Em contratação" };
+        obs.push("Em mobilização (anotação ao lado do nome na planilha)");
+      } else {
+        obs.push(`Anotação ao lado do nome na planilha: «${nota}»`);
+      }
+    }
+    if (st.aviso) {
+      avisos.push(`${atual.nome} (${cargo}): ${st.aviso}`);
+      conferir.push(st.aviso);
+    }
+    if (doisNomes) conferir.push(`Dois nomes na mesma célula («${nome}»): confirmar quem ocupa a posição`);
+    // a atividade e o cargo precisam combinar (fauna x flora); quando nao combinam, a linha pode ter sido digitada trocada
+    const atividade = texto(r[iAtiv]);
+    if (porContrato && atividade && cargo) {
+      const ativFlora = eFlora(atividade);
+      const ativFauna = eFauna(atividade) && !ativFlora;
+      if ((ativFlora && eFauna(cargo) && !eFlora(cargo)) || (ativFauna && eFlora(cargo))) {
+        conferir.push(`Atividade «${atividade}» e cargo «${cargo}» não combinam: confirmar com o Samuel qual está certo`);
+      }
+    }
     const dir = normalizar(r[i4x4]);
     if (carroAtual && nome) carroAtual.ocupantes++;
-    cargosPorEquipe.get(atual.codigo)!.push(cargo);
+    cargosPorEquipe.get(atual.codigo)!.push(porContrato ? `${cargo} ${atividade}` : cargo);
     vagas.push({
       numero: vagas.length + 1,
       equipeCodigo: atual.codigo,
-      atividade: texto(r[iAtiv]) || "Resgate",
+      atividade: atividade || (porContrato ? "A informar" : "Resgate"),
       empresa: texto(r[iEmp]),
       cargo,
       nome,
       status: st.status,
-      observacao: st.observacao,
+      observacao: obs.join(" | ") || null,
       ausencia: null,
       nivel: textoOuNulo(r[iNivel]),
       direcao4x4: dir === "sim" ? true : dir === "nao" ? false : null,
       carroRef: carroAtual?.ref ?? null,
       semNome,
-      origem: `Aba 2 · linha ${numero[li]}`,
+      contrato: contratoLinha || null,
+      origem: rotuloOrigem(numero[li]),
+      conferir: conferir.join(" | ") || null,
     });
   }
-  if (vagas.length === 0) throw new Error('A aba "DIVISÃO DE EQUIPES" não tem nenhuma vaga.');
+  if (vagas.length === 0) throw new Error(`A aba "${aba}" não tem nenhuma vaga.`);
 
-  // grupo: Flora so quando algum cargo da equipe for de flora; senao Fauna (todos os cargos desta planilha sao de fauna)
+  // grupo. Planilha antiga: Flora so quando algum cargo da equipe for de flora; senao Fauna.
+  // Por contrato: "Gestao" (a equipe de gestao do contrato), "Fauna e Flora" (equipe mista), "Flora" ou "Fauna".
   for (const e of equipes) {
-    if ((cargosPorEquipe.get(e.codigo) ?? []).some((x) => normalizar(x).includes("flora"))) e.grupo = "Flora";
+    const cargos = cargosPorEquipe.get(e.codigo) ?? [];
+    const flora = cargos.some(eFlora);
+    if (!porContrato) {
+      if (flora) e.grupo = "Flora";
+      continue;
+    }
+    const fauna = cargos.some(eFauna);
+    e.grupo = normalizar(e.nome) === "gestao" ? "Gestão" : flora && fauna ? "Fauna e Flora" : flora ? "Flora" : "Fauna";
   }
 
   // aba de apoio vindo de outro contrato (ex.: "EQUIPE DE LT PARA APOIO")
+  const fontes: { nome: string; linhas: number }[] = [{ nome: aba, linhas: linhasLidas }];
   const abaApoio = wb.SheetNames.find((n) => normalizar(n).includes("apoio"));
   if (abaApoio) {
     const { linhas: la, numero: numApoio } = lerLinhasNumeradas(wb.Sheets[abaApoio]);
@@ -777,7 +848,8 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
     if (ca) {
       const k = ca.cab;
       const ano = opcoes.anoReferencia ?? new Date().getFullYear();
-      // As pessoas desta aba NAO formam uma equipe (a planilha tem so as equipes da aba DIVISAO DE EQUIPES):
+      let linhasApoio = 0;
+      // As pessoas desta aba NAO formam uma equipe (a planilha tem so as equipes da aba principal):
       // sao reforco de outro contrato que fica livre numa data. Ficam numa reserva unica, sem contrato.
       let reserva: EquipeImportada | undefined;
       for (let lj = ca.indice + 1; lj < la.length; lj++) {
@@ -785,6 +857,7 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
         const contrato = texto(r[k.get("contrato")!]);
         const prof = textoOuNulo(r[k.get("profissional")!]);
         if (!contrato || !prof) continue;
+        linhasApoio++;
         if (!reserva) {
           reserva = { codigo: CODIGO_RESERVA, projeto: PROJETO_A_DEFINIR, contratoConfirmado: true, gestor: null, grupo: "Apoio", nome: "FORA DAS EQUIPES DE CAMPO", status: "Ativa" };
           equipes.push(reserva);
@@ -816,10 +889,19 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
           contratoAtual: contrato,
           disponivelAPartir: ultimo ? somarDias(ultimo, 1) : null,
           destino: textoOuNulo(r[col(k, "migrar para")]),
-          origem: `Aba 3 · linha ${numApoio[lj]}`,
+          origem: porContrato ? `${aba} › ${abaApoio} · linha ${numApoio[lj]}` : `Aba 3 · linha ${numApoio[lj]}`,
         });
       }
+      fontes.push({ nome: `${aba} › ${abaApoio}`, linhas: linhasApoio });
     }
   }
-  return { formato: "divisao", equipes, vagas, veiculos, contratos: [], avisos };
+  return {
+    formato: porContrato ? "contratos" : "divisao",
+    equipes,
+    vagas,
+    veiculos,
+    contratos: [...contratos.values()],
+    avisos,
+    ...(porContrato ? { conferencia: { fontes, substituidas: [] } } : {}),
+  };
 }

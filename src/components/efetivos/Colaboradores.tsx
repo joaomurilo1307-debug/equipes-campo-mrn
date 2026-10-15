@@ -185,7 +185,7 @@ export default function Colaboradores() {
         {[
           ["Colaboradores", n.total, "cadastrados e ativos", undefined],
           ["Em equipe", n.emEquipe, "presentes nas equipes de campo", COR.livre],
-          ["Ausentes", n.ausentes, "férias, INSS, restrição (seguem na equipe)", COR.ausente],
+          ["Ausentes", n.ausentes, "férias, INSS, restrição, em contratação (seguem na equipe)", COR.ausente],
           ["Disponíveis", n.disponiveis, "sem equipe, prontos para uma", COR.disponivel],
           ["Em outro contrato", n.outro, "ainda ocupados, com data de saída", COR.outro],
           ["Desmobilizados", n.desmob, "saíram, ficam no histórico", COR.fora],

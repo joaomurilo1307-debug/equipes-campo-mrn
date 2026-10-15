@@ -2,7 +2,7 @@
 // usando os dados da própria planilha mais algumas campanhas, ausências e contratos de exemplo, só para conferir o visual.
 // Em produção (NODE_ENV=production) nada disso é usado.
 import { readFileSync } from "node:fs";
-import { lerPlanilhaEfetivos } from "./efetivos/importarPlanilha";
+import { lerPlanilhasEfetivos } from "./efetivos/combinarPlanilhas";
 import { somarDias } from "./efetivos/disponibilidade";
 
 export const modoMock = () => process.env.NODE_ENV !== "production" && !!process.env.DEV_MOCK_XLSX;
@@ -11,7 +11,8 @@ let cache: any = null;
 
 export function dadosMock(): any {
   if (cache) return cache;
-  const lido = lerPlanilhaEfetivos(readFileSync(process.env.DEV_MOCK_XLSX!), { anoReferencia: 2026 });
+  // DEV_MOCK_XLSX aceita varias planilhas separadas por ";" (as planilhas por contrato se juntam numa base so)
+  const lido = lerPlanilhasEfetivos(process.env.DEV_MOCK_XLSX!.split(";").map((f) => readFileSync(f)), { anoReferencia: 2026 });
   const equipes = lido.equipes.map((e) => ({ id: e.codigo, codigo: e.codigo, nome: e.nome, projeto: e.projeto, contratoConfirmado: true, gestor: e.gestor, grupo: e.grupo, local: null as string | null, observacao: null as string | null, status: e.status, inicio: null as string | null, fim: null as string | null, campanhaId: null as string | null }));
   const veiculos = lido.veiculos.map((v, i) => ({
     id: v.ref,
@@ -21,7 +22,7 @@ export function dadosMock(): any {
     modelo: null as string | null,
     tracao4x4: null as boolean | null,
     status: "Em operação",
-    observacao: null as string | null,
+    observacao: (v.observacao ?? null) as string | null,
   }));
   const vagas = lido.vagas.map((v, i) => ({
     id: `v${i + 1}`,

@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { dataDe, exigir, registrar } from "@/lib/efetivos/servidor";
 import { dataValida } from "@/lib/efetivos/disponibilidade";
-import { lerPlanilhaEfetivos, normalizar } from "@/lib/efetivos/importarPlanilha";
+import { normalizar } from "@/lib/efetivos/importarPlanilha";
+import { lerPlanilhasEfetivos } from "@/lib/efetivos/combinarPlanilhas";
 import { instanteBrasilia } from "@/lib/efetivos/hoje";
 import { tokenDeCargaValido } from "@/lib/efetivos/token";
 
@@ -13,7 +14,7 @@ const proximoNumero = (codigos: string[], prefixo: string, largura: number) => {
   return (n: number) => `${prefixo}-${String(maior + n).padStart(largura, "0")}`;
 };
 
-// Carga a partir da planilha do Samuel (a mais recente: "DIVISÃO DE EQUIPES"; tambem le os formatos antigos).
+// Carga a partir das planilhas do Samuel (uma por contrato: 3686, 3687 LT...; varias de uma vez se juntam numa base so; tambem le a base do sistema e os formatos antigos).
 // SO usa o que esta na planilha: contrato, gestor e placa nao constam nela e ficam em branco para serem preenchidos.
 // NUNCA sobrescreve: o sistema vira a fonte da verdade depois da carga inicial.
 //   - base vazia: importa tudo;
@@ -33,19 +34,20 @@ export async function POST(req: Request) {
   const acrescentar = url.searchParams.get("acrescentar") === "1";
 
   const form = await req.formData().catch(() => null);
-  const campoArquivo = form?.get("arquivo");
   // aceita qualquer objeto com cara de arquivo (o File do undici nem sempre e o File global do Node)
-  if (!campoArquivo || typeof campoArquivo === "string" || typeof (campoArquivo as File).arrayBuffer !== "function") {
+  const arquivos = (form?.getAll("arquivo") ?? []).filter((x): x is File => typeof x !== "string" && typeof (x as File).arrayBuffer === "function");
+  if (arquivos.length === 0) {
     return NextResponse.json({ error: "Envie a planilha (.xlsx) no campo 'arquivo'" }, { status: 422 });
   }
-  const arquivo = campoArquivo as File;
-  if (arquivo.size > MAX_BYTES) return NextResponse.json({ error: "Arquivo grande demais (máximo 8 MB)" }, { status: 422 });
+  if (arquivos.length > 10) return NextResponse.json({ error: "Envie no máximo 10 planilhas de uma vez" }, { status: 422 });
+  if (arquivos.some((a) => a.size > MAX_BYTES)) return NextResponse.json({ error: "Arquivo grande demais (máximo 8 MB cada)" }, { status: 422 });
+  const nomeDosArquivos = arquivos.map((a) => a.name).join(" + ");
   const refInformada = String(form?.get("dataReferencia") ?? "");
   const dataRef = dataValida(refInformada) ? refInformada : instanteBrasilia().iso;
 
   let lido;
   try {
-    lido = lerPlanilhaEfetivos(Buffer.from(await arquivo.arrayBuffer()), { anoReferencia: Number(dataRef.slice(0, 4)) });
+    lido = lerPlanilhasEfetivos(await Promise.all(arquivos.map(async (a) => Buffer.from(await a.arrayBuffer()))), { anoReferencia: Number(dataRef.slice(0, 4)) });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Não consegui ler a planilha" }, { status: 422 });
   }
@@ -124,7 +126,7 @@ export async function POST(req: Request) {
       for (const v of veiculosNovos) {
         const eq = equipePorCodigoImportado.get(v.equipeCodigo)!;
         const veiculo = await tx.efetivoVeiculo.create({
-          data: { codigo: veiCodigos(++k), identificacao: v.identificacao, placa: v.placa ?? null, modelo: v.modelo ?? null, tracao4x4: v.tracao4x4 ?? null, status: v.status || "Em operação" },
+          data: { codigo: veiCodigos(++k), identificacao: v.identificacao, placa: v.placa ?? null, modelo: v.modelo ?? null, tracao4x4: v.tracao4x4 ?? null, status: v.status || "Em operação", observacao: v.observacao ?? null },
         });
         veiculoPorRef.set(v.ref, veiculo.id);
         await tx.efetivoVeiculoMovimento.create({
@@ -177,7 +179,7 @@ export async function POST(req: Request) {
     "IMPORTACAO",
     "IMPORTACAO",
     undefined,
-    `Planilha "${arquivo.name}" (${lido.formato}) importada por ${quem.nome}: ${resumo.equipesNovas} equipes, ${resumo.vagasNovas} vagas (${resumo.vagasPreenchidas} com profissional) e ${resumo.veiculosNovos} viaturas${acrescentar ? " (modo acrescentar)" : ""}`
+    `Planilha "${nomeDosArquivos}" (${lido.formato}) importada por ${quem.nome}: ${resumo.equipesNovas} equipes, ${resumo.vagasNovas} vagas (${resumo.vagasPreenchidas} com profissional) e ${resumo.veiculosNovos} viaturas${acrescentar ? " (modo acrescentar)" : ""}`
   );
   return NextResponse.json({ simulacao: false, ...resumo });
 }

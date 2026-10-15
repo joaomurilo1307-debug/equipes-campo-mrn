@@ -10,7 +10,7 @@ function dataDoNomeDoArquivo(nome: string): string | null {
   return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
 }
 
-/** Importa a planilha do Samuel (carga inicial; nunca sobrescreve). Mostra o que entraria antes de gravar. */
+/** Importa as planilhas do Samuel (uma por contrato, ou a base do sistema; carga inicial, nunca sobrescreve). Mostra o que entraria antes de gravar. */
 export default function ImportarPlanilha({ onConcluido }: { onConcluido?: () => void }) {
   const { dados, recarregar } = useDados();
   const temEquipes = dados.equipes.length > 0;
@@ -24,13 +24,13 @@ export default function ImportarPlanilha({ onConcluido }: { onConcluido?: () => 
   const [ocupado, setOcupado] = useState(false);
 
   async function enviar(simular: boolean) {
-    const arquivo = arquivoRef.current?.files?.[0];
-    if (!arquivo) return setErro("Escolha a planilha (.xlsx) primeiro.");
+    const arquivos = Array.from(arquivoRef.current?.files ?? []);
+    if (arquivos.length === 0) return setErro("Escolha a planilha (.xlsx) primeiro.");
     setOcupado(true);
     setErro(null);
     setOk(null);
     const fd = new FormData();
-    fd.append("arquivo", arquivo);
+    for (const a of arquivos) fd.append("arquivo", a);
     fd.append("dataReferencia", dataRef);
     const q = [simular ? "simular=1" : "", acrescentar ? "acrescentar=1" : ""].filter(Boolean).join("&");
     const r = await chamar("POST", `/api/efetivos/importar${q ? `?${q}` : ""}`, fd);
@@ -51,21 +51,23 @@ export default function ImportarPlanilha({ onConcluido }: { onConcluido?: () => 
   return (
     <div className="space-y-3 px-6 py-5">
       <p className="text-xs text-gray-500">
-        Use a planilha mais recente (aba “DIVISÃO DE EQUIPES”, com a aba de apoio de outro contrato). É a <strong>carga inicial</strong>: depois dela, a atualização é feita aqui no sistema e a importação nunca sobrescreve o que já foi ajustado.
+        Escolha as planilhas de acompanhamento do Samuel — <strong>uma por contrato</strong> (3686, 3687 LT…; pode marcar várias de uma vez, que viram uma base só) ou a base baixada deste sistema. É a <strong>carga inicial</strong>: depois dela, a atualização é feita aqui no sistema e a importação nunca sobrescreve o que já foi ajustado.
       </p>
       <div className="flex flex-wrap items-end gap-3">
         <label>
-          <span className="label">Planilha</span>
+          <span className="label">Planilha(s)</span>
           <input
             ref={arquivoRef}
             type="file"
             accept=".xlsx"
+            multiple
             onChange={(e) => {
-              const f = e.target.files?.[0];
-              setNomeArquivo(f?.name ?? "");
+              const fs = Array.from(e.target.files ?? []);
+              setNomeArquivo(fs.map((f) => f.name).join(" + "));
               setResumo(null);
-              const d = f ? dataDoNomeDoArquivo(f.name) : null;
-              if (d) setDataRef(d);
+              // a data da planilha vem do nome do arquivo (a mais recente, se houver mais de uma)
+              const datas = fs.map((f) => dataDoNomeDoArquivo(f.name)).filter((x): x is string => !!x).sort();
+              if (datas.length) setDataRef(datas[datas.length - 1]);
             }}
             className="mt-1 block text-sm"
           />

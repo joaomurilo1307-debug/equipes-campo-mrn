@@ -176,7 +176,7 @@ export default function Painel() {
           <Indicador rotulo="Posições" valor={r.posicoes} sub={`${r.comNome} com nome · ${r.semNome} sem nome`} href={q("")} />
           <Indicador rotulo="Colaboradores" valor={r.colaboradores} sub="com nome, que não saíram" href="/colaboradores" />
           <Indicador rotulo="Em equipe" valor={r.emEquipe} sub="presentes nas equipes" cor={COR.emEquipe} href={q("situacao=EM_EQUIPE")} />
-          <Indicador rotulo="Ausentes" valor={r.ausentes} sub="férias, INSS, restrição" cor={COR.ausente} href={q("situacao=AUSENTE")} />
+          <Indicador rotulo="Ausentes" valor={r.ausentes} sub="férias, INSS, em contratação" cor={COR.ausente} href={q("situacao=AUSENTE")} />
           <Indicador rotulo="Disponíveis" valor={r.disponiveis} sub="sem equipe, prontos para uma" cor={COR.disponivel} href={q("situacao=DISPONIVEL")} />
           <Indicador rotulo="Vagas abertas" valor={r.abertas} sub="para contratar ou puxar" cor={COR.aberta} href="/vagas" />
         </div>

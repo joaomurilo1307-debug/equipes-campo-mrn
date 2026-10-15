@@ -70,7 +70,7 @@ export type Contagem = {
   semNome: number;
   abertas: number;
   emEquipe: number; // pessoas presentes na equipe
-  ausentes: number; // pessoas da equipe fora (férias, INSS, restrição)
+  ausentes: number; // pessoas da equipe fora (férias, INSS, restrição, em contratação/mobilização)
   disponiveis: number; // pessoas sem equipe
   outroContrato: number;
   desmobilizados: number;
@@ -179,7 +179,7 @@ export type EstadoDaEquipe = "EM_FORMACAO" | "ENCERRADA" | "INATIVA" | "COM_VAGA
 export const ROTULO_ESTADO_EQUIPE: Record<EstadoDaEquipe, { rotulo: string; chip: string; dica: string }> = {
   COMPLETA: { rotulo: "Completa", chip: "chip-ok", dica: "Todas as posições preenchidas e ninguém ausente" },
   COM_VAGAS: { rotulo: "Com vagas", chip: "chip-warn", dica: "Tem vagas abertas para contratar ou puxar" },
-  COM_AUSENCIA: { rotulo: "Com ausência", chip: "chip-bad", dica: "Alguém da equipe está ausente (férias, INSS, restrição)" },
+  COM_AUSENCIA: { rotulo: "Com ausência", chip: "chip-bad", dica: "Alguém da equipe está ausente (férias, INSS, restrição, em contratação)" },
   EM_FORMACAO: { rotulo: "Em formação", chip: "chip-info", dica: "Equipe ainda sendo montada ou que começa depois desta data" },
   ENCERRADA: { rotulo: "Encerrada", chip: "chip-mute", dica: "O período da equipe terminou: as pessoas estão disponíveis" },
   INATIVA: { rotulo: "Inativa", chip: "chip-mute", dica: "Equipe marcada como inativa" },
