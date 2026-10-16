@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { exigir, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
+import { dataDe, diaDe, exigir, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
 import { STATUS_VEICULO } from "@/lib/efetivos/veiculos";
+import { dia } from "@/lib/efetivos/esquemas";
 
 const schema = z
   .object({
@@ -13,6 +14,9 @@ const schema = z
     status: z.enum(STATUS_VEICULO),
     observacao: z.string().trim().max(300).nullable(),
     cliente: z.string().trim().max(60).nullable(),
+    // troca planejada: a viatura que vai substituir esta e quando (vazio desfaz)
+    substituidoPorId: z.string().nullable(),
+    trocaEm: dia.nullable(),
   })
   .partial();
 
@@ -29,7 +33,13 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   if (a.cliente && parsed.data.cliente !== undefined && (parsed.data.cliente || null) !== a.cliente) return NextResponse.json({ error: "Só a administração muda o cliente de uma viatura" }, { status: 403 });
   const antes = await prisma.efetivoVeiculo.findUnique({ where: { id: params.id } });
   if (!antes) return NextResponse.json({ error: "Veículo não encontrado" }, { status: 404 });
-  const { placa, modelo, observacao, ...resto } = parsed.data;
+  const { placa, modelo, observacao, substituidoPorId, trocaEm, ...resto } = parsed.data;
+  if (substituidoPorId) {
+    if (substituidoPorId === params.id) return NextResponse.json({ error: "A viatura não pode substituir a si mesma" }, { status: 422 });
+    const fora = await foraDoEscopo(a, { veiculoId: substituidoPorId });
+    if (fora) return fora;
+    if (!(await prisma.efetivoVeiculo.findUnique({ where: { id: substituidoPorId } }))) return NextResponse.json({ error: "Viatura substituta não encontrada" }, { status: 404 });
+  }
   const placaNorm = placa === undefined ? undefined : placa ? placa.toUpperCase().replace(/\s+/g, "") : null;
   if (placaNorm && placaNorm !== antes.placa && (await prisma.efetivoVeiculo.findFirst({ where: { placa: placaNorm, id: { not: antes.id } } }))) {
     return NextResponse.json({ error: `Já existe um veículo com a placa ${placaNorm}` }, { status: 409 });
@@ -41,6 +51,8 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       ...(placaNorm !== undefined ? { placa: placaNorm } : {}),
       ...(modelo !== undefined ? { modelo: modelo || null } : {}),
       ...(observacao !== undefined ? { observacao: observacao || null } : {}),
+      ...(substituidoPorId !== undefined ? { substituidoPorId: substituidoPorId || null } : {}),
+      ...(trocaEm !== undefined ? { trocaEm: trocaEm ? dataDe(trocaEm) : null } : {}),
     },
   });
   const partes: string[] = [];
@@ -48,6 +60,8 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
   if (placaNorm !== undefined && (antes.placa ?? "") !== (veiculo.placa ?? "")) partes.push(`placa "${antes.placa ?? ""}" → "${veiculo.placa ?? ""}"`);
   if (parsed.data.identificacao && antes.identificacao !== veiculo.identificacao) partes.push(`identificação "${antes.identificacao}" → "${veiculo.identificacao}"`);
   if (modelo !== undefined && (antes.modelo ?? "") !== (veiculo.modelo ?? "")) partes.push("modelo alterado");
+  if (substituidoPorId !== undefined && (antes.substituidoPorId ?? "") !== (veiculo.substituidoPorId ?? "")) partes.push(veiculo.substituidoPorId ? "troca planejada definida" : "troca planejada desfeita");
+  if (trocaEm !== undefined && diaDe(antes.trocaEm) !== diaDe(veiculo.trocaEm)) partes.push(`troca em ${diaDe(veiculo.trocaEm) ?? "—"}`);
   if (partes.length) await registrar(a.userId, "VEICULO_ALTERADO", "VEICULO", veiculo.id, `Veículo ${veiculo.codigo} (${veiculo.identificacao}): ${partes.join("; ")} (por ${a.nome})`);
   return NextResponse.json({ veiculo });
 }

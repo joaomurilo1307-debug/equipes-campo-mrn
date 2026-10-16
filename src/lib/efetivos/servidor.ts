@@ -156,7 +156,7 @@ async function aplicarMovimentosDeEquipe() {
 
 async function carregarDadosReal(editor: boolean, cliente: string | null) {
   await aplicarMovimentosDeEquipe();
-  const [equipes, vagas, ausencias, campanhas, alocacoes, veiculos, movimentos, contratos, movimentosEquipe] = await Promise.all([
+  const [equipes, vagas, ausencias, campanhas, alocacoes, veiculos, movimentos, contratos, movimentosEquipe, usos] = await Promise.all([
     prisma.efetivoEquipe.findMany({ orderBy: [{ ordem: "asc" }, { codigo: "asc" }] }),
     prisma.efetivoVaga.findMany({ orderBy: [{ numero: "asc" }, { criadoEm: "asc" }] }),
     prisma.efetivoAusencia.findMany({ orderBy: { inicio: "asc" } }),
@@ -166,6 +166,7 @@ async function carregarDadosReal(editor: boolean, cliente: string | null) {
     prisma.efetivoVeiculoMovimento.findMany({ orderBy: { inicio: "asc" } }),
     prisma.efetivoContrato.findMany({ orderBy: { codigo: "asc" } }),
     prisma.efetivoEquipeMovimento.findMany({ orderBy: { inicio: "asc" } }),
+    prisma.efetivoVeiculoUso.findMany({ orderBy: [{ inicio: "asc" }, { criadoEm: "asc" }] }),
   ]);
   const bruto = {
     equipes: equipes.map((e) => ({
@@ -245,7 +246,10 @@ async function carregarDadosReal(editor: boolean, cliente: string | null) {
       status: v.status,
       observacao: v.observacao,
       cliente: v.cliente,
+      substituidoPorId: v.substituidoPorId,
+      trocaEm: diaDe(v.trocaEm),
     })),
+    usosVeiculo: usos.map((u) => ({ id: u.id, veiculoId: u.veiculoId, equipeId: u.equipeId, inicio: diaDe(u.inicio), fim: diaDe(u.fim), observacao: u.observacao })),
     movimentos: movimentos.map((m) => ({
       id: m.id,
       veiculoId: m.veiculoId,
@@ -292,6 +296,12 @@ export async function obterReserva(tx: Prisma.TransactionClient, cliente: string
   if (existente) return existente;
   const total = await tx.efetivoEquipe.count();
   return tx.efetivoEquipe.create({ data: { codigo, nome: "FORA DAS EQUIPES DE CAMPO", projeto: "A definir", grupo: "Apoio", cliente, status: "Ativa", ordem: total + 1 } });
+}
+
+/** A viatura passa a servir à equipe (sem datas, que o gestor preenche depois). Já existindo, não mexe. */
+export async function garantirUso(tx: Prisma.TransactionClient | typeof prisma, veiculoId: string | null | undefined, equipeId: string | null | undefined) {
+  if (!veiculoId || !equipeId) return;
+  await tx.efetivoVeiculoUso.upsert({ where: { veiculoId_equipeId: { veiculoId, equipeId } }, create: { veiculoId, equipeId }, update: {} });
 }
 
 export async function proximoNumeroDeVaga(tx: Prisma.TransactionClient): Promise<number> {

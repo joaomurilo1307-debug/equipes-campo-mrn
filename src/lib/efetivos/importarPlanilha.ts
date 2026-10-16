@@ -9,6 +9,7 @@ import * as XLSX from "xlsx";
 import { dataValida, somarDias, type Dia } from "./disponibilidade";
 import { cruzarCadastroComDivisao, type PessoaCadastro, type PosicaoCadastro } from "./cruzarAbas";
 import type { ConferenciaDaImportacao } from "./base";
+import { lerNotaDeTroca } from "./usosVeiculo";
 
 export type EquipeImportada = {
   codigo: string;
@@ -62,7 +63,11 @@ export type VagaImportada = {
 };
 export type ContratoImportado = { codigo: string; gestor: string | null; cliente: string | null; nome?: string | null; local?: string | null; observacao?: string | null };
 // Viatura que a planilha cita para a equipe ("VL 01"); placa e contrato nao vem na planilha.
-export type VeiculoImportado = { ref: string; identificacao: string; equipeCodigo: string; ocupantes: number; placa?: string | null; modelo?: string | null; tracao4x4?: boolean | null; status?: string | null; observacao?: string | null; cliente?: string | null };
+export type VeiculoImportado = { ref: string; identificacao: string; equipeCodigo: string; ocupantes: number; placa?: string | null; modelo?: string | null; tracao4x4?: boolean | null; status?: string | null; observacao?: string | null; cliente?: string | null;
+  /** período da viatura nesta equipe (só na base preenchida) */
+  usoInicio?: Dia | null; usoFim?: Dia | null;
+  /** identificação da viatura que vai substituir esta, e quando */
+  substituidaPor?: string | null; trocaEm?: Dia | null };
 /**
  * A mesma viatura aparece em várias equipes ("VL 01" em cada equipe): é UMA caminhonete só. Junta os usos pela identificação
  * (sem diferenciar maiúsculas, espaços ou acentos); cada uso guarda a equipe e as pessoas que vão nela.
@@ -76,8 +81,12 @@ export type VeiculoUnico = {
   status: string | null;
   observacao: string | null;
   cliente: string | null;
+  substituidaPor: string | null;
+  trocaEm: Dia | null;
   /** códigos das equipes que usam a viatura, na ordem da planilha */
   equipes: string[];
+  /** o período dela em cada equipe (vazio = não informado) */
+  usos: { equipe: string; inicio: Dia | null; fim: Dia | null }[];
   /** os `ref` dos usos (um por equipe) */
   refs: string[];
   ocupantes: number;
@@ -88,7 +97,7 @@ export function veiculosUnicos(usos: VeiculoImportado[]): VeiculoUnico[] {
     const chave = normalizar(u.identificacao);
     let v = porChave.get(chave);
     if (!v) {
-      v = { chave, identificacao: u.identificacao, placa: null, modelo: null, tracao4x4: null, status: null, observacao: null, cliente: null, equipes: [], refs: [], ocupantes: 0 };
+      v = { chave, identificacao: u.identificacao, placa: null, modelo: null, tracao4x4: null, status: null, observacao: null, cliente: null, substituidaPor: null, trocaEm: null, equipes: [], usos: [], refs: [], ocupantes: 0 };
       porChave.set(chave, v);
     }
     v.placa ??= u.placa ?? null;
@@ -96,8 +105,17 @@ export function veiculosUnicos(usos: VeiculoImportado[]): VeiculoUnico[] {
     v.tracao4x4 ??= u.tracao4x4 ?? null;
     v.status ??= u.status ?? null;
     v.cliente ??= u.cliente ?? null;
+    v.substituidaPor ??= u.substituidaPor ?? null;
+    v.trocaEm ??= u.trocaEm ?? null;
     if (u.observacao && !(v.observacao ?? "").split(" | ").includes(u.observacao)) v.observacao = v.observacao ? `${v.observacao} | ${u.observacao}` : u.observacao;
-    if (!v.equipes.includes(u.equipeCodigo)) v.equipes.push(u.equipeCodigo);
+    if (u.equipeCodigo && !v.equipes.includes(u.equipeCodigo)) {
+      v.equipes.push(u.equipeCodigo);
+      v.usos.push({ equipe: u.equipeCodigo, inicio: u.usoInicio ?? null, fim: u.usoFim ?? null });
+    } else if (u.equipeCodigo) {
+      const uso = v.usos.find((x) => x.equipe === u.equipeCodigo)!;
+      uso.inicio ??= u.usoInicio ?? null;
+      uso.fim ??= u.usoFim ?? null;
+    }
     v.refs.push(u.ref);
     v.ocupantes += u.ocupantes;
   }
@@ -840,17 +858,20 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
     }
     // a viatura (coluna CARROS) tambem vem mesclada: vale ate a proxima viatura citada; "IDEM" = a mesma viatura de cima
     const placa = texto(r[iCarro]);
-    const notaViatura = iNotaViatura >= 0 ? textoOuNulo(r[iNotaViatura]) : null;
+    const notaBruta = iNotaViatura >= 0 ? textoOuNulo(r[iNotaViatura]) : null;
+    const troca = lerNotaDeTroca(notaBruta);
+    const notaViatura = troca.comentario;
     const r0 = numero[li] - 1;
     if (placa !== "" && normalizar(placa) === "idem") {
       if (!carroAtual) conferir.push("A planilha diz «IDEM» na viatura, mas não há viatura citada acima nesta equipe");
       else carroAteLinha = Math.max(carroAteLinha, fimDaMescla(r0));
     } else if (placa !== "") {
-      carroAtual = { ref: `${atual.codigo}#${veiculos.length + 1}`, identificacao: placa, equipeCodigo: atual.codigo, ocupantes: 0, observacao: notaViatura, cliente: porContrato ? opcoes.cliente ?? null : null };
+      carroAtual = { ref: `${atual.codigo}#${veiculos.length + 1}`, identificacao: placa, equipeCodigo: atual.codigo, ocupantes: 0, observacao: notaViatura, cliente: porContrato ? opcoes.cliente ?? null : null, substituidaPor: troca.substituta };
       veiculos.push(carroAtual);
       carroAteLinha = fimDaMescla(r0);
-    } else if (notaViatura && carroAtual && !carroAtual.observacao) {
+    } else if (notaBruta && carroAtual && !carroAtual.observacao && !carroAtual.substituidaPor) {
       carroAtual.observacao = notaViatura;
+      carroAtual.substituidaPor = troca.substituta;
     }
     // nas planilhas antigas a viatura vale até a próxima citada; nas por contrato, só até onde a célula mesclada vai
     const carroDaLinha = porContrato ? (carroAtual && r0 <= carroAteLinha ? carroAtual : null) : carroAtual;
@@ -905,6 +926,14 @@ function lerDivisaoDeEquipes(wb: XLSX.WorkBook, aba: string, opcoes: OpcoesLeitu
     });
   }
   if (vagas.length === 0) throw new Error(`A aba "${aba}" não tem nenhuma vaga.`);
+
+  // a viatura que vai substituir outra (citada na planilha) entra como "Prevista", sem equipe, para poder ser movimentada depois
+  for (const v of [...veiculos]) {
+    const sub = v.substituidaPor;
+    if (sub && !veiculos.some((x) => normalizar(x.identificacao) === normalizar(sub))) {
+      veiculos.push({ ref: `#${sub}`, identificacao: sub, equipeCodigo: "", ocupantes: 0, status: "Prevista", cliente: v.cliente ?? null });
+    }
+  }
 
   // grupo. Planilha antiga: Flora so quando algum cargo da equipe for de flora; senao Fauna.
   // Planilha por contrato: a planilha NAO traz grupo, entao a equipe fica sem grupo (nada de deduzir Fauna/Flora pelo cargo).
@@ -1130,19 +1159,24 @@ function lerBaseV3(wb: XLSX.WorkBook, nomeAba: string): ResultadoImportacao {
   }
   if (vagas.length === 0) throw new Error(`A aba "${nomeAba}" não tem nenhuma posição.`);
 
-  // viaturas: a aba VIATURAS é a lista única (placa, modelo, 4x4, status, cliente); cada equipe que a usa vem das linhas de PESSOAS
-  const dadosDaViatura = new Map<string, { identificacao: string; placa: string | null; modelo: string | null; tracao4x4: boolean | null; status: string | null; observacao: string | null; cliente: string | null }>();
+  // viaturas: o cadastro (placa, modelo, 4x4, status, troca) vem da PRIMEIRA linha preenchida de cada viatura; o uso (equipe e período)
+  // vem de cada linha. Na versão antiga (uma linha por viatura), a equipe que a usa vem das linhas de PESSOAS.
+  type CadastroViatura = { identificacao: string; placa: string | null; modelo: string | null; tracao4x4: boolean | null; status: string | null; observacao: string | null; cliente: string | null; substituidaPor: string | null; trocaEm: Dia | null };
+  const dadosDaViatura = new Map<string, CadastroViatura>();
+  const usosDaAba: { ident: string; equipe: EquipeImportada; inicio: Dia | null; fim: Dia | null }[] = [];
   const abaVt = wb.SheetNames.find((n) => normalizar(n) === "viaturas");
   if (abaVt) {
     const lv = lerLinhas(wb.Sheets[abaVt]);
     const cv = acharCabecalho(lv, ["viatura"]);
     if (cv) {
       const k = cv.cab;
+      const iEqUso = col(k, "equipe que usa");
+      const equipesCampo = [...equipes.values()].filter((e) => e.grupo !== "Apoio");
       for (const r of lv.slice(cv.indice + 1)) {
         const ident = texto(r[col(k, "viatura")]);
         if (!ident) continue;
         const d4 = normalizar(r[col(k, "4x4")]);
-        dadosDaViatura.set(normalizar(ident), {
+        const novo: CadastroViatura = {
           identificacao: ident,
           placa: textoOuNulo(r[col(k, "placa")]),
           modelo: textoOuNulo(r[col(k, "modelo")]),
@@ -1150,24 +1184,65 @@ function lerBaseV3(wb: XLSX.WorkBook, nomeAba: string): ResultadoImportacao {
           status: textoOuNulo(r[col(k, "status")]),
           observacao: textoOuNulo(r[col(k, "observacao")]),
           cliente: textoOuNulo(r[col(k, "cliente")]),
-        });
+          substituidaPor: textoOuNulo(r[col(k, "sera substituida por")]),
+          trocaEm: paraDia(r[col(k, "troca em")]),
+        };
+        const ja = dadosDaViatura.get(normalizar(ident));
+        // vale o primeiro valor preenchido de cada coluna; se a mesma viatura vier com outro valor, avisa
+        if (!ja) dadosDaViatura.set(normalizar(ident), novo);
+        else {
+          for (const campo of ["placa", "modelo", "tracao4x4", "status", "cliente", "substituidaPor", "trocaEm"] as const) {
+            const antes = ja[campo];
+            const agora = novo[campo];
+            if (agora === null || agora === undefined) continue;
+            if (antes === null || antes === undefined) (ja as Record<string, unknown>)[campo] = agora;
+            else if (antes !== agora) avisos.push(`Viatura ${ident}: ${campo} aparece com valores diferentes (${String(antes)} e ${String(agora)}); vale o da primeira linha.`);
+          }
+          ja.observacao ??= novo.observacao;
+        }
+        if (iEqUso >= 0) {
+          const nomeEq = texto(r[iEqUso]);
+          if (!nomeEq) continue;
+          const cliLinha = texto(r[col(k, "cliente")]);
+          const ctLinha = texto(r[col(k, "contrato")]);
+          let eq = equipes.get(chaveEq(cliLinha, ctLinha, nomeEq));
+          if (!eq) {
+            const porNome = equipesCampo.filter((e) => normalizar(e.nome) === normalizar(nomeEq));
+            if (porNome.length === 1) eq = porNome[0];
+          }
+          if (!eq) {
+            avisos.push(`Viaturas: a equipe «${nomeEq}» da viatura ${ident} não existe na aba EQUIPES; a linha foi ignorada.`);
+            continue;
+          }
+          usosDaAba.push({ ident, equipe: eq, inicio: paraDia(r[col(k, "inicio na equipe")]), fim: paraDia(r[col(k, "fim na equipe")]) });
+        }
       }
     }
   }
   const clientePorCodigo = new Map([...equipes.values()].map((e) => [e.codigo, e.cliente ?? null]));
   const veiculos = new Map<string, VeiculoImportado>();
+  const montar = (ref: string, cod: string, ident: string): VeiculoImportado => {
+    const d = dadosDaViatura.get(normalizar(ident));
+    return { ref, identificacao: ident, equipeCodigo: cod, ocupantes: ocupantes.get(ref) ?? 0, placa: d?.placa ?? null, modelo: d?.modelo ?? null, tracao4x4: d?.tracao4x4 ?? null, status: d?.status ?? null, observacao: d?.observacao ?? null, cliente: d?.cliente ?? clientePorCodigo.get(cod) ?? null, substituidaPor: d?.substituidaPor ?? null, trocaEm: d?.trocaEm ?? null };
+  };
   for (const v of vagas) {
     if (!v.carroRef || veiculos.has(v.carroRef)) continue;
     const [cod, ...resto] = v.carroRef.split("#");
-    const ident = resto.join("#");
-    const d = dadosDaViatura.get(normalizar(ident));
-    veiculos.set(v.carroRef, { ref: v.carroRef, identificacao: ident, equipeCodigo: cod, ocupantes: ocupantes.get(v.carroRef) ?? 0, placa: d?.placa ?? null, modelo: d?.modelo ?? null, tracao4x4: d?.tracao4x4 ?? null, status: d?.status ?? null, observacao: d?.observacao ?? null, cliente: d?.cliente ?? clientePorCodigo.get(cod) ?? null });
+    veiculos.set(v.carroRef, montar(v.carroRef, cod, resto.join("#")));
+  }
+  // o período de cada viatura em cada equipe; viatura numa equipe só na aba VIATURAS (sem ninguém marcado nela) também vale
+  for (const u of usosDaAba) {
+    const ref = `${u.equipe.codigo}#${u.ident}`;
+    const v = veiculos.get(ref) ?? montar(ref, u.equipe.codigo, u.ident);
+    v.usoInicio = u.inicio;
+    v.usoFim = u.fim;
+    veiculos.set(ref, v);
   }
 
-  // viatura cadastrada que ninguém usa ainda: entra sem equipe (serve para atualizar placa e modelo)
+  // viatura cadastrada que ninguém usa ainda: entra sem equipe (serve para atualizar placa e modelo, e para as previstas)
   for (const [chave, dv] of dadosDaViatura) {
     if ([...veiculos.values()].some((u) => normalizar(u.identificacao) === chave)) continue;
-    veiculos.set(`#${chave}`, { ref: `#${chave}`, identificacao: dv.identificacao, equipeCodigo: "", ocupantes: 0, placa: dv.placa, modelo: dv.modelo, tracao4x4: dv.tracao4x4, status: dv.status, observacao: dv.observacao, cliente: dv.cliente });
+    veiculos.set(`#${chave}`, montar(`#${chave}`, "", dv.identificacao));
   }
 
   // contratos: um por (cliente, contrato) das equipes

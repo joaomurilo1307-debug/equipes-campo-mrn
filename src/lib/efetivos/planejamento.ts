@@ -7,11 +7,12 @@ import type { Dia } from "./disponibilidade";
 
 export type AtuaisEquipe = { id: string; codigo: string; nome: string; projeto: string; inicio: Dia | null; fim: Dia | null; local: string | null; gestor: string | null; observacao: string | null };
 export type AtuaisVaga = { id: string; equipeId: string; numero: number | null; origem: string | null; nome: string | null; cargo: string; status: string; previsaoInicio: Dia | null; contratoAtual: string | null; disponivelAPartir: Dia | null; destino: string | null; observacao: string | null };
-export type AtuaisVeiculo = { id: string; identificacao: string; placa: string | null; modelo: string | null; tracao4x4: boolean | null; status: string; observacao: string | null };
+export type AtuaisVeiculo = { id: string; identificacao: string; placa: string | null; modelo: string | null; tracao4x4: boolean | null; status: string; observacao: string | null; substituidoPorId?: string | null; trocaEm?: Dia | null };
+export type AtuaisUso = { veiculoId: string; equipeId: string; inicio: Dia | null; fim: Dia | null };
 export type AtuaisContrato = { codigo: string; nome: string | null; cliente: string | null; gestor: string | null; local: string | null; observacao: string | null };
 export type AtuaisAusencia = { vagaId: string; tipo: string; inicio: Dia; fim: Dia };
 
-export type Atuais = { equipes: AtuaisEquipe[]; vagas: AtuaisVaga[]; veiculos: AtuaisVeiculo[]; contratos: AtuaisContrato[]; ausencias: AtuaisAusencia[] };
+export type Atuais = { equipes: AtuaisEquipe[]; vagas: AtuaisVaga[]; veiculos: AtuaisVeiculo[]; contratos: AtuaisContrato[]; ausencias: AtuaisAusencia[]; usos?: AtuaisUso[] };
 
 export type PlanoAtualizacao = {
   equipes: { id: string; rotulo: string; mudancas: Partial<Pick<AtuaisEquipe, "inicio" | "fim" | "local" | "gestor" | "observacao">> }[];
@@ -19,13 +20,19 @@ export type PlanoAtualizacao = {
   veiculos: { id: string; rotulo: string; mudancas: Partial<Pick<AtuaisVeiculo, "placa" | "modelo" | "tracao4x4" | "status" | "observacao">> }[];
   contratos: { codigo: string; mudancas: Partial<Pick<AtuaisContrato, "nome" | "cliente" | "gestor" | "local" | "observacao">> }[];
   ausencias: { vagaId: string; rotulo: string; tipo: string; inicio: Dia; fim: Dia }[];
+  /** viaturas do Excel que o sistema ainda não tem (a prevista que vai substituir outra, por exemplo) */
+  veiculosNovos: { chave: string; identificacao: string; placa: string | null; modelo: string | null; tracao4x4: boolean | null; status: string | null; observacao: string | null; cliente: string | null }[];
+  /** a viatura em uma equipe e o período: existente (criar = false) ou nova */
+  usos: { veiculoId: string | null; veiculoNovo: string | null; equipeId: string; rotulo: string; inicio: Dia | null; fim: Dia | null; criar: boolean }[];
+  /** troca planejada: a viatura (ou a nova) será substituída pela outra */
+  trocas: { veiculoId: string | null; veiculoNovo: string | null; alvoId: string | null; alvoNovo: string | null; rotulo: string; trocaEm: Dia | null }[];
   /** linhas do Excel que não acharam par no sistema, e datas recusadas */
   avisos: string[];
 };
 
-export const totalDeMudancas = (p: PlanoAtualizacao) => p.equipes.length + p.vagas.length + p.veiculos.length + p.contratos.length + p.ausencias.length;
+export const totalDeMudancas = (p: PlanoAtualizacao) => p.equipes.length + p.vagas.length + p.veiculos.length + p.contratos.length + p.ausencias.length + p.veiculosNovos.length + p.usos.length + p.trocas.length;
 
-const STATUS_VEICULO_OK = ["Em operação", "Disponível", "Em manutenção", "Parado", "Devolvido"];
+const STATUS_VEICULO_OK = ["Em operação", "Disponível", "Em manutenção", "Parado", "Devolvido", "Prevista"];
 
 /** Só entra o que a célula traz e que difere do que já está. */
 function diferencas<T extends Record<string, unknown>>(novo: Partial<T>, atual: T): Partial<T> {
@@ -39,7 +46,7 @@ function diferencas<T extends Record<string, unknown>>(novo: Partial<T>, atual: 
 }
 
 export function planejarAtualizacao(lido: ResultadoImportacao, atual: Atuais): PlanoAtualizacao {
-  const plano: PlanoAtualizacao = { equipes: [], vagas: [], veiculos: [], contratos: [], ausencias: [], avisos: [] };
+  const plano: PlanoAtualizacao = { equipes: [], vagas: [], veiculos: [], contratos: [], ausencias: [], veiculosNovos: [], usos: [], trocas: [], avisos: [] };
 
   // ---- equipes: pelo nome (o código do Excel pode não ser o do sistema)
   const equipePorNome = new Map<string, AtuaisEquipe[]>();
@@ -94,23 +101,54 @@ export function planejarAtualizacao(lido: ResultadoImportacao, atual: Atuais): P
     }
   }
 
-  // ---- viaturas: pela identificação
+  // ---- viaturas: pela identificação (cadastro, o período em cada equipe e a troca planejada)
   const veiculoPorId = new Map(atual.veiculos.map((x) => [normalizar(x.identificacao), x]));
+  const usosAtuais = new Map((atual.usos ?? []).map((u) => [`${u.veiculoId}|${u.equipeId}`, u]));
   const vistos = new Set<string>();
+  const usosVistos = new Set<string>();
+  const novos = new Map<string, PlanoAtualizacao["veiculosNovos"][number]>();
   for (const u of lido.veiculos) {
     const chave = normalizar(u.identificacao);
-    if (vistos.has(chave)) continue;
-    vistos.add(chave);
     const s = veiculoPorId.get(chave);
-    if (!s) {
-      if (u.placa || u.modelo) plano.avisos.push(`Viatura «${u.identificacao}» do Excel não existe no sistema: ignorada.`);
-      continue;
+    if (!vistos.has(chave)) {
+      vistos.add(chave);
+      if (!s) {
+        novos.set(chave, { chave, identificacao: u.identificacao, placa: u.placa ?? null, modelo: u.modelo ?? null, tracao4x4: u.tracao4x4 ?? null, status: u.status ?? null, observacao: u.observacao ?? null, cliente: u.cliente ?? null });
+      } else {
+        const status = u.status && STATUS_VEICULO_OK.includes(u.status) ? u.status : null;
+        if (u.status && !status) plano.avisos.push(`Viatura «${u.identificacao}»: status «${u.status}» não é um dos status do sistema (${STATUS_VEICULO_OK.join(", ")}); ignorado.`);
+        const m = diferencas({ placa: u.placa ?? null, modelo: u.modelo ?? null, tracao4x4: u.tracao4x4 ?? null, status, observacao: u.observacao ?? null }, { placa: s.placa, modelo: s.modelo, tracao4x4: s.tracao4x4, status: s.status, observacao: s.observacao } as Record<string, unknown>) as PlanoAtualizacao["veiculos"][number]["mudancas"];
+        if (Object.keys(m).length) plano.veiculos.push({ id: s.id, rotulo: u.identificacao, mudancas: m });
+      }
+      // a troca planejada (a substituta que não existe vira viatura prevista)
+      if (u.substituidaPor) {
+        const alvoChave = normalizar(u.substituidaPor);
+        const alvo = veiculoPorId.get(alvoChave);
+        if (!alvo && !novos.has(alvoChave)) novos.set(alvoChave, { chave: alvoChave, identificacao: u.substituidaPor, placa: null, modelo: null, tracao4x4: null, status: "Prevista", observacao: null, cliente: u.cliente ?? null });
+        const jaIgual = !!s && !!alvo && s.substituidoPorId === alvo.id && (!u.trocaEm || s.trocaEm === u.trocaEm);
+        if (!jaIgual) plano.trocas.push({ veiculoId: s?.id ?? null, veiculoNovo: s ? null : chave, alvoId: alvo?.id ?? null, alvoNovo: alvo ? null : alvoChave, rotulo: `${u.identificacao} → ${u.substituidaPor}`, trocaEm: u.trocaEm ?? null });
+      }
     }
-    const status = u.status && STATUS_VEICULO_OK.includes(u.status) ? u.status : null;
-    if (u.status && !status) plano.avisos.push(`Viatura «${u.identificacao}»: status «${u.status}» não é um dos status do sistema (${STATUS_VEICULO_OK.join(", ")}); ignorado.`);
-    const m = diferencas({ placa: u.placa ?? null, modelo: u.modelo ?? null, tracao4x4: u.tracao4x4 ?? null, status, observacao: u.observacao ?? null }, { placa: s.placa, modelo: s.modelo, tracao4x4: s.tracao4x4, status: s.status, observacao: s.observacao } as Record<string, unknown>) as PlanoAtualizacao["veiculos"][number]["mudancas"];
-    if (Object.keys(m).length) plano.veiculos.push({ id: s.id, rotulo: u.identificacao, mudancas: m });
+    // o período da viatura na equipe
+    if (u.equipeCodigo) {
+      const eq = equipeDoArquivo.get(u.equipeCodigo);
+      if (eq) {
+        const par = `${chave}|${eq.id}`;
+        if (!usosVistos.has(par)) {
+          usosVistos.add(par);
+          const ini = u.usoInicio ?? null;
+          const fim = u.usoFim ?? null;
+          if (ini && fim && fim < ini) plano.avisos.push(`Viatura ${u.identificacao} na equipe «${eq.nome}»: o fim (${fim}) é antes do início (${ini}); as datas não foram aplicadas.`);
+          else {
+            const existente = s ? usosAtuais.get(`${s.id}|${eq.id}`) : undefined;
+            if (!existente) plano.usos.push({ veiculoId: s?.id ?? null, veiculoNovo: s ? null : chave, equipeId: eq.id, rotulo: `${u.identificacao} · ${eq.nome}`, inicio: ini, fim, criar: true });
+            else if ((ini && ini !== existente.inicio) || (fim && fim !== existente.fim)) plano.usos.push({ veiculoId: s!.id, veiculoNovo: null, equipeId: eq.id, rotulo: `${u.identificacao} · ${eq.nome}`, inicio: ini ?? existente.inicio, fim: fim ?? existente.fim, criar: false });
+          }
+        }
+      }
+    }
   }
+  plano.veiculosNovos.push(...novos.values());
 
   // ---- contratos: pelo código
   const contratoPorCodigo = new Map(atual.contratos.map((c) => [c.codigo, c]));

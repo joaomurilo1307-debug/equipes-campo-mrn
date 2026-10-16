@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { dataDe, exigir, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
+import { dataDe, exigir, registrar, foraDoEscopo, garantirUso } from "@/lib/efetivos/servidor";
 import { dataValida } from "@/lib/efetivos/disponibilidade";
 
 const dia = z.string().refine(dataValida, "Data inválida (AAAA-MM-DD)");
@@ -69,6 +69,7 @@ export async function POST(req: Request) {
     },
     });
     if (!vaga) vaga = criada;
+    await garantirUso(prisma, criada.veiculoId, criada.equipeId);
   }
   await registrar(a.userId, "VAGA_CRIADA", "VAGA", vaga!.id, d.nome ? `${d.nome} (${d.cargo}) cadastrado(a) na equipe ${equipe.codigo} por ${a.nome}` : `${copias} vaga(s) de ${d.cargo} aberta(s) na equipe ${equipe.codigo} por ${a.nome}`);
   return NextResponse.json({ vaga, criadas: copias }, { status: 201 });

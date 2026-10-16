@@ -3,7 +3,7 @@
 
 import { diferencaDias, somarDias, type Dia } from "./disponibilidade";
 
-export const STATUS_VEICULO = ["Em operação", "Disponível", "Em manutenção", "Parado", "Devolvido"] as const;
+export const STATUS_VEICULO = ["Em operação", "Disponível", "Em manutenção", "Parado", "Devolvido", "Prevista"] as const;
 
 export type MovimentoBase = {
   id: string;

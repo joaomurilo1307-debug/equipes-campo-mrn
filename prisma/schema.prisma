@@ -45,26 +45,27 @@ model AuditLog {
 
 // Equipe-base cadastrada (EQ-01...): agrupa as vagas de um contrato/projeto.
 model EfetivoEquipe {
-  id                String   @id @default(cuid())
-  codigo            String   @unique // EQ-01
-  projeto           String // contrato / projeto base, ex: "3636 PNM"
-  contratoConfirmado Boolean @default(true) // false = contrato deduzido pelo nome, a confirmar
-  gestor            String? // gestor MRN responsavel
-  grupo             String // Fauna | Flora | Apoio
-  nome              String // ex: FLANCO NORTE - EQUIPE 01
-  local             String? // local / frente de trabalho
-  observacao        String?
-  status            String   @default("Ativa") // Ativa | Em formação | Inativa
-  ordem             Int      @default(0)
-  inicio            DateTime? // periodo da equipe (opcional)
-  fim               DateTime?
-  campanhaId        String? // campanha a que a equipe esta associada (opcional)
-  cliente           String? // cliente da equipe quando nao ha contrato cadastrado (reserva de cada cliente, equipe sem contrato)
-  criadoEm          DateTime @default(now())
+  id                 String    @id @default(cuid())
+  codigo             String    @unique // EQ-01
+  projeto            String // contrato / projeto base, ex: "3636 PNM"
+  contratoConfirmado Boolean   @default(true) // false = contrato deduzido pelo nome, a confirmar
+  gestor             String? // gestor MRN responsavel
+  grupo              String // Fauna | Flora | Apoio
+  nome               String // ex: FLANCO NORTE - EQUIPE 01
+  local              String? // local / frente de trabalho
+  observacao         String?
+  status             String    @default("Ativa") // Ativa | Em formação | Inativa
+  ordem              Int       @default(0)
+  inicio             DateTime? // periodo da equipe (opcional)
+  fim                DateTime?
+  campanhaId         String? // campanha a que a equipe esta associada (opcional)
+  cliente            String? // cliente da equipe quando nao ha contrato cadastrado (reserva de cada cliente, equipe sem contrato)
+  criadoEm           DateTime  @default(now())
 
-  vagas      EfetivoVaga[]
-  campanha   EfetivoCampanha? @relation(fields: [campanhaId], references: [id], onDelete: SetNull)
-  movimentos EfetivoEquipeMovimento[]
+  vagas       EfetivoVaga[]
+  campanha    EfetivoCampanha?         @relation(fields: [campanhaId], references: [id], onDelete: SetNull)
+  movimentos  EfetivoEquipeMovimento[]
+  usosVeiculo EfetivoVeiculoUso[]
 
   @@index([grupo])
 }
@@ -166,19 +167,26 @@ model EfetivoAlocacao {
 // Veiculo (viatura). A planilha so traz "VL 01/02/03" por equipe, sem placa:
 // placa, modelo e contrato sao preenchidos no sistema.
 model EfetivoVeiculo {
-  id            String   @id @default(cuid())
-  codigo        String   @unique // VEI-001
+  id            String    @id @default(cuid())
+  codigo        String    @unique // VEI-001
   identificacao String // como a equipe chama: VL 01, placa, prefixo...
   placa         String?
   modelo        String?
   tracao4x4     Boolean?
-  status        String   @default("Em operação") // Em operação | Disponível | Em manutenção | Parado | Devolvido
+  status        String    @default("Em operação") // Em operação | Disponível | Em manutenção | Parado | Devolvido | Prevista
   observacao    String?
   cliente       String? // cliente a que a viatura pertence (MRN, AGA...)
-  criadoEm      DateTime @default(now())
+  trocaEm       DateTime? // quando esta viatura deve ser trocada pela substituta
+  criadoEm      DateTime  @default(now())
+
+  // troca planejada: esta viatura sera substituida por outra (a substituta e cadastrada como "Prevista" ate chegar)
+  substituidoPorId String?
+  substituidoPor   EfetivoVeiculo?  @relation("TrocaDeViatura", fields: [substituidoPorId], references: [id], onDelete: SetNull)
+  substitui        EfetivoVeiculo[] @relation("TrocaDeViatura")
 
   movimentos EfetivoVeiculoMovimento[]
   ocupantes  EfetivoVaga[]
+  usos       EfetivoVeiculoUso[]
 
   @@index([status])
 }
@@ -235,4 +243,22 @@ model EfetivoEquipeMovimento {
 
   @@index([equipeId, inicio])
   @@index([projeto])
+}
+
+// A viatura numa equipe, e por quanto tempo. A mesma viatura pode servir a varias equipes (em momentos diferentes);
+// sem datas, o uso vale sempre ate alguem informar o periodo. O sistema confere o periodo da viatura com o da equipe.
+model EfetivoVeiculoUso {
+  id         String    @id @default(cuid())
+  veiculoId  String
+  equipeId   String
+  inicio     DateTime? // desde quando a viatura fica na equipe (vazio = nao informado)
+  fim        DateTime? // ate quando (vazio = sem previsao)
+  observacao String?
+  criadoEm   DateTime  @default(now())
+
+  veiculo EfetivoVeiculo @relation(fields: [veiculoId], references: [id], onDelete: Cascade)
+  equipe  EfetivoEquipe  @relation(fields: [equipeId], references: [id], onDelete: Cascade)
+
+  @@unique([veiculoId, equipeId])
+  @@index([equipeId])
 }

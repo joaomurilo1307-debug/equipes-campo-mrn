@@ -1,9 +1,6 @@
 import { redirect } from "next/navigation";
 
-// A tela agora é uma aba de /equipes: o link antigo continua funcionando.
-export default function Pagina({ searchParams }: { searchParams: Record<string, string | string[] | undefined> }) {
-  const q = new URLSearchParams();
-  for (const [k, v] of Object.entries(searchParams)) if (typeof v === "string" && k !== "aba") q.set(k, v);
-  q.set("aba", "linha");
-  redirect(`/equipes?${q}`);
+// A tela virou a página "Linha do tempo": o link antigo continua funcionando.
+export default function Pagina() {
+  redirect("/linha-do-tempo");
 }

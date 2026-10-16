@@ -11,7 +11,7 @@ import { Secao } from "./ui";
 type Item = { chave: string; texto: string; n: number; href: string; onde: string };
 
 export default function Pendencias() {
-  const { dados, equipesCampo } = useDados();
+  const { dados, equipesCampo, conferenciaDoUso, conflitosDeViatura } = useDados();
 
   const itens: Item[] = useMemo(() => {
     const semFim = equipesCampo.filter((e) => !e.fim).length;
@@ -22,6 +22,10 @@ export default function Pendencias() {
     const semPlaca = dados.veiculos.filter((v) => !v.placa).length;
     const semModelo = dados.veiculos.filter((v) => !v.modelo).length;
     const semGestor = dados.contratos.filter((c) => c.ativo && !c.gestor).length;
+    const usos = dados.usosVeiculo ?? [];
+    const usoSemDatas = usos.filter((u) => !u.inicio && !u.fim).length;
+    const usoForaDaEquipe = usos.filter((u) => conferenciaDoUso(u).nivel === "atencao").length;
+    const prevista = dados.veiculos.filter((v) => v.status === "Prevista" && !dados.veiculos.some((x) => x.substituidoPorId === v.id)).length;
     return [
       { chave: "fim", texto: "equipes sem data de fim", n: semFim, href: "/equipes?aba=planejamento", onde: "Equipes > Planejamento · Excel: aba EQUIPES" },
       { chave: "inicio", texto: "equipes sem data de início", n: semInicio, href: "/equipes?aba=planejamento", onde: "Equipes > Planejamento · Excel: aba EQUIPES" },
@@ -29,9 +33,13 @@ export default function Pendencias() {
       { chave: "entrada", texto: "vagas em contratação ou mobilização sem previsão de entrada", n: semEntrada, href: "/pessoas?aba=vagas", onde: "Pessoas > Vagas · Excel: aba PESSOAS (Previsão de entrada)" },
       { chave: "placa", texto: "viaturas sem placa", n: semPlaca, href: "/frota", onde: "Viaturas · Excel: aba VIATURAS" },
       { chave: "modelo", texto: "viaturas sem modelo", n: semModelo, href: "/frota", onde: "Viaturas · Excel: aba VIATURAS" },
+      { chave: "usoSem", texto: "viaturas sem o tempo de uso em alguma equipe", n: usoSemDatas, href: "/frota", onde: "Viaturas > definir tempo · Excel: aba VIATURAS (Início e Fim na equipe)" },
+      { chave: "usoFora", texto: "viaturas com tempo que não bate com o da equipe", n: usoForaDaEquipe, href: "/frota", onde: "Viaturas · Excel: aba VIATURAS (coluna Confere com a equipe?)" },
+      { chave: "usoConf", texto: "viaturas em duas equipes ao mesmo tempo", n: conflitosDeViatura.length, href: "/frota", onde: "Viaturas · ajuste o início/fim ou use Trocar" },
+      { chave: "prevista", texto: "viaturas previstas que não substituem nenhuma", n: prevista, href: "/frota", onde: "Viaturas > Editar > Troca planejada" },
       { chave: "gestor", texto: "contratos sem gestor", n: semGestor, href: "/contratos", onde: "Contratos" },
     ].filter((i) => i.n > 0);
-  }, [dados, equipesCampo]);
+  }, [dados, equipesCampo, conferenciaDoUso, conflitosDeViatura]);
 
   return (
     <Secao

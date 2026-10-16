@@ -11,7 +11,7 @@ export async function GET() {
   if ("erro" in a) return a.erro;
   const d = await carregarDados(a.nivel !== "DASHBOARD", a.cliente);
   const hoje = instanteBrasilia().iso;
-  const buf = montarPlanilhaBase(d as any, indexar({ ausencias: d.ausencias, alocacoes: [] }), hoje);
+  const buf = montarPlanilhaBase({ ...d, usos: d.usosVeiculo } as any, indexar({ ausencias: d.ausencias, alocacoes: [] }), hoje);
   await registrar(a.userId, "BASE_BAIXADA", "BASE", undefined, `Base única baixada em Excel por ${a.nome} (${d.vagas.length} posições)`);
   return new NextResponse(new Uint8Array(buf), {
     headers: {

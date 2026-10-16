@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as XLSX from "xlsx";
-import { lerPlanilhaEfetivos, veiculosUnicos } from "../src/lib/efetivos/importarPlanilha";
+import { lerPlanilhaEfetivos, normalizar, veiculosUnicos } from "../src/lib/efetivos/importarPlanilha";
 import { combinarResultados, lerPlanilhasEfetivos } from "../src/lib/efetivos/combinarPlanilhas";
-import { montarPlanilhaBase, origensPorFonte, type DadosBase } from "../src/lib/efetivos/base";
+import { montarModeloEmBranco, montarPlanilhaBase, origensPorFonte, type DadosBase } from "../src/lib/efetivos/base";
 import { indexar } from "../src/lib/efetivos/disponibilidade";
 import { planejarAtualizacao, totalDeMudancas, type Atuais } from "../src/lib/efetivos/planejamento";
 
@@ -109,7 +109,12 @@ test("Planilha por contrato (3687 LT): STATUS DE ATIVIDADE é a pessoa, STATUS A
   const porNome = new Map(r.equipes.map((e) => [e.nome, e]));
   assert.ok([...porNome.values()].filter((e) => e.codigo !== "APOIO").every((e) => e.grupo === ""), "a planilha não traz grupo");
   const cns52 = r.veiculos.find((v) => v.identificacao === "CNS-52")!;
-  assert.equal(cns52.observacao, "Será substituida pela CNS-102");
+  // a nota de troca deixa de ser observação: vira o vínculo "será substituída por" e a substituta entra como viatura Prevista
+  assert.equal(cns52.observacao, null);
+  assert.equal(cns52.substituidaPor, "CNS-102");
+  const cns102 = r.veiculos.find((v) => v.identificacao === "CNS-102")!;
+  assert.equal(cns102.status, "Prevista");
+  assert.equal(cns102.equipeCodigo, "", "a prevista ainda não está em nenhuma equipe");
   assert.equal(r.veiculos.find((v) => v.identificacao === "CNS-83")?.observacao, "Camionete Backup");
   // status "Delisgar" não é reconhecido: guardado como está escrito (conta como ausente) e marcado
   const magson = r.vagas.find((v) => v.nome === "Magson Lopes")!;
@@ -349,7 +354,8 @@ function baseDe(r: ReturnType<typeof lerPlanilhasEfetivos>): Buffer {
       origem: v.origem ?? null,
       conferir: v.conferir ?? null,
     })),
-    veiculos: unicos.map((u, i) => ({ id: `${i}`, codigo: `VEI-${i + 1}`, identificacao: u.identificacao, placa: u.placa, modelo: u.modelo, tracao4x4: u.tracao4x4, status: u.status || "Em operação", observacao: u.observacao, cliente: u.cliente })),
+    veiculos: unicos.map((u, i) => ({ id: `${i}`, codigo: `VEI-${i + 1}`, identificacao: u.identificacao, placa: u.placa, modelo: u.modelo, tracao4x4: u.tracao4x4, status: u.status || "Em operação", observacao: u.observacao, cliente: u.cliente, substituidoPorId: u.substituidaPor ? String(unicos.findIndex((x) => normalizar(x.identificacao) === normalizar(u.substituidaPor!))) : null, trocaEm: u.trocaEm })),
+    usos: unicos.flatMap((u, i) => u.usos.map((x) => ({ veiculoId: `${i}`, equipeId: x.equipe, inicio: x.inicio, fim: x.fim }))),
     ausencias: r.vagas.flatMap((v, i) => [...(v.ausencia ? [v.ausencia] : []), ...(v.ausencias ?? [])].map((a, k) => ({ id: `a${i}-${k}`, vagaId: `v${i}`, tipo: a.tipo, inicio: a.inicio, fim: a.fim, observacao: null }))),
     contratos: r.contratos.map((c) => ({ codigo: c.codigo, nome: null, cliente: c.cliente, gestor: c.gestor, local: null, observacao: null, ativo: true })),
   };
@@ -445,12 +451,16 @@ test("Base: cada viatura aparece uma vez em VIATURAS, com as equipes que usam", 
   const r = lerPlanilhaEfetivos(arq, { anoReferencia: 2026, cliente: "MRN" });
   const wb = XLSX.read(baseDe(r), { type: "buffer" });
   const vt = XLSX.utils.sheet_to_json<Record<string, string | number>>(wb.Sheets["VIATURAS"]);
-  assert.equal(vt.length, 2);
-  const vl1 = vt.find((x) => x["Viatura"] === "VL 01")!;
-  assert.equal(vl1["Nº de equipes"], 2);
-  assert.equal(vl1["Equipes que usam"], "EQUIPE A · EQUIPE B");
-  assert.equal(vl1["Cliente"], "MRN");
-  assert.equal(vl1["Placa"], "");
+  // uma linha por viatura e equipe: VL 01 (2 equipes) + VL 02 (1) = 3 linhas, mas só 2 viaturas
+  assert.equal(vt.length, 3);
+  assert.equal(new Set(vt.map((x) => x["Viatura"])).size, 2);
+  const vl1 = vt.filter((x) => x["Viatura"] === "VL 01");
+  assert.deepEqual(vl1.map((x) => x["Equipe que usa"]), ["EQUIPE A", "EQUIPE B"]);
+  assert.equal(vl1[0]["Cliente"], "MRN");
+  assert.equal(vl1[0]["Placa"], "");
+  assert.equal(vl1[1]["Cliente"], "", "o cadastro (cliente, placa, modelo) só na primeira linha da viatura");
+  assert.equal(vl1[0]["Início na equipe"], "");
+  assert.equal(vl1[0]["Confere com a equipe?"], "Equipe sem datas");
 });
 
 // ---------------------------------------------------------------- enviar o planejamento preenchido
@@ -461,7 +471,8 @@ test("Planejamento preenchido: só preenche; em branco nunca apaga; datas errada
   const atual: Atuais = {
     equipes: r.equipes.map((e) => ({ id: e.codigo, codigo: e.codigo, nome: e.nome, projeto: e.projeto, inicio: null, fim: e.nome === "EQUIPE DE FELINOS" ? "2026-12-31" : null, local: null, gestor: null, observacao: null })),
     vagas: r.vagas.map((v) => ({ id: v.origem!, equipeId: v.equipeCodigo, numero: v.numero, origem: v.origem ?? null, nome: v.nome, cargo: v.cargo, status: v.status, previsaoInicio: null, contratoAtual: null, disponivelAPartir: null, destino: null, observacao: v.observacao })),
-    veiculos: veiculosUnicos(r.veiculos).map((u, i) => ({ id: `veic${i}`, identificacao: u.identificacao, placa: null, modelo: null, tracao4x4: null, status: "Em operação", observacao: u.observacao })),
+    veiculos: veiculosUnicos(r.veiculos).map((u, i, todos) => ({ id: `veic${i}`, identificacao: u.identificacao, placa: null, modelo: null, tracao4x4: null, status: u.status ?? "Em operação", observacao: u.observacao, substituidoPorId: u.substituidaPor ? `veic${todos.findIndex((x) => x.identificacao === u.substituidaPor)}` : null, trocaEm: u.trocaEm })),
+    usos: veiculosUnicos(r.veiculos).flatMap((u, i) => u.usos.map((x) => ({ veiculoId: `veic${i}`, equipeId: x.equipe, inicio: x.inicio, fim: x.fim }))),
     contratos: r.contratos.map((c) => ({ codigo: c.codigo, nome: null, cliente: "MRN", gestor: null, local: null, observacao: null })),
     ausencias: [],
   };
@@ -497,4 +508,128 @@ test("Planejamento preenchido: só preenche; em branco nunca apaga; datas errada
   // equipe do Excel que o sistema não conhece: ignorada com aviso
   const semFelinos = { ...atual, equipes: atual.equipes.filter((e) => e.nome !== "EQUIPE DE FELINOS") };
   assert.ok(planejarAtualizacao(lerPlanilhaEfetivos(f, { anoReferencia: 2026 }), semFelinos).avisos.some((a) => /EQUIPE DE FELINOS.*não existe no sistema/.test(a)));
+});
+
+// ---------------------------------------------------------------- viaturas: troca como comentário, tempo na equipe e o que confere
+
+/** Acrescenta uma linha no fim de uma aba, como a pessoa faria no Excel. */
+function acrescentarLinha(buf: Buffer, aba: string, valores: Record<string, string>): Buffer {
+  const wb = XLSX.read(buf, { type: "buffer" });
+  const ws = wb.Sheets[aba];
+  const linhas = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: "" });
+  const cab = linhas[0].map(String);
+  const nova = cab.map((c) => valores[c] ?? "");
+  XLSX.utils.sheet_add_aoa(ws, [nova], { origin: { r: linhas.length, c: 0 } });
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+function atualDe(r: ReturnType<typeof lerPlanilhasEfetivos>): Atuais {
+  const unicos = veiculosUnicos(r.veiculos);
+  return {
+    equipes: r.equipes.map((e) => ({ id: e.codigo, codigo: e.codigo, nome: e.nome, projeto: e.projeto, inicio: null, fim: null, local: null, gestor: null, observacao: null })),
+    vagas: r.vagas.map((v) => ({ id: v.origem!, equipeId: v.equipeCodigo, numero: v.numero, origem: v.origem ?? null, nome: v.nome, cargo: v.cargo, status: v.status, previsaoInicio: null, contratoAtual: null, disponivelAPartir: null, destino: null, observacao: v.observacao })),
+    veiculos: unicos.map((u, i) => ({ id: `veic${i}`, identificacao: u.identificacao, placa: null, modelo: null, tracao4x4: null, status: u.status ?? "Em operação", observacao: u.observacao, substituidoPorId: u.substituidaPor ? `veic${unicos.findIndex((x) => x.identificacao === u.substituidaPor)}` : null, trocaEm: u.trocaEm })),
+    usos: unicos.flatMap((u, i) => u.usos.map((x) => ({ veiculoId: `veic${i}`, equipeId: x.equipe, inicio: x.inicio, fim: x.fim }))),
+    contratos: r.contratos.map((c) => ({ codigo: c.codigo, nome: null, cliente: "MRN", gestor: null, local: null, observacao: null })),
+    ausencias: [],
+  };
+}
+
+test("Troca de viatura: a nota da planilha vira vínculo + comentário na célula, a substituta entra como Prevista e a base lê de volta igual", () => {
+  const r = lerPlanilhasEfetivos([PLT(false)], { anoReferencia: 2026, cliente: "MRN" });
+  const cns52 = r.veiculos.find((v) => v.identificacao === "CNS-52")!;
+  assert.equal(cns52.substituidaPor, "CNS-102");
+  assert.equal(cns52.observacao, null, "a nota de troca não fica como observação");
+  const prevista = r.veiculos.find((v) => v.identificacao === "CNS-102")!;
+  assert.equal(prevista.status, "Prevista");
+  assert.equal(prevista.equipeCodigo, "");
+  assert.equal(prevista.cliente, "MRN");
+
+  const buf = baseDe(r);
+  const wb = XLSX.read(buf, { type: "buffer" });
+  const ws = wb.Sheets["VIATURAS"];
+  const linhas = XLSX.utils.sheet_to_json<Record<string, string>>(ws);
+  const l52 = linhas.find((x) => x["Viatura"] === "CNS-52")!;
+  assert.equal(l52["Será substituída por"], "CNS-102");
+  assert.equal(l52["Observação"], "");
+  const l102 = linhas.find((x) => x["Viatura"] === "CNS-102")!;
+  assert.equal(l102["Status"], "Prevista");
+  assert.equal(l102["Equipe que usa"], "");
+  // o comentário fica na célula da viatura (coluna A), dos dois lados da troca
+  const comentario = (nome: string) => {
+    const i = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1 }).findIndex((x) => x[0] === nome);
+    return (ws[XLSX.utils.encode_cell({ r: i, c: 0 })] as XLSX.CellObject).c?.map((c) => c.t).join(" ") ?? "";
+  };
+  assert.match(comentario("CNS-52"), /Será substituída pela CNS-102/);
+  assert.match(comentario("CNS-102"), /Vai substituir a CNS-52/);
+  // volta igual: o vínculo e a prevista continuam
+  const volta = lerPlanilhaEfetivos(buf, { anoReferencia: 2026 });
+  const u52 = veiculosUnicos(volta.veiculos).find((u) => u.identificacao === "CNS-52")!;
+  assert.equal(u52.substituidaPor, "CNS-102");
+  assert.equal(veiculosUnicos(volta.veiculos).find((u) => u.identificacao === "CNS-102")!.status, "Prevista");
+});
+
+test("Tempo da viatura na equipe: a coluna Confere compara com a equipe e o período preenchido entra no planejamento sem apagar nada", () => {
+  const r = lerPlanilhasEfetivos([PLT(false)], { anoReferencia: 2026, cliente: "MRN" });
+  const base = baseDe(r);
+  const wb = XLSX.read(base, { type: "buffer" });
+  const vt = XLSX.utils.sheet_to_json<Record<string, string>>(wb.Sheets["VIATURAS"]);
+  assert.ok(vt.every((x) => !x["Equipe que usa"] || x["Confere com a equipe?"] === "Equipe sem datas"), "sem datas na equipe, o Confere avisa isso");
+
+  const atual = atualDe(r);
+  // em branco: nada muda
+  assert.equal(totalDeMudancas(planejarAtualizacao(lerPlanilhaEfetivos(base, { anoReferencia: 2026 }), atual)), 0);
+
+  let f = preencher(base, "VIATURAS", (x) => x["Viatura"] === "CNS-52", { "Início na equipe": "01/10/2026", "Fim na equipe": "31/12/2026", "Troca em": "15/12/2026" });
+  f = preencher(f, "VIATURAS", (x) => x["Viatura"] === "CNS-101", { "Início na equipe": "20/12/2026", "Fim na equipe": "10/12/2026" }); // fim antes do início
+  f = preencher(f, "VIATURAS", (x) => x["Viatura"] === "CNS-102", { Placa: "XYZ9A87" }); // a prevista ganha a placa
+  const plano = planejarAtualizacao(lerPlanilhaEfetivos(f, { anoReferencia: 2026 }), atual);
+  assert.deepEqual(plano.usos.map((u) => [u.rotulo, u.inicio, u.fim, u.criar]), [["CNS-52 · GESTÃO", "2026-10-01", "2026-12-31", false]]);
+  assert.ok(plano.avisos.some((a) => /CNS-101.*antes do início/.test(a)), "fim antes do início não é aplicado");
+  assert.deepEqual(plano.trocas.map((t) => [t.rotulo, t.trocaEm]), [["CNS-52 → CNS-102", "2026-12-15"]]);
+  assert.deepEqual(plano.veiculos.map((x) => [x.rotulo, x.mudancas]), [["CNS-102", { placa: "XYZ9A87" }]]);
+
+  // sem tirar nada: o período que já está no sistema fica quando a célula vem em branco
+  const comPeriodo: Atuais = { ...atual, usos: (atual.usos ?? []).map((u) => (u.veiculoId === "veic0" ? { ...u, inicio: "2026-09-01", fim: "2026-12-31" } : u)) };
+  const semMudar = planejarAtualizacao(lerPlanilhaEfetivos(base, { anoReferencia: 2026 }), comPeriodo);
+  assert.equal(semMudar.usos.length, 0);
+});
+
+test("Viatura nova só no Excel: entra como viatura (e a substituta que não existe vira Prevista), com o período na equipe", () => {
+  const r = lerPlanilhasEfetivos([PLT(false)], { anoReferencia: 2026, cliente: "MRN" });
+  const f = acrescentarLinha(baseDe(r), "VIATURAS", { Viatura: "CNS-120", Placa: "AAA1B23", Status: "Em operação", Cliente: "MRN", "Equipe que usa": "GESTÃO", "Início na equipe": "01/11/2026", "Fim na equipe": "30/11/2026", "Será substituída por": "CNS-121", "Troca em": "20/11/2026" });
+  const plano = planejarAtualizacao(lerPlanilhaEfetivos(f, { anoReferencia: 2026 }), atualDe(r));
+  assert.deepEqual(plano.veiculosNovos.map((v) => [v.identificacao, v.status]).sort(), [["CNS-120", "Em operação"], ["CNS-121", "Prevista"]]);
+  assert.equal(plano.veiculosNovos.find((v) => v.identificacao === "CNS-120")!.placa, "AAA1B23");
+  assert.deepEqual(plano.usos.map((u) => [u.rotulo, u.inicio, u.fim, u.criar, u.veiculoNovo]), [["CNS-120 · GESTÃO", "2026-11-01", "2026-11-30", true, normalizar("CNS-120")]]);
+  assert.deepEqual(plano.trocas.map((t) => [t.rotulo, t.trocaEm, t.veiculoNovo, t.alvoNovo]), [["CNS-120 → CNS-121", "2026-11-20", normalizar("CNS-120"), normalizar("CNS-121")]]);
+  assert.equal(totalDeMudancas(plano) >= 4, true);
+});
+
+test("Base em branco do cliente (AGA): três abas com o cliente já escrito; vazia não importa; preenchida entra como AGA com o tempo das viaturas", () => {
+  const buf = montarModeloEmBranco("AGA", { pessoas: 5, equipes: 3, viaturas: 4 });
+  const wb = XLSX.read(buf, { type: "buffer" });
+  assert.deepEqual(wb.SheetNames, ["LEIA-ME", "PESSOAS", "EQUIPES", "VIATURAS"]);
+  for (const aba of ["PESSOAS", "EQUIPES", "VIATURAS"]) {
+    const linhas = XLSX.utils.sheet_to_json<Record<string, string>>(wb.Sheets[aba]);
+    assert.ok(linhas.length > 0 && linhas.every((x) => x["Cliente"] === "AGA"), `${aba}: o Cliente já vem escrito`);
+  }
+  const cab = (XLSX.utils.sheet_to_json<string[]>(wb.Sheets["VIATURAS"], { header: 1 })[0] as string[]).map(String);
+  for (const c of ["Início na equipe", "Fim na equipe", "Confere com a equipe?", "Será substituída por", "Troca em"]) assert.ok(cab.includes(c), c);
+  assert.throws(() => lerPlanilhaEfetivos(buf, { anoReferencia: 2026 }), /não tem nenhuma posição/, "em branco não importa nada");
+
+  let f = acrescentarLinha(buf, "EQUIPES", { Cliente: "AGA", Contrato: "A-100", Equipe: "EQUIPE ALFA", "Início da equipe": "01/11/2026", "Fim da equipe": "30/04/2027" });
+  f = acrescentarLinha(f, "PESSOAS", { Cliente: "AGA", Contrato: "A-100", Equipe: "EQUIPE ALFA", Profissional: "Pessoa Teste", Empresa: "Consominas", Função: "Biólogo", Viatura: "AGA-01", Status: "Vigente", Posição: "Com nome" });
+  f = acrescentarLinha(f, "PESSOAS", { Cliente: "AGA", Contrato: "A-100", Equipe: "EQUIPE ALFA", Empresa: "Consominas", Função: "Auxiliar", Posição: "Vaga aberta" });
+  f = acrescentarLinha(f, "VIATURAS", { Viatura: "AGA-01", Status: "Em operação", Cliente: "AGA", "Equipe que usa": "EQUIPE ALFA", "Início na equipe": "01/11/2026", "Fim na equipe": "30/04/2027" });
+  const lido = lerPlanilhaEfetivos(f, { anoReferencia: 2026 });
+  assert.equal(lido.formato, "base");
+  const campo = lido.equipes.filter((e) => e.grupo !== "Apoio");
+  assert.deepEqual(campo.map((e) => [e.nome, e.cliente, e.inicio, e.fim]), [["EQUIPE ALFA", "AGA", "2026-11-01", "2027-04-30"]]);
+  assert.equal(lido.vagas.length, 2);
+  assert.equal(lido.vagas.filter((v) => !v.nome).length, 1, "a posição sem profissional é uma vaga aberta");
+  const [v] = veiculosUnicos(lido.veiculos);
+  assert.equal(v.identificacao, "AGA-01");
+  assert.equal(v.cliente, "AGA");
+  assert.deepEqual(v.usos.map((u) => [u.inicio, u.fim]), [["2026-11-01", "2027-04-30"]]);
 });

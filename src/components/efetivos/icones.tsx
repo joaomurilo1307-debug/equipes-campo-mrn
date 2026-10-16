@@ -196,3 +196,19 @@ export const IcSobe = (p: P) => (
     <path d="M4 4h16" />
   </Svg>
 );
+
+export const IcLinhaDoTempo = (p: P) => (
+  <Svg {...p}>
+    <rect x="3" y="4.5" width="10" height="3.6" rx="1.8" />
+    <rect x="8" y="10.2" width="13" height="3.6" rx="1.8" />
+    <rect x="5" y="15.9" width="8" height="3.6" rx="1.8" />
+  </Svg>
+);
+export const IcHistograma = (p: P) => (
+  <Svg {...p}>
+    <path d="M4 20h16" />
+    <rect x="5" y="11" width="3.2" height="9" rx="0.8" />
+    <rect x="10.4" y="5" width="3.2" height="15" rx="0.8" />
+    <rect x="15.8" y="8.5" width="3.2" height="11.5" rx="0.8" />
+  </Svg>
+);

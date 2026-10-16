@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { dataDe, diaDe, exigir, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
+import { dataDe, diaDe, exigir, registrar, foraDoEscopo, garantirUso } from "@/lib/efetivos/servidor";
 import { dataValida } from "@/lib/efetivos/disponibilidade";
 
 const dia = z.string().refine(dataValida, "Data inválida (AAAA-MM-DD)");
@@ -71,6 +71,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     },
     include: { equipe: true },
   });
+  if (veiculoId !== undefined || parsed.data.equipeId) await garantirUso(prisma, vaga.veiculoId, vaga.equipeId);
   const partes: string[] = [];
   if (nome !== undefined && (antes.nome ?? "") !== (vaga.nome ?? "")) partes.push(`profissional "${antes.nome ?? ""}" → "${vaga.nome ?? ""}"`);
   if (parsed.data.status && antes.status !== vaga.status) partes.push(`status ${antes.status} → ${vaga.status}`);

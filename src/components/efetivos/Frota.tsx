@@ -4,9 +4,9 @@ import { Fragment, useMemo, useState } from "react";
 import { temNome } from "@/lib/efetivos/disponibilidade";
 import { STATUS_VEICULO, diasNoLocal, localizacaoNoDia, proximoMovimento, type MovimentoBase } from "@/lib/efetivos/veiculos";
 import { useDados } from "./DadosContext";
-import { A_DEFINIR, CHIP_VEICULO, corDoContrato, fmtDia, rotuloContrato, type Equipe, type Veiculo } from "./comum";
+import { A_DEFINIR, CHIP_VEICULO, corDoContrato, fmtDia, rotuloContrato, type Equipe, type UsoVeiculo, type Veiculo } from "./comum";
 import { IcMais } from "./icones";
-import { ModalHistoricoVeiculo, ModalMover, ModalVeiculo } from "./modais/ModaisVeiculo";
+import { ModalHistoricoVeiculo, ModalMover, ModalTrocarViatura, ModalUsoViatura, ModalVeiculo } from "./modais/ModaisVeiculo";
 import ModalOcupantes from "./modais/ModalOcupantes";
 import { CabecalhoPagina, PontoContrato, Vazio } from "./ui";
 
@@ -18,12 +18,12 @@ const VARIOS = "Em mais de um contrato";
  * "Equipes que usam" mostra todas. Se alguém registrou uma passagem (Mover), vale a passagem; senão vale onde as pessoas vão.
  */
 export default function Frota() {
-  const { dados, hoje, equipePorId, equipesPorVeiculo, ocupantesPorVeiculo, nomeDe, contratoNoDia } = useDados();
+  const { dados, hoje, equipePorId, equipesPorVeiculo, ocupantesPorVeiculo, nomeDe, contratoNoDia, usosPorVeiculo, conferenciaDoUso, conflitosDeViatura, veiculoPorId } = useDados();
   const [dia, setDia] = useState(hoje);
   const [filtroContrato, setFiltroContrato] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("");
   const [busca, setBusca] = useState("");
-  const [modal, setModal] = useState<{ t: "mover" | "historico" | "editar" | "ocupantes"; v: Veiculo } | { t: "novo" } | null>(null);
+  const [modal, setModal] = useState<{ t: "mover" | "historico" | "editar" | "ocupantes" | "trocar"; v: Veiculo } | { t: "periodo"; v: Veiculo; uso: UsoVeiculo | null; equipeId?: string } | { t: "novo" } | null>(null);
 
   const movimentosPorVeiculo = useMemo(() => {
     const m = new Map<string, MovimentoBase[]>();
@@ -77,12 +77,15 @@ export default function Frota() {
 
   const n = (s: string) => dados.veiculos.filter((v) => v.status === s).length;
   const compartilhadas = todas.filter((l) => l.equipes.length > 1).length;
+  const usosQueNaoBatem = dados.usosVeiculo.filter((u) => conferenciaDoUso(u).nivel === "atencao").length;
+  const usosSemDatas = dados.usosVeiculo.filter((u) => conferenciaDoUso(u).nivel === "sem_datas").length;
+  const emConflito = new Set(conflitosDeViatura.flatMap((c) => [c.a.equipeId + c.veiculoId, c.b.equipeId + c.veiculoId]));
 
   return (
     <div>
       <CabecalhoPagina
         titulo="Frota"
-        subtitulo="Cada viatura aparece uma vez, mesmo quando é usada por várias equipes. Veja quais equipes usam, quem vai nela e, se houver, a passagem registrada."
+        subtitulo="Cada viatura aparece uma vez. Para cada equipe que a usa, veja por quanto tempo ela fica e se isso bate com o período da equipe. Trocas de viatura ficam registradas aqui."
         acoes={
           dados.podeEditar && (
             <button onClick={() => setModal({ t: "novo" })} className="btn-primary">
@@ -97,7 +100,7 @@ export default function Frota() {
           ["Viaturas (cada uma conta uma vez)", dados.veiculos.length, "#101B17"],
           ["Usadas por mais de uma equipe", compartilhadas, "#1D6FB8"],
           ["Em operação", n("Em operação"), "#0E8F63"],
-          ["Manutenção / paradas", n("Em manutenção") + n("Parado"), "#B86E00"],
+          ["Tempo que não bate com a equipe", usosQueNaoBatem + conflitosDeViatura.length, usosQueNaoBatem + conflitosDeViatura.length > 0 ? "#B86E00" : "#0E8F63"],
         ].map(([r, v, c]) => (
           <div key={r as string} className="card px-4 py-3">
             <div className="text-[10.5px] font-semibold uppercase tracking-wider text-gray-500">{r}</div>
@@ -150,7 +153,7 @@ export default function Frota() {
             <tr>
               <th className="px-3 py-2 text-left">Viatura</th>
               <th className="px-3 py-2 text-left">Placa / modelo</th>
-              <th className="px-3 py-2 text-left">Equipes que usam</th>
+              <th className="px-3 py-2 text-left">Equipes e tempo de uso</th>
               <th className="px-3 py-2 text-left">Vai neste carro</th>
               <th className="px-3 py-2 text-left">Situação</th>
               <th className="px-3 py-2 text-left">Passagem registrada</th>
@@ -169,6 +172,16 @@ export default function Frota() {
                         <td className="px-3 py-2">
                           <div className="font-semibold">{v.identificacao}</div>
                           <div className="text-[10.5px] text-gray-400">{v.codigo}</div>
+                          {v.substituidoPorId && (
+                            <div className="mt-0.5 max-w-[190px] text-[10.5px] text-info">
+                              Será substituída pela <b>{veiculoPorId.get(v.substituidoPorId)?.identificacao ?? "—"}</b>
+                              {v.trocaEm ? ` em ${fmtDia(v.trocaEm)}` : ""}
+                            </div>
+                          )}
+                          {(() => {
+                            const antiga = dados.veiculos.find((x) => x.substituidoPorId === v.id);
+                            return antiga ? <div className="mt-0.5 max-w-[190px] text-[10.5px] text-info">Vai substituir a <b>{antiga.identificacao}</b>{antiga.trocaEm ? ` em ${fmtDia(antiga.trocaEm)}` : ""}</div> : null;
+                          })()}
                           {v.observacao && <div className="mt-0.5 max-w-[180px] text-[10.5px] text-warn">{v.observacao}</div>}
                         </td>
                         <td className="px-3 py-2 text-gray-600">
@@ -179,17 +192,34 @@ export default function Frota() {
                           {equipes.length === 0 ? (
                             <span className="text-gray-300">—</span>
                           ) : (
-                            <div className="flex max-w-[360px] flex-wrap gap-1">
-                              {equipes.map((e) => (
-                                <span key={e.id} className="inline-flex items-center gap-1 rounded bg-gray-50 px-1.5 py-0.5 text-[11px] text-gray-700 ring-1 ring-line" title={`${e.nome} · ${rotuloContrato(e.projeto)}`}>
-                                  <PontoContrato cor={corDoContrato(e.projeto)} tam={6} />
-                                  <span className="font-mono text-[10px] text-gray-500">{e.codigo}</span>
-                                  <span className="max-w-[130px] truncate">{e.nome}</span>
-                                </span>
-                              ))}
+                            <div className="flex max-w-[430px] flex-col gap-1">
+                              {equipes.map((e) => {
+                                const uso = (usosPorVeiculo.get(v.id) ?? []).find((u) => u.equipeId === e.id) ?? null;
+                                const conf = uso ? conferenciaDoUso(uso) : null;
+                                const conflito = emConflito.has(e.id + v.id);
+                                const cor = conflito || conf?.nivel === "atencao" ? "chip-warn" : conf?.nivel === "ok" ? "chip-ok" : "chip-mute";
+                                return (
+                                  <div key={e.id} className="flex flex-wrap items-center gap-1.5 rounded-lg bg-gray-50 px-2 py-1 text-[11px] text-gray-700 ring-1 ring-line" title={`${e.nome} · ${rotuloContrato(e.projeto)}`}>
+                                    <PontoContrato cor={corDoContrato(e.projeto)} tam={6} />
+                                    <span className="font-mono text-[10px] text-gray-500">{e.codigo}</span>
+                                    <span className="max-w-[120px] truncate">{e.nome}</span>
+                                    <span className="num text-gray-500">{uso && (uso.inicio || uso.fim) ? `${uso.inicio ? fmtDia(uso.inicio) : "?"} → ${uso.fim ? fmtDia(uso.fim) : "?"}` : "sem datas"}</span>
+                                    <span className={`${cor} !px-1.5 !py-0 !text-[10px]`}>{conflito ? "Em duas equipes ao mesmo tempo" : conf?.texto ?? "Sem período"}</span>
+                                    {dados.podeEditar && (
+                                      <button onClick={() => setModal({ t: "periodo", v, uso, equipeId: e.id })} className="text-[10.5px] font-medium text-brand-dark hover:underline">
+                                        {uso && (uso.inicio || uso.fim) ? "ajustar" : "definir tempo"}
+                                      </button>
+                                    )}
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
-                          {equipes.length > 1 && <div className="mt-0.5 text-[10.5px] text-info">usada por {equipes.length} equipes</div>}
+                          {dados.podeEditar && equipes.length > 0 && equipes.length < dados.equipes.filter((x) => x.grupo !== "Apoio").length && (
+                            <button onClick={() => setModal({ t: "periodo", v, uso: null })} className="mt-1 text-[10.5px] font-medium text-gray-500 hover:text-brand-dark hover:underline">
+                              + outra equipe
+                            </button>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-gray-600">
                           <button onClick={() => dados.podeEditar && equipes.length === 1 && setModal({ t: "ocupantes", v })} className={`text-left ${dados.podeEditar && equipes.length === 1 ? "hover:text-brand-dark hover:underline" : "cursor-default"}`} title={pessoas.map(nomeDe).join(", ")}>
@@ -220,6 +250,9 @@ export default function Frota() {
                           </button>
                           {dados.podeEditar && (
                             <>
+                              <button onClick={() => setModal({ t: "trocar", v })} className="btn-ghost btn-sm ml-1">
+                                Trocar
+                              </button>
                               <button onClick={() => setModal({ t: "mover", v })} className="btn-ghost btn-sm ml-1">
                                 Mover
                               </button>
@@ -246,6 +279,8 @@ export default function Frota() {
         </table>
       </div>
 
+      {modal?.t === "trocar" && <ModalTrocarViatura veiculo={modal.v} onFechar={() => setModal(null)} />}
+      {modal?.t === "periodo" && <ModalUsoViatura veiculo={modal.v} uso={modal.uso} equipeIdInicial={modal.equipeId} onFechar={() => setModal(null)} />}
       {modal?.t === "mover" && <ModalMover veiculo={modal.v} onFechar={() => setModal(null)} />}
       {modal?.t === "historico" && <ModalHistoricoVeiculo veiculo={modal.v} onFechar={() => setModal(null)} />}
       {modal?.t === "editar" && <ModalVeiculo veiculo={modal.v} onFechar={() => setModal(null)} />}

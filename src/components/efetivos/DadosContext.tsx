@@ -7,7 +7,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { indexar, type Dia, type DadosEfetivos, type Indice } from "@/lib/efetivos/disponibilidade";
 import { contar, resumirDia, situacaoDaPosicao, type Contagem, type ResumoDoDia, type SituacaoDaPosicao } from "@/lib/efetivos/situacao";
 import { localizacaoNoDia, type MovimentoBase } from "@/lib/efetivos/veiculos";
-import { chamar, ehReserva, hojeBr, type DadosTela, type Equipe, type MovimentoEquipe, type Vaga, type Veiculo } from "./comum";
+import { conferirUso, conflitosDeUso, usoCobreDia, type ConferenciaDeUso, type ConflitoDeUso } from "@/lib/efetivos/usosVeiculo";
+import { chamar, ehReserva, hojeBr, type DadosTela, type Equipe, type MovimentoEquipe, type UsoVeiculo, type Vaga, type Veiculo } from "./comum";
 
 type Ctx = {
   dados: DadosTela;
@@ -31,6 +32,15 @@ type Ctx = {
   equipesPorVeiculo: Map<string, string[]>;
   /** Pessoas que vao em cada viatura. */
   ocupantesPorVeiculo: Map<string, Vaga[]>;
+  /** O período de cada viatura em cada equipe (início e fim; vazio = ainda não informado). */
+  usosPorVeiculo: Map<string, UsoVeiculo[]>;
+  usosPorEquipe: Map<string, UsoVeiculo[]>;
+  /** Compara o período da viatura com o da equipe: confere / o que está fora / o que falta preencher. */
+  conferenciaDoUso: (u: UsoVeiculo) => ConferenciaDeUso;
+  /** A mesma viatura em duas equipes ao mesmo tempo. */
+  conflitosDeViatura: ConflitoDeUso[];
+  /** Viaturas que servem à equipe no dia (as sem datas valem sempre). */
+  veiculosDaEquipeNoDia: (equipeId: string, dia?: Dia) => Veiculo[];
   /** Nome para exibir: no modo apresentação mostra o cargo no lugar do nome. */
   nomeDe: (v: Pick<Vaga, "nome" | "cargo">) => string;
   // ---- a regra única de situação (Em equipe / Disponível / Ausente...): todas as telas contam por aqui
@@ -158,6 +168,15 @@ export function DadosProvider({ children }: { children: ReactNode }) {
       equipesPorVeiculo.set(veiculoId, l);
     };
     for (const v of dados.vagas) if (v.veiculoId) noVeiculo(v.veiculoId, v.equipeId);
+    const usosPorVeiculo = new Map<string, UsoVeiculo[]>();
+    const usosPorEquipe = new Map<string, UsoVeiculo[]>();
+    for (const u of dados.usosVeiculo ?? []) {
+      if (!usosPorVeiculo.has(u.veiculoId)) usosPorVeiculo.set(u.veiculoId, []);
+      usosPorVeiculo.get(u.veiculoId)!.push(u);
+      if (!usosPorEquipe.has(u.equipeId)) usosPorEquipe.set(u.equipeId, []);
+      usosPorEquipe.get(u.equipeId)!.push(u);
+      noVeiculo(u.veiculoId, u.equipeId);
+    }
     for (const ve of dados.veiculos) {
       const loc = localizacaoNoDia(movsPorVeiculo.get(ve.id) ?? [], hoje);
       if (loc?.equipeId) noVeiculo(ve.id, loc.equipeId);
@@ -178,7 +197,23 @@ export function DadosProvider({ children }: { children: ReactNode }) {
       movimentosPorEquipe.get(m.equipeId)!.push(m);
     }
     for (const l of movimentosPorEquipe.values()) l.sort((a, b) => a.inicio.localeCompare(b.inicio));
+    const equipePorId = new Map(dados.equipes.map((e) => [e.id, e]));
+    const veiculoPorId = new Map(dados.veiculos.map((v) => [v.id, v]));
     return {
+      usosPorVeiculo,
+      usosPorEquipe,
+      conflitosDeViatura: conflitosDeUso(dados.usosVeiculo ?? []),
+      conferenciaDoUso: (u: UsoVeiculo) => {
+        const e = equipePorId.get(u.equipeId);
+        return conferirUso(u, { inicio: e?.inicio ?? null, fim: e?.fim ?? null });
+      },
+      veiculosDaEquipeNoDia: (equipeId: string, dia: Dia = hoje) => {
+        const comUso = usosPorEquipe.get(equipeId) ?? [];
+        const ids = new Set<string>();
+        for (const u of comUso) if ((u.inicio || u.fim ? usoCobreDia(u, dia) : true)) ids.add(u.veiculoId);
+        for (const v of dados.vagas) if (v.equipeId === equipeId && v.veiculoId && !comUso.some((u) => u.veiculoId === v.veiculoId)) ids.add(v.veiculoId);
+        return [...ids].map((id) => veiculoPorId.get(id)).filter((x): x is Veiculo => !!x).sort((a, b) => a.identificacao.localeCompare(b.identificacao, "pt-BR", { numeric: true }));
+      },
       movimentosPorEquipe,
       regra,
       idx: indexar(regra),

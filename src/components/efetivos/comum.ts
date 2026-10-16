@@ -71,7 +71,11 @@ export type Veiculo = {
   status: string;
   observacao: string | null;
   cliente: string | null;
+  substituidoPorId: string | null;
+  trocaEm: Dia | null;
 };
+/** A viatura numa equipe e por quanto tempo (data vazia = não informada). */
+export type UsoVeiculo = { id: string; veiculoId: string; equipeId: string; inicio: Dia | null; fim: Dia | null; observacao: string | null };
 export type Movimento = {
   id: string;
   veiculoId: string;
@@ -99,6 +103,7 @@ export type DadosTela = {
   movimentos: Movimento[];
   contratos: Contrato[];
   movimentosEquipe: MovimentoEquipe[];
+  usosVeiculo: UsoVeiculo[];
 };
 
 export const A_DEFINIR = "A definir";
@@ -210,6 +215,7 @@ export const CHIP_VEICULO: Record<string, string> = {
   "Em manutenção": "chip-warn",
   Parado: "chip-bad",
   Devolvido: "chip-mute",
+  Prevista: "chip-info",
 };
 
 export const MOTIVO_CONFLITO: Record<string, string> = {

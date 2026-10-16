@@ -103,6 +103,11 @@ export default function Base() {
               </button>
             )}
             {admin && (
+              <a href="/modelos/BASE_AGA_em_branco.xlsx" download className="btn-ghost" title="Base vazia da AGA, com as mesmas três abas, para preencher e importar em Importar planilha">
+                <IcBaixar tam={16} /> Base em branco (AGA)
+              </a>
+            )}
+            {admin && (
               <button onClick={() => setImportar(true)} className="btn-ghost">
                 Importar planilha
               </button>

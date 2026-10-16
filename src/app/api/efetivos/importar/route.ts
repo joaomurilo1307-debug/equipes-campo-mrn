@@ -66,10 +66,13 @@ export async function POST(req: Request) {
     );
   }
   const nomesExistentes = new Set(existentes.map((e) => normalizar(e.nome)));
-  const equipesNovas = lido.equipes.filter((e) => !nomesExistentes.has(normalizar(e.nome)));
+  // a reserva (pessoas sem equipe) é uma por cliente: compara pelo código; as equipes, pelo nome
+  const codigosExistentes = new Set(existentes.map((e) => e.codigo));
+  const equipesNovas = lido.equipes.filter((e) => (e.grupo === "Apoio" ? !codigosExistentes.has(e.codigo) : !nomesExistentes.has(normalizar(e.nome))));
   const codigosNovos = new Set(equipesNovas.map((e) => e.codigo));
   const vagasNovas = lido.vagas.filter((v) => codigosNovos.has(v.equipeCodigo));
-  const veiculosNovos = lido.veiculos.filter((v) => codigosNovos.has(v.equipeCodigo));
+  // viatura sem equipe (prevista, a chegar) também entra
+  const veiculosNovos = lido.veiculos.filter((v) => !v.equipeCodigo || codigosNovos.has(v.equipeCodigo));
 
   const resumo = {
     formato: lido.formato,
@@ -127,12 +130,26 @@ export async function POST(req: Request) {
       // viaturas primeiro: cada pessoa aponta para a viatura em que vai. A mesma viatura em várias equipes é UMA viatura só;
       // a planilha não diz onde ela está (só quem vai nela), então não se cria passagem: a ligação com as equipes vem das pessoas.
       const veiculoPorRef = new Map<string, string>();
+      const idDaViatura = new Map<string, string>();
       let k = 0;
-      for (const u of veiculosUnicos(veiculosNovos)) {
+      const unicos = veiculosUnicos(veiculosNovos);
+      for (const u of unicos) {
         const veiculo = await tx.efetivoVeiculo.create({
-          data: { codigo: veiCodigos(++k), identificacao: u.identificacao, placa: u.placa, modelo: u.modelo, tracao4x4: u.tracao4x4, status: u.status || "Em operação", observacao: u.observacao, cliente: u.cliente ?? (u.equipes[0] ? equipePorCodigoImportado.get(u.equipes[0])?.cliente ?? null : null) },
+          data: { codigo: veiCodigos(++k), identificacao: u.identificacao, placa: u.placa, modelo: u.modelo, tracao4x4: u.tracao4x4, status: u.status || "Em operação", observacao: u.observacao, cliente: u.cliente ?? (u.equipes[0] ? equipePorCodigoImportado.get(u.equipes[0])?.cliente ?? null : null), trocaEm: u.trocaEm ? dataDe(u.trocaEm) : null },
         });
+        idDaViatura.set(u.chave, veiculo.id);
         for (const ref of u.refs) veiculoPorRef.set(ref, veiculo.id);
+        // a viatura em cada equipe (e por quanto tempo, quando a base traz as datas)
+        for (const uso of u.usos) {
+          const eq = equipePorCodigoImportado.get(uso.equipe);
+          if (eq) await tx.efetivoVeiculoUso.create({ data: { veiculoId: veiculo.id, equipeId: eq.id, inicio: uso.inicio ? dataDe(uso.inicio) : null, fim: uso.fim ? dataDe(uso.fim) : null } });
+        }
+      }
+      // troca planejada: a viatura aponta para a que vai substituí-la
+      for (const u of unicos) {
+        if (!u.substituidaPor) continue;
+        const alvo = idDaViatura.get(normalizar(u.substituidaPor));
+        if (alvo) await tx.efetivoVeiculo.update({ where: { id: idDaViatura.get(u.chave)! }, data: { substituidoPorId: alvo } });
       }
 
       // contratos que a planilha cita (so os que ainda nao existem; nunca sobrescreve o que foi preenchido no sistema)

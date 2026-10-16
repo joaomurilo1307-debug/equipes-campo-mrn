@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { STATUS_VEICULO, localizacaoNoDia } from "@/lib/efetivos/veiculos";
 import { useDados } from "../DadosContext";
 import { clienteDaEquipe } from "@/lib/efetivos/clientes";
-import { A_DEFINIR, chamar, contratosConhecidos, corDoContrato, fmtDia, hojeBr, rotuloContrato, type Movimento, type Veiculo, ehReserva } from "../comum";
+import { conferirUso, planejarTroca } from "@/lib/efetivos/usosVeiculo";
+import { A_DEFINIR, chamar, contratosConhecidos, corDoContrato, fmtDia, hojeBr, rotuloContrato, type Movimento, type UsoVeiculo, type Veiculo, ehReserva } from "../comum";
 import { IcLapis, IcLixo } from "../icones";
 import { Aviso, Campo, Modal, PontoContrato, RodapeModal } from "../ui";
 
@@ -245,6 +246,8 @@ export function ModalVeiculo({ veiculo, equipeIdPadrao, onFechar, onSalvo }: { v
     tracao4x4: veiculo?.tracao4x4 === true ? "sim" : veiculo?.tracao4x4 === false ? "nao" : "",
     status: veiculo?.status ?? "Em operação",
     observacao: veiculo?.observacao ?? "",
+    substituidoPorId: veiculo?.substituidoPorId ?? "",
+    trocaEm: veiculo?.trocaEm ?? "",
     projeto: eqPadrao && eqPadrao.projeto !== A_DEFINIR ? eqPadrao.projeto : "",
     equipeId: equipeIdPadrao ?? "",
     local: "",
@@ -266,7 +269,7 @@ export function ModalVeiculo({ veiculo, equipeIdPadrao, onFechar, onSalvo }: { v
       observacao: f.observacao || null,
     };
     const temLocal = !!(f.projeto.trim() || f.equipeId);
-    const corpo = veiculo ? base : { ...base, ...(temLocal ? { localizacao: { inicio: f.inicio, projeto: f.projeto.trim() || A_DEFINIR, equipeId: f.equipeId || null, local: f.local || null } } : {}) };
+    const corpo = veiculo ? { ...base, substituidoPorId: f.substituidoPorId || null, trocaEm: f.trocaEm || null } : { ...base, ...(temLocal ? { localizacao: { inicio: f.inicio, projeto: f.projeto.trim() || A_DEFINIR, equipeId: f.equipeId || null, local: f.local || null } } : {}) };
     const r = await chamar(veiculo ? "PATCH" : "POST", veiculo ? `/api/efetivos/veiculos/${veiculo.id}` : "/api/efetivos/veiculos", corpo);
     setSalvando(false);
     if (!r.ok) return setErro(r.dados.error ?? "Não foi possível salvar");
@@ -314,6 +317,26 @@ export function ModalVeiculo({ veiculo, equipeIdPadrao, onFechar, onSalvo }: { v
         <Campo rotulo="Observação">
           <input value={f.observacao} onChange={(e) => set("observacao", e.target.value)} className="field" />
         </Campo>
+        {veiculo && (
+          <div className="rounded-xl border border-line bg-gray-50 p-4 sm:col-span-2">
+            <div className="mb-2 text-[13px] font-semibold text-gray-700">Troca planejada</div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Campo rotulo="Será substituída por" dica="A viatura que chega no lugar desta. Cadastre-a como Prevista se ainda não chegou.">
+                <select value={f.substituidoPorId} onChange={(e) => set("substituidoPorId", e.target.value)} className="field">
+                  <option value="">— nenhuma —</option>
+                  {dados.veiculos.filter((x) => x.id !== veiculo.id).sort((a, b) => a.identificacao.localeCompare(b.identificacao, "pt-BR", { numeric: true })).map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.identificacao}{x.status === "Prevista" ? " (prevista)" : ""}
+                    </option>
+                  ))}
+                </select>
+              </Campo>
+              <Campo rotulo="Troca em" dica="Para efetivar e mover as pessoas, use o botão Trocar na Frota.">
+                <input type="date" value={f.trocaEm} onChange={(e) => set("trocaEm", e.target.value)} className="field" />
+              </Campo>
+            </div>
+          </div>
+        )}
         {!veiculo && (
           <div className="rounded-xl border border-line bg-gray-50 p-4 sm:col-span-2">
             <div className="mb-2 text-[13px] font-semibold text-gray-700">Onde está</div>
@@ -374,3 +397,184 @@ export function ModalVeiculo({ veiculo, equipeIdPadrao, onFechar, onSalvo }: { v
     </Modal>
   );
 }
+
+const rotuloUso = (u: { inicio: string | null; fim: string | null }) => `${u.inicio ? fmtDia(u.inicio) : "sem início"} a ${u.fim ? fmtDia(u.fim) : "sem fim"}`;
+
+/** Por quanto tempo a viatura fica numa equipe, já conferindo com o período da equipe. */
+export function ModalUsoViatura({ veiculo, uso, equipeIdInicial, onFechar }: { veiculo: Veiculo; uso?: UsoVeiculo | null; equipeIdInicial?: string; onFechar: () => void }) {
+  const { dados, recarregar, equipePorId } = useDados();
+  const [equipeId, setEquipeId] = useState(uso?.equipeId ?? equipeIdInicial ?? "");
+  const [inicio, setInicio] = useState(uso?.inicio ?? "");
+  const [fim, setFim] = useState(uso?.fim ?? "");
+  const [erro, setErro] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const equipe = equipeId ? equipePorId.get(equipeId) : null;
+  const conf = equipe ? conferirUso({ inicio: inicio || null, fim: fim || null }, { inicio: equipe.inicio ?? null, fim: equipe.fim ?? null }) : null;
+  const cor = conf?.nivel === "ok" ? "chip-ok" : conf?.nivel === "atencao" ? "chip-warn" : "chip-mute";
+
+  async function salvar() {
+    setSalvando(true);
+    setErro(null);
+    const r = await chamar("PUT", `/api/efetivos/veiculos/${veiculo.id}/usos`, { equipeId, inicio: inicio || null, fim: fim || null });
+    setSalvando(false);
+    if (!r.ok) return setErro(r.dados.error ?? "Não foi possível salvar");
+    await recarregar();
+    onFechar();
+  }
+  async function tirar() {
+    if (!window.confirm(`Tirar a viatura ${veiculo.identificacao} da equipe ${equipe?.nome ?? ""}?`)) return;
+    setSalvando(true);
+    const r = await chamar("DELETE", `/api/efetivos/veiculos/${veiculo.id}/usos?equipeId=${equipeId}`);
+    setSalvando(false);
+    if (!r.ok) return setErro(r.dados.error ?? "Não foi possível tirar");
+    await recarregar();
+    onFechar();
+  }
+
+  return (
+    <Modal titulo={`Tempo de ${veiculo.identificacao} na equipe`} subtitulo="Início e fim da viatura em cada equipe. O sistema confere com o período da equipe." onFechar={onFechar}>
+      <div className="grid gap-4 px-6 py-5 sm:grid-cols-2">
+        <Campo rotulo="Equipe" className="sm:col-span-2">
+          <select value={equipeId} onChange={(e) => setEquipeId(e.target.value)} disabled={!!uso} className="field">
+            <option value="">—</option>
+            {dados.equipes.filter((e) => !ehReserva(e)).map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.codigo} · {e.nome}
+              </option>
+            ))}
+          </select>
+        </Campo>
+        <Campo rotulo="Entra na equipe em">
+          <input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} className="field" />
+        </Campo>
+        <Campo rotulo="Sai da equipe em" dica="Em branco = sem data de saída.">
+          <input type="date" value={fim} min={inicio || undefined} onChange={(e) => setFim(e.target.value)} className="field" />
+        </Campo>
+        {equipe && (
+          <div className="rounded-xl border border-line bg-gray-50 p-3 text-[12.5px] sm:col-span-2">
+            <div className="text-gray-500">Equipe {equipe.nome}: {rotuloUso({ inicio: equipe.inicio ?? null, fim: equipe.fim ?? null })}</div>
+            {conf && (
+              <div className="mt-1.5">
+                <span className={cor}>{conf.texto}</span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      {erro && (
+        <div className="px-6 pb-4">
+          <Aviso tipo="erro">{erro}</Aviso>
+        </div>
+      )}
+      <RodapeModal>
+        {uso && (
+          <button onClick={tirar} disabled={salvando} className="btn-danger mr-auto">
+            <IcLixo tam={15} /> Tirar da equipe
+          </button>
+        )}
+        <button onClick={onFechar} className="btn-ghost">
+          Cancelar
+        </button>
+        <button onClick={salvar} disabled={salvando || !equipeId} className="btn-primary">
+          {salvando ? "Salvando…" : "Salvar"}
+        </button>
+      </RodapeModal>
+    </Modal>
+  );
+}
+
+/** Efetiva a troca: a nova assume nas equipes da antiga a partir do dia, e as pessoas passam para ela. */
+export function ModalTrocarViatura({ veiculo, onFechar }: { veiculo: Veiculo; onFechar: () => void }) {
+  const { dados, recarregar, equipePorId, usosPorVeiculo } = useDados();
+  const usos = usosPorVeiculo.get(veiculo.id) ?? [];
+  const [substitutaId, setSubstitutaId] = useState(veiculo.substituidoPorId ?? "");
+  const [trocaEm, setTrocaEm] = useState(veiculo.trocaEm ?? hojeBr());
+  const [equipeIds, setEquipeIds] = useState<string[]>(usos.map((u) => u.equipeId));
+  const [statusAntiga, setStatusAntiga] = useState("Disponível");
+  const [erro, setErro] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const candidatas = dados.veiculos.filter((x) => x.id !== veiculo.id && x.status !== "Devolvido").sort((a, b) => (a.status === "Prevista" ? -1 : 0) - (b.status === "Prevista" ? -1 : 0) || a.identificacao.localeCompare(b.identificacao, "pt-BR", { numeric: true }));
+  const plano = planejarTroca(usos, trocaEm, equipeIds);
+
+  async function salvar() {
+    setSalvando(true);
+    setErro(null);
+    const r = await chamar("POST", `/api/efetivos/veiculos/${veiculo.id}/trocar`, { substitutaId, trocaEm, equipeIds, statusAntiga });
+    setSalvando(false);
+    if (!r.ok) return setErro(r.dados.error ?? "Não foi possível trocar");
+    await recarregar();
+    onFechar();
+  }
+
+  return (
+    <Modal titulo={`Trocar ${veiculo.identificacao}`} subtitulo="A viatura antiga termina no dia anterior, a nova começa no dia da troca e as pessoas passam para a nova. O histórico das duas fica." onFechar={onFechar}>
+      <div className="grid gap-4 px-6 py-5 sm:grid-cols-2">
+        <Campo rotulo="Nova viatura">
+          <select value={substitutaId} onChange={(e) => setSubstitutaId(e.target.value)} className="field">
+            <option value="">—</option>
+            {candidatas.map((x) => (
+              <option key={x.id} value={x.id}>
+                {x.identificacao}{x.status === "Prevista" ? " (prevista)" : ""}{x.placa ? ` · ${x.placa}` : ""}
+              </option>
+            ))}
+          </select>
+        </Campo>
+        <Campo rotulo="Troca em">
+          <input type="date" value={trocaEm} onChange={(e) => e.target.value && setTrocaEm(e.target.value)} className="field" />
+        </Campo>
+        <div className="sm:col-span-2">
+          <span className="label">Em quais equipes</span>
+          {usos.length === 0 ? (
+            <p className="text-sm text-gray-400">Esta viatura ainda não está em nenhuma equipe. Defina o tempo dela numa equipe antes de trocar.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {usos.map((u) => {
+                const e = equipePorId.get(u.equipeId);
+                const marcado = equipeIds.includes(u.equipeId);
+                return (
+                  <label key={u.id} className="flex items-center gap-2 rounded-lg border border-line px-3 py-2 text-[12.5px]">
+                    <input type="checkbox" checked={marcado} onChange={() => setEquipeIds((l) => (marcado ? l.filter((x) => x !== u.equipeId) : [...l, u.equipeId]))} />
+                    <span className="font-mono text-[10.5px] text-gray-500">{e?.codigo}</span>
+                    <span className="flex-1 truncate">{e?.nome}</span>
+                    <span className="text-[11px] text-gray-500">{rotuloUso(u)}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <Campo rotulo="A viatura que sai fica como">
+          <select value={statusAntiga} onChange={(e) => setStatusAntiga(e.target.value)} className="field">
+            {STATUS_VEICULO.filter((s) => s !== "Prevista").map((s) => (
+              <option key={s}>{s}</option>
+            ))}
+          </select>
+        </Campo>
+        {!plano.ok && usos.length > 0 && (
+          <div className="sm:col-span-2">
+            <Aviso tipo="atencao">{plano.erro}</Aviso>
+          </div>
+        )}
+        {plano.ok && (
+          <p className="text-[11.5px] text-gray-500 sm:col-span-2">
+            {veiculo.identificacao} termina em {fmtDia(plano.antiga[0].fim)} e a nova começa em {fmtDia(trocaEm)}, em {plano.nova.length} equipe(s).
+          </p>
+        )}
+      </div>
+      {erro && (
+        <div className="px-6 pb-4">
+          <Aviso tipo="erro">{erro}</Aviso>
+        </div>
+      )}
+      <RodapeModal>
+        <button onClick={onFechar} className="btn-ghost">
+          Cancelar
+        </button>
+        <button onClick={salvar} disabled={salvando || !substitutaId || !plano.ok} className="btn-primary">
+          {salvando ? "Trocando…" : "Efetivar troca"}
+        </button>
+      </RodapeModal>
+    </Modal>
+  );
+}
+

@@ -15,7 +15,7 @@ import ModalEquipe from "./modais/ModalEquipe";
 import ModalOcupantes from "./modais/ModalOcupantes";
 import ModalVaga from "./modais/ModalVaga";
 import { ModalAbrirVaga, ModalDesmobilizar, ModalPuxar } from "./modais/ModaisVagas";
-import { ModalHistoricoVeiculo, ModalMover, ModalVeiculo } from "./modais/ModaisVeiculo";
+import { ModalHistoricoVeiculo, ModalMover, ModalTrocarViatura, ModalUsoViatura, ModalVeiculo } from "./modais/ModaisVeiculo";
 import { Aviso, CabecalhoPagina, Modal, PontoContrato, Vazio } from "./ui";
 
 const CHIP_SITUACAO: Record<string, string> = { EM_EQUIPE: "chip-ok", DISPONIVEL: "chip-info", OUTRO_CONTRATO: "chip-info", AUSENTE: "chip-bad", VAGA_ABERTA: "chip-warn", SEM_NOME: "chip-mute", DESMOBILIZADO: "chip-mute" };
@@ -175,7 +175,7 @@ export default function EquipesPessoas() {
 // ---------------------------------------------------------------- ficha de uma equipe
 
 function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => void }) {
-  const { dados, hoje, vagasPorEquipe, veiculosPorEquipe, equipesPorVeiculo, equipePorId, ocupantesPorVeiculo, veiculoPorId, recarregar, nomeDe, ocultarNomes, situacaoDe, contagemDe, movimentosPorEquipe } = useDados();
+  const { dados, hoje, vagasPorEquipe, veiculosPorEquipe, equipesPorVeiculo, equipePorId, ocupantesPorVeiculo, veiculoPorId, recarregar, nomeDe, ocultarNomes, situacaoDe, contagemDe, movimentosPorEquipe, usosPorEquipe, conferenciaDoUso } = useDados();
   const grupos = gruposParaMostrar([...dados.equipes.map((e) => e.grupo), "Fauna", "Flora"]);
   const contratos = useMemo(() => contratosConhecidos(dados), [dados]);
   const podeEditar = dados.podeEditar;
@@ -187,7 +187,7 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
   const [detalhes, setDetalhes] = useState<Vaga | null>(null);
   const [ausenciasDe, setAusenciasDe] = useState<Vaga | null>(null);
   const [ocupantes, setOcupantes] = useState<Veiculo | null>(null);
-  const [viatura, setViatura] = useState<{ t: "mover" | "historico" | "editar" | "nova"; v?: Veiculo } | null>(null);
+  const [viatura, setViatura] = useState<{ t: "mover" | "historico" | "editar" | "nova" | "periodo" | "trocar"; v?: Veiculo } | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
 
   const vagas = [...(vagasPorEquipe.get(equipe.id) ?? [])].sort((a, b) => (a.numero ?? 0) - (b.numero ?? 0));
@@ -476,6 +476,22 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
                     <div className="text-[11.5px] text-gray-500">
                       {[ve.placa, ve.modelo, ve.tracao4x4 ? "4x4" : null].filter(Boolean).join(" · ") || ve.codigo}
                     </div>
+                    {(() => {
+                      const uso = (usosPorEquipe.get(equipe.id) ?? []).find((u) => u.veiculoId === ve.id);
+                      const conf = uso ? conferenciaDoUso(uso) : null;
+                      const sucessora = ve.substituidoPorId ? dados.veiculos.find((x) => x.id === ve.substituidoPorId) : null;
+                      const antecessora = dados.veiculos.find((x) => x.substituidoPorId === ve.id);
+                      return (
+                        <div className="mt-1 space-y-0.5 text-[11px]">
+                          <div className="flex flex-wrap items-center gap-1.5 text-gray-500">
+                            <span className="num">{uso && (uso.inicio || uso.fim) ? `${uso.inicio ? fmtDia(uso.inicio) : "?"} → ${uso.fim ? fmtDia(uso.fim) : "?"}` : "sem datas na equipe"}</span>
+                            {conf && <span className={`${conf.nivel === "ok" ? "chip-ok" : conf.nivel === "atencao" ? "chip-warn" : "chip-mute"} !px-1.5 !py-0 !text-[10px]`}>{conf.texto}</span>}
+                          </div>
+                          {sucessora && <div className="text-info">Será substituída pela <b>{sucessora.identificacao}</b>{ve.trocaEm ? ` em ${fmtDia(ve.trocaEm)}` : ""}</div>}
+                          {antecessora && <div className="text-info">Vai substituir a <b>{antecessora.identificacao}</b>{antecessora.trocaEm ? ` em ${fmtDia(antecessora.trocaEm)}` : ""}</div>}
+                        </div>
+                      );
+                    })()}
                   </div>
                   {loc && (
                     <span className="shrink-0 text-right text-[10.5px] text-gray-400">
@@ -506,6 +522,16 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
                   {podeEditar && (
                     <button onClick={() => setOcupantes(ve)} className="btn-ghost btn-sm">
                       Quem vai
+                    </button>
+                  )}
+                  {podeEditar && (
+                    <button onClick={() => setViatura({ t: "periodo", v: ve })} className="btn-ghost btn-sm">
+                      Tempo na equipe
+                    </button>
+                  )}
+                  {podeEditar && (
+                    <button onClick={() => setViatura({ t: "trocar", v: ve })} className="btn-ghost btn-sm">
+                      Trocar
                     </button>
                   )}
                   {podeEditar && (
@@ -599,6 +625,8 @@ function FichaEquipe({ equipe, aoExcluir }: { equipe: Equipe; aoExcluir: () => v
       )}
       {ausenciasDe && <ModalAusencias vaga={ausenciasDe} onFechar={() => setAusenciasDe(null)} />}
       {ocupantes && <ModalOcupantes veiculo={ocupantes} equipeId={equipe.id} onFechar={() => setOcupantes(null)} />}
+      {viatura?.t === "periodo" && viatura.v && <ModalUsoViatura veiculo={viatura.v} uso={(usosPorEquipe.get(equipe.id) ?? []).find((u) => u.veiculoId === viatura.v!.id) ?? null} equipeIdInicial={equipe.id} onFechar={() => setViatura(null)} />}
+      {viatura?.t === "trocar" && viatura.v && <ModalTrocarViatura veiculo={viatura.v} onFechar={() => setViatura(null)} />}
       {viatura?.t === "mover" && viatura.v && <ModalMover veiculo={viatura.v} onFechar={() => setViatura(null)} />}
       {viatura?.t === "historico" && viatura.v && <ModalHistoricoVeiculo veiculo={viatura.v} onFechar={() => setViatura(null)} />}
       {viatura?.t === "editar" && viatura.v && <ModalVeiculo veiculo={viatura.v} onFechar={() => setViatura(null)} />}

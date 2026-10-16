@@ -23,6 +23,8 @@ export type DadosFiltraveis = {
   movimentos: { veiculoId: string }[];
   contratos: Contrato[];
   movimentosEquipe: { equipeId: string }[];
+  /** a viatura em cada equipe (opcional) */
+  usosVeiculo?: { veiculoId: string; equipeId: string }[];
 };
 
 /**
@@ -52,6 +54,7 @@ export function filtrarPorCliente<T extends DadosFiltraveis>(d: T, cliente: stri
     movimentos: d.movimentos.filter((m) => idsVeiculos.has(m.veiculoId)),
     contratos,
     movimentosEquipe: d.movimentosEquipe.filter((m) => idsEquipes.has(m.equipeId)),
+    ...(d.usosVeiculo ? { usosVeiculo: d.usosVeiculo.filter((u) => idsEquipes.has(u.equipeId) && idsVeiculos.has(u.veiculoId)) } : {}),
   };
 }
 

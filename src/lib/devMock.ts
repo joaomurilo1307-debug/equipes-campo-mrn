@@ -27,7 +27,16 @@ export function dadosMock(): any {
     status: u.status || "Em operação",
     observacao: u.observacao,
     cliente: (u.cliente ?? null) as string | null,
+    substituidoPorId: null as string | null,
+    trocaEm: (u.trocaEm ?? null) as string | null,
+    _substituta: u.substituidaPor,
   }));
+  // a troca planejada: a viatura aponta para a substituta pela identificação
+  for (const v of veiculos) {
+    const alvo = v._substituta ? veiculos.find((x) => x.identificacao.toLowerCase() === v._substituta!.toLowerCase()) : null;
+    v.substituidoPorId = alvo?.id ?? null;
+  }
+  const usosVeiculo = unicos.flatMap((u, i) => u.usos.map((x, k) => ({ id: `uso-${i + 1}-${k}`, veiculoId: `veic-${i + 1}`, equipeId: x.equipe, inicio: (x.inicio ?? null) as string | null, fim: (x.fim ?? null) as string | null, observacao: null as string | null })));
   const vagas = lido.vagas.map((v, i) => ({
     id: `v${i + 1}`,
     numero: v.numero,
@@ -56,6 +65,6 @@ export function dadosMock(): any {
   const porChave = new Map(lido.vagas.map((v, i) => [v, `v${i + 1}`]));
   const ausencias = lido.vagas.flatMap((v) => [...(v.ausencia ? [v.ausencia] : []), ...(v.ausencias ?? [])].map((a, k) => ({ id: `a-${porChave.get(v)}-${k}`, vagaId: porChave.get(v)!, tipo: a.tipo, inicio: a.inicio, fim: a.fim, observacao: null as string | null })));
   const contratos = lido.contratos.map((c, i) => ({ id: `ct${i + 1}`, codigo: c.codigo, nome: (c.nome ?? null) as string | null, cliente: c.cliente, gestor: c.gestor, local: (c.local ?? null) as string | null, observacao: (c.observacao ?? null) as string | null, ativo: true }));
-  cache = { equipes, vagas, ausencias, campanhas: [] as any[], alocacoes: [] as any[], veiculos, movimentos: [] as any[], contratos, movimentosEquipe: [] as any[] };
+  cache = { equipes, vagas, ausencias, campanhas: [] as any[], alocacoes: [] as any[], veiculos, movimentos: [] as any[], contratos, movimentosEquipe: [] as any[], usosVeiculo };
   return cache;
 }

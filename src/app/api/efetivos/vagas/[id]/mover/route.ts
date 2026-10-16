@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { exigir, proximoNumeroDeVaga, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
+import { exigir, garantirUso, proximoNumeroDeVaga, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
 import { dadosAoEntrarNaEquipe, posicaoLivreParaOcupar, vagaAbertaNoLugarDe } from "@/lib/efetivos/vagas";
 
 const schema = z.object({
@@ -52,6 +52,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     // a vaga ocupada deixa de existir como posição vazia: a pessoa passa a ocupar o lugar
     if (lugar) await tx.efetivoVaga.delete({ where: { id: lugar.id } });
     const atualizada = await tx.efetivoVaga.update({ where: { id: pessoa.id }, data: dadosAoEntrarNaEquipe(pessoa, destino, lugar) });
+    await garantirUso(tx, atualizada.veiculoId, atualizada.equipeId);
     return { aberta, atualizada };
   });
 

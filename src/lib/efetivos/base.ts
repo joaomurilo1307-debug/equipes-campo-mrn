@@ -4,6 +4,7 @@
 import * as XLSX from "xlsx";
 import { temNome, type Dia, type Indice } from "./disponibilidade";
 import { clienteDaEquipe } from "./clientes";
+import { conferirUso } from "./usosVeiculo";
 import { ROTULO_SITUACAO, ehReservaDeApoio, situacaoDaPosicao, type EquipeDoDia, type Situacao } from "./situacao";
 
 export type DadosBase = {
@@ -31,7 +32,9 @@ export type DadosBase = {
     origem?: string | null;
     conferir?: string | null;
   }[];
-  veiculos: { id: string; codigo: string; identificacao: string; placa: string | null; modelo: string | null; tracao4x4: boolean | null; status: string; observacao: string | null; cliente?: string | null }[];
+  veiculos: { id: string; codigo: string; identificacao: string; placa: string | null; modelo: string | null; tracao4x4: boolean | null; status: string; observacao: string | null; cliente?: string | null; substituidoPorId?: string | null; trocaEm?: Dia | null }[];
+  /** a viatura em cada equipe e por quanto tempo (a que só aparece nas pessoas entra sem datas) */
+  usos?: { veiculoId: string; equipeId: string; inicio: Dia | null; fim: Dia | null }[];
   ausencias: { id: string; vagaId: string; tipo: string; inicio: Dia; fim: Dia; observacao: string | null }[];
   contratos: { codigo: string; nome: string | null; cliente: string | null; gestor: string | null; local: string | null; observacao: string | null; ativo: boolean }[];
   movimentos?: { veiculoId: string; inicio: Dia; fim: Dia | null; projeto: string; equipeId: string | null }[];
@@ -313,21 +316,75 @@ export function montarPlanilhaBase(d: DadosBase, idx: Pick<Indice, "ausencias">,
   const eqCab = ["Cliente", "Contrato", "Equipe", "Início da equipe", "Fim da equipe", "Local / frente", "Gestor", "Observação", "Status", "Posições", "Com nome", "Sem nome informado", "Vagas abertas", "Viaturas"];
   const eqDados = campo.map((e) => {
     const r = porEquipe.get(e.id);
-    return [clienteDaEquipe(e, d.contratos) ?? "", e.projeto === "A definir" ? "" : e.projeto, e.nome, fmtBr(e.inicio), fmtBr(e.fim), e.local ?? "", e.gestor ?? "", e.observacao ?? "", e.status, r?.posicoes ?? 0, r?.comNome ?? 0, r?.semNome ?? 0, r?.abertas ?? 0, viaturasPorEquipe.get(e.id)?.size ?? 0];
+    return [clienteDaEquipe(e, d.contratos) ?? "", e.projeto === "A definir" ? "" : e.projeto, e.nome, fmtBr(e.inicio), fmtBr(e.fim), e.local ?? "", e.gestor ?? "", e.observacao ?? "", e.status, r?.posicoes ?? 0, r?.comNome ?? 0, r?.semNome ?? 0, r?.abertas ?? 0, new Set([...(d.usos ?? []).filter((u) => u.equipeId === e.id).map((u) => u.veiculoId), ...d.vagas.filter((v) => v.equipeId === e.id && v.veiculoId).map((v) => v.veiculoId!)]).size];
   });
   XLSX.utils.book_append_sheet(wb, aba([eqCab, ...eqDados], [9, 12, 44, 15, 15, 20, 14, 36, 10, 9, 9, 12, 12, 9]), "EQUIPES");
 
-  // ---- VIATURAS: cada viatura UMA vez (a mesma caminhonete em várias equipes não se repete)
-  const vtCab = ["Viatura", "Placa", "Modelo", "4x4", "Status", "Cliente", "Equipes que usam", "Nº de equipes", "Pessoas", "Observação"];
-  const vtDados = d.veiculos
-    .slice()
-    .sort((a, b) => a.identificacao.localeCompare(b.identificacao, "pt-BR", { numeric: true }))
-    .map((v) => {
-      const eqs = [...(equipesPorViatura.get(v.id) ?? [])].map((id) => equipePorId.get(id)).filter((e): e is NonNullable<typeof e> => !!e);
-      const cliente = v.cliente?.trim() || [...new Set(eqs.map((e) => clienteDaEquipe(e, d.contratos)).filter(Boolean))].join(", ");
-      return [v.identificacao, v.placa ?? "", v.modelo ?? "", v.tracao4x4 === true ? "Sim" : v.tracao4x4 === false ? "Não" : "", v.status, cliente, eqs.map((e) => e.nome).join(" · "), eqs.length, pessoasPorViatura.get(v.id) ?? 0, v.observacao ?? ""];
+  // ---- VIATURAS: uma linha por viatura e equipe (a mesma viatura pode servir a várias, em momentos diferentes).
+  // O cadastro (placa, modelo, 4x4, status, troca) fica na PRIMEIRA linha de cada viatura; o período e a conferência, em cada linha.
+  const veiculoPorId = new Map(d.veiculos.map((v) => [v.id, v]));
+  const usosDe = new Map<string, { equipeId: string; inicio: Dia | null; fim: Dia | null }[]>();
+  const poe = (veiculoId: string, equipeId: string, inicio: Dia | null, fim: Dia | null) => {
+    const l = usosDe.get(veiculoId) ?? [];
+    const ja = l.find((x) => x.equipeId === equipeId);
+    if (ja) {
+      ja.inicio ??= inicio;
+      ja.fim ??= fim;
+    } else l.push({ equipeId, inicio, fim });
+    usosDe.set(veiculoId, l);
+  };
+  for (const u of d.usos ?? []) if (veiculoPorId.has(u.veiculoId) && equipePorId.has(u.equipeId)) poe(u.veiculoId, u.equipeId, u.inicio, u.fim);
+  for (const v of d.vagas) if (v.veiculoId && equipePorId.has(v.equipeId) && !ehReservaDeApoio(equipePorId.get(v.equipeId))) poe(v.veiculoId, v.equipeId, null, null);
+  const ordemEquipeId = new Map(d.equipes.map((e, i) => [e.id, i]));
+  const vtCab = ["Viatura", "Placa", "Modelo", "4x4", "Status", "Cliente", "Equipe que usa", "Contrato", "Início na equipe", "Fim na equipe", "Equipe: início", "Equipe: fim", "Confere com a equipe?", "Pessoas", "Será substituída por", "Troca em", "Observação"];
+  const vtDados: unknown[][] = [];
+  const notasVt: { linha: number; texto: string }[] = [];
+  const substitutaDe = new Map<string, string>(); // viatura prevista -> a que ela vai substituir
+  for (const v of d.veiculos) if (v.substituidoPorId) substitutaDe.set(v.substituidoPorId, v.identificacao);
+  for (const v of d.veiculos.slice().sort((a, b) => a.identificacao.localeCompare(b.identificacao, "pt-BR", { numeric: true }))) {
+    const lista = (usosDe.get(v.id) ?? []).sort((a, b) => (ordemEquipeId.get(a.equipeId) ?? 0) - (ordemEquipeId.get(b.equipeId) ?? 0));
+    const substituta = v.substituidoPorId ? veiculoPorId.get(v.substituidoPorId) : null;
+    const cliente = v.cliente?.trim() || [...new Set(lista.map((x) => clienteDaEquipe(equipePorId.get(x.equipeId)!, d.contratos)).filter(Boolean))].join(", ");
+    const linhasDaViatura = lista.length ? lista : [null];
+    linhasDaViatura.forEach((u, i) => {
+      const e = u ? equipePorId.get(u.equipeId) : undefined;
+      const conf = u && e ? conferirUso(u, { inicio: e.inicio ?? null, fim: e.fim ?? null }).texto : "";
+      const primeira = i === 0;
+      vtDados.push([
+        v.identificacao,
+        primeira ? v.placa ?? "" : "",
+        primeira ? v.modelo ?? "" : "",
+        primeira ? (v.tracao4x4 === true ? "Sim" : v.tracao4x4 === false ? "Não" : "") : "",
+        primeira ? v.status : "",
+        primeira ? cliente : "",
+        e?.nome ?? "",
+        e && e.projeto !== "A definir" ? e.projeto : "",
+        u ? fmtBr(u.inicio) : "",
+        u ? fmtBr(u.fim) : "",
+        e ? fmtBr(e.inicio) : "",
+        e ? fmtBr(e.fim) : "",
+        conf,
+        u ? d.vagas.filter((x) => x.veiculoId === v.id && x.equipeId === u.equipeId && temNome(x)).length : 0,
+        primeira ? substituta?.identificacao ?? "" : "",
+        primeira ? fmtBr(v.trocaEm) : "",
+        primeira ? v.observacao ?? "" : "",
+      ]);
+      if (primeira) {
+        // a troca e o comentário da planilha ficam como comentário na célula da viatura (e continuam no sistema)
+        const partes: string[] = [];
+        if (substituta) partes.push(`Será substituída pela ${substituta.identificacao}${v.trocaEm ? ` a partir de ${fmtBr(v.trocaEm)}` : ""}.`);
+        if (substitutaDe.has(v.id)) partes.push(`Vai substituir a ${substitutaDe.get(v.id)}.`);
+        if (v.observacao) partes.push(v.observacao);
+        if (partes.length) notasVt.push({ linha: vtDados.length, texto: partes.join(" ") });
+      }
     });
-  XLSX.utils.book_append_sheet(wb, aba([vtCab, ...vtDados], [12, 12, 18, 6, 14, 9, 60, 10, 9, 36]), "VIATURAS");
+  }
+  const wsVt = aba([vtCab, ...vtDados], [12, 12, 18, 6, 14, 9, 44, 12, 14, 14, 13, 13, 34, 8, 16, 12, 30]);
+  for (const n of notasVt) {
+    const ref = XLSX.utils.encode_cell({ r: n.linha, c: 0 });
+    if (wsVt[ref]) (wsVt[ref] as XLSX.CellObject).c = [{ a: "Sistema", t: n.texto, T: false } as XLSX.Comments[number]];
+  }
+  XLSX.utils.book_append_sheet(wb, wsVt, "VIATURAS");
 
   // ---- LEIA-ME: a sequência em poucas linhas
   const emCampo = linhas.filter((l) => !l.reserva);
@@ -340,7 +397,8 @@ export function montarPlanilhaBase(d: DadosBase, idx: Pick<Indice, "ausencias">,
     ["1. EQUIPES   Início da equipe e Fim da equipe (dd/mm/aaaa). Sem o fim, o sistema não sabe quando as pessoas ficam livres. Também: Local / frente, Gestor, Observação."],
     ["2. PESSOAS   Status (Vigente, Férias, Afastado, Em contratação, Em mobilização...), e o período do status (Status: início / Status: fim) para férias e afastamentos."],
     ["              Previsão de entrada (vaga aberta ou em contratação), Contrato atual (outro) + Disponível a partir de (pessoa ainda em outro contrato), Destino, Observação."],
-    ["3. VIATURAS  Placa, Modelo, 4x4 e Status. Cada viatura aparece uma vez; \"Equipes que usam\" mostra onde ela está."],
+    ["3. VIATURAS  Placa, Modelo, 4x4 e Status (na primeira linha de cada viatura). Uma linha por viatura e equipe: Início na equipe e Fim na equipe dizem por quanto tempo ela fica lá, e a coluna \"Confere com a equipe?\" compara com o período da equipe."],
+    ["              Troca de viatura: \"Será substituída por\" + \"Troca em\". A viatura que vai chegar aparece como Prevista e depois é movimentada no sistema (Viaturas > Trocar)."],
     [""],
     ["Cliente: MRN e AGA ficam na mesma base. Para mudar alguém de equipe, de contrato ou de cliente, use o sistema (Pessoas > Mover) — a administração faz o movimento entre clientes."],
     ["Depois de preencher, envie em Base > Enviar planejamento preenchido: o sistema mostra o que vai mudar antes de aplicar. Só preenche; célula em branco não apaga nada."],
@@ -350,5 +408,47 @@ export function montarPlanilhaBase(d: DadosBase, idx: Pick<Indice, "ausencias">,
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(leia), "LEIA-ME");
   wb.SheetNames = ["LEIA-ME", "PESSOAS", "EQUIPES", "VIATURAS"];
 
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+/**
+ * A base EM BRANCO de um cliente (ex.: AGA) para preencher do zero. Tem as mesmas três abas da base e o mesmo formato que o sistema
+ * lê; o Cliente já vem escrito em todas as linhas. Linha sem Função (em PESSOAS) ou sem Equipe/Viatura é ignorada.
+ */
+export function montarModeloEmBranco(cliente: string, linhas = { pessoas: 300, equipes: 40, viaturas: 100 }): Buffer {
+  const wb = XLSX.utils.book_new();
+  const brancas = (n: number, colunas: number) => Array.from({ length: n }, () => [cliente, ...Array.from({ length: colunas - 1 }, () => null)]);
+
+  const peCab = ["Cliente", "Contrato", "Equipe", "Profissional", "Empresa", "Função", "Nível", "Atividade", "Direção 4x4", "Viatura", "Posição", "Status", "Status: início", "Status: fim", "Previsão de entrada", "Contrato atual (outro)", "Disponível a partir de", "Destino", "Observação"];
+  XLSX.utils.book_append_sheet(wb, aba([peCab, ...brancas(linhas.pessoas, peCab.length)], [9, 12, 40, 30, 17, 34, 10, 17, 10, 12, 18, 17, 12, 12, 14, 16, 16, 22, 36]), "PESSOAS");
+
+  const eqCab = ["Cliente", "Contrato", "Equipe", "Início da equipe", "Fim da equipe", "Local / frente", "Gestor", "Observação", "Status", "Posições", "Com nome", "Sem nome informado", "Vagas abertas", "Viaturas"];
+  XLSX.utils.book_append_sheet(wb, aba([eqCab, ...brancas(linhas.equipes, eqCab.length)], [9, 12, 44, 15, 15, 20, 14, 36, 10, 9, 9, 12, 12, 9]), "EQUIPES");
+
+  const vtCab = ["Viatura", "Placa", "Modelo", "4x4", "Status", "Cliente", "Equipe que usa", "Contrato", "Início na equipe", "Fim na equipe", "Equipe: início", "Equipe: fim", "Confere com a equipe?", "Pessoas", "Será substituída por", "Troca em", "Observação"];
+  const vtLinhas = Array.from({ length: linhas.viaturas }, () => vtCab.map((c) => (c === "Cliente" ? cliente : null)));
+  XLSX.utils.book_append_sheet(wb, aba([vtCab, ...vtLinhas], [12, 12, 18, 6, 14, 9, 44, 12, 14, 14, 13, 13, 34, 8, 16, 12, 30]), "VIATURAS");
+
+  const leia = [
+    [`BASE DAS EQUIPES DE CAMPO — ${cliente} (EM BRANCO, PARA PREENCHER)`],
+    [""],
+    ["Três abas concentram tudo. Preencha na ordem: EQUIPES, depois PESSOAS, depois VIATURAS. As colunas em amarelo são as que você preenche; as cinzas o Excel calcula sozinho."],
+    [""],
+    ["1. EQUIPES   Uma linha por equipe: Contrato, Equipe (o nome que vai valer nas outras abas), Início da equipe e Fim da equipe (dd/mm/aaaa), Local / frente, Gestor."],
+    ["              Sem o início e o fim, o sistema não consegue desenhar a linha do tempo nem o histograma, e não sabe quando as pessoas e as viaturas ficam livres."],
+    ["2. PESSOAS   Uma linha por posição na equipe. Equipe: escolha na lista (vem da aba EQUIPES). Função é obrigatória (linha sem Função é ignorada)."],
+    ["              Profissional em branco com Posição = Vaga aberta é uma vaga a preencher; Posição = Sem nome informado é um lugar já ocupado cujo nome ainda não se sabe."],
+    ["              Status: Vigente, Férias, Afastado, Em contratação, Em mobilização... Para férias/afastamento preencha também Status: início e Status: fim."],
+    ["              Previsão de entrada (vaga em contratação), Contrato atual (outro) + Disponível a partir de (pessoa que ainda está em outro contrato)."],
+    ["              Viatura: o nome da viatura que a pessoa usa (o mesmo escrito na aba VIATURAS)."],
+    ["3. VIATURAS  Uma linha por viatura e equipe que a usa. Placa, Modelo, 4x4 e Status só na primeira linha de cada viatura."],
+    ["              Início na equipe e Fim na equipe: por quanto tempo a viatura fica naquela equipe. A coluna \"Confere com a equipe?\" compara com o início e o fim da equipe e avisa quando não bate."],
+    ["              Troca: se a viatura vai ser trocada, escreva em \"Será substituída por\" o nome da nova e em \"Troca em\" a data. A nova pode ser listada em outra linha como Prevista. Comentários vão na célula (botão direito > Inserir comentário)."],
+    [""],
+    [`Para enviar: um administrador entra no sistema em Base > Importar planilha, escolhe esta planilha e marca \"Conferir antes de importar\"; o sistema mostra o que vai entrar antes de gravar. O Cliente (${cliente}) já está escrito em todas as linhas — não apague.`],
+    ["Depois da primeira carga, quem tem acesso do cliente atualiza pelo sistema (ou baixa a base, preenche as colunas amarelas e envia em Base > Enviar planejamento preenchido). Célula em branco nunca apaga o que já está no sistema."],
+  ];
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(leia), "LEIA-ME");
+  wb.SheetNames = ["LEIA-ME", "PESSOAS", "EQUIPES", "VIATURAS"];
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }

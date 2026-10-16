@@ -23,6 +23,7 @@ export async function POST(req: Request) {
     prisma.efetivoAusencia.deleteMany(),
     prisma.efetivoEquipeMovimento.deleteMany(),
     prisma.efetivoVeiculoMovimento.deleteMany(),
+    prisma.efetivoVeiculoUso.deleteMany(),
     prisma.efetivoVaga.deleteMany(),
     prisma.efetivoVeiculo.deleteMany(),
     prisma.efetivoEquipe.deleteMany(),
