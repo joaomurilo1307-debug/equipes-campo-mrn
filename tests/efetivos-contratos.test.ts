@@ -661,7 +661,8 @@ test("Aba MOVIMENTAÇÕES: as pessoas por equipe (banner, pessoas, vagas) e a li
   const banners = corpo.filter((l) => !l[3] && /pessoas/.test(String(l[4])));
   assert.equal(banners.length, r.equipes.filter((e) => e.grupo !== "Apoio").length, "um banner por equipe");
   assert.equal(corpo.filter((l) => l[3]).length, r.vagas.filter((v) => v.nome).length, "uma linha por pessoa");
-  assert.ok(corpo.some((l) => !l[3] && l[4] === "Vaga aberta"), "a vaga aberta aparece, sem profissional");
+  assert.ok(!corpo.some((l) => !l[3] && /^(Vaga aberta|Sem nome informado)$/.test(String(l[4]))), "vaga aberta e sem nome não viram linha: só quem pode ser movido");
+  assert.ok(banners.some((l) => /vaga aberta/.test(String(l[4]))), "o banner da equipe resume as vagas abertas");
   assert.ok(corpo.every((l) => !l[6] && !l[7]), "Ação e Equipe destino saem em branco para preencher");
   // lê de volta sem pedido nenhum e sem aviso novo
   const volta = lerPlanilhaEfetivos(baseDe(r), { anoReferencia: 2026 });

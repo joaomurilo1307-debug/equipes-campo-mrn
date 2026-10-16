@@ -253,7 +253,7 @@ function aba(linhas: unknown[][], largs: number[], filtro = true): XLSX.WorkShee
 export const COLUNAS_MOVIMENTACOES = ["Equipe", "Contrato", "Função", "Profissional", "Situação hoje", "Viatura", "Ação", "Equipe destino", "Novo status", "Até (férias, afastamento)", "A partir de", "Observação", "Conferência"] as const;
 export const ACOES_MOVIMENTACAO = ["Mover para outra equipe", "Liberar para outra equipe", "Desmobilizar (desligar)", "Mudar status"] as const;
 export const TITULO_MOVIMENTACOES = "MOVIMENTAÇÕES · mover, liberar, desmobilizar ou mudar o status das pessoas";
-export const AJUDA_MOVIMENTACOES = "Na linha da pessoa, escolha a Ação. Mover: escolha também a Equipe destino. Mudar status: escolha o Novo status (para férias e afastamento, preencha também A partir de e Até). Depois envie a planilha em Base > Enviar planejamento preenchido.";
+export const AJUDA_MOVIMENTACOES = "Na linha da pessoa, escolha a Ação. Mover: escolha também a Equipe destino. Depois envie a planilha em Base > Enviar planejamento preenchido. (Férias e afastamento ficam na aba PESSOAS: Status, de e até.)";
 
 /** A aba MOVIMENTAÇÕES: as pessoas de cada equipe, uma equipe depois da outra, com as colunas amarelas para mexer em quem for. */
 function abaMovimentacoes(d: DadosBase, linhas: LinhaBase[]): XLSX.WorkSheet {
@@ -272,19 +272,21 @@ function abaMovimentacoes(d: DadosBase, linhas: LinhaBase[]): XLSX.WorkSheet {
     if (b.reserva && doBloco.length === 0) continue;
     const comNome = doBloco.filter((l) => l.posicao === "Com nome").length;
     const abertas = doBloco.filter((l) => l.posicao === "Vaga aberta").length;
+    const semNome = doBloco.filter((l) => l.posicao === "Sem nome informado").length;
     const banner = vazio();
     banner[0] = b.nome;
     banner[1] = b.contrato;
-    banner[2] = b.periodo;
-    banner[4] = `${comNome} pessoas${abertas ? ` · ${abertas} ${abertas === 1 ? "vaga aberta" : "vagas abertas"}` : ""}`;
+    // o resumo vai todo numa célula só (E) para o texto correr à direita; o nome da equipe corre sobre as células vazias de C e D
+    banner[4] = [b.contrato, b.periodo, `${comNome} pessoas`, abertas ? `${abertas} ${abertas === 1 ? "vaga aberta" : "vagas abertas"}` : "", semNome ? `${semNome} sem nome informado` : ""].filter(Boolean).join(" · ");
     linhasDaAba.push(banner);
     for (const l of doBloco) {
+      if (l.posicao !== "Com nome") continue; // só quem tem nome pode ser movido
       const r = vazio();
       r[0] = b.reserva ? "(reserva)" : b.nome;
       r[1] = b.contrato;
       r[2] = l.cargo;
       r[3] = l.nome;
-      r[4] = l.posicao === "Com nome" ? l.situacaoHoje : l.posicao;
+      r[4] = l.situacaoHoje;
       r[5] = l.viatura;
       linhasDaAba.push(r);
     }
