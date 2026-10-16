@@ -256,7 +256,7 @@ test("Base das planilhas por contrato: 3 abas, e a base lê de volta igual", () 
   };
   const buf = montarPlanilhaBase(dados, indexar({ ausencias: [], alocacoes: [] }), "2026-10-15", original.conferencia ?? null);
   const wb = XLSX.read(buf, { type: "buffer" });
-  assert.deepEqual(wb.SheetNames, ["LEIA-ME", "PESSOAS", "EQUIPES", "VIATURAS"]);
+  assert.deepEqual(wb.SheetNames, ["LEIA-ME", "MOVIMENTAÇÕES", "PESSOAS", "EQUIPES", "VIATURAS"]);
   const leia = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets["LEIA-ME"], { header: 1 }).map((l) => (l as unknown[]).join(" "));
   assert.ok(leia.some((l) => /Conferência: 16 posições nas equipes/.test(l)), leia.join("\n"));
 
@@ -380,7 +380,7 @@ test("Base de 3 abas: o planejamento sai em branco e, preenchido no Excel (datas
   const r = lerPlanilhasEfetivos([P3686(false), PLT(false)], { anoReferencia: 2026, cliente: "MRN" });
   const buf = baseDe(r);
   const wb = XLSX.read(buf, { type: "buffer" });
-  assert.deepEqual(wb.SheetNames, ["LEIA-ME", "PESSOAS", "EQUIPES", "VIATURAS"]);
+  assert.deepEqual(wb.SheetNames, ["LEIA-ME", "MOVIMENTAÇÕES", "PESSOAS", "EQUIPES", "VIATURAS"]);
   // equipes: cliente MRN, sem datas (as planilhas não trazem)
   const eqs = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets["EQUIPES"]);
   assert.ok(eqs.length >= 5);
@@ -609,7 +609,7 @@ test("Viatura nova só no Excel: entra como viatura (e a substituta que não exi
 test("Base em branco do cliente (AGA): três abas com o cliente já escrito; vazia não importa; preenchida entra como AGA com o tempo das viaturas", () => {
   const buf = montarModeloEmBranco("AGA", { pessoas: 5, equipes: 3, viaturas: 4 });
   const wb = XLSX.read(buf, { type: "buffer" });
-  assert.deepEqual(wb.SheetNames, ["LEIA-ME", "PESSOAS", "EQUIPES", "VIATURAS"]);
+  assert.deepEqual(wb.SheetNames, ["LEIA-ME", "MOVIMENTAÇÕES", "PESSOAS", "EQUIPES", "VIATURAS"]);
   for (const aba of ["PESSOAS", "EQUIPES", "VIATURAS"]) {
     const linhas = XLSX.utils.sheet_to_json<Record<string, string>>(wb.Sheets[aba]);
     assert.ok(linhas.length > 0 && linhas.every((x) => x["Cliente"] === "AGA"), `${aba}: o Cliente já vem escrito`);
@@ -632,4 +632,99 @@ test("Base em branco do cliente (AGA): três abas com o cliente já escrito; vaz
   assert.equal(v.identificacao, "AGA-01");
   assert.equal(v.cliente, "AGA");
   assert.deepEqual(v.usos.map((u) => [u.inicio, u.fim]), [["2026-11-01", "2027-04-30"]]);
+});
+
+// ---------------------------------------------------------------- aba MOVIMENTAÇÕES
+
+/** Preenche as colunas de uma linha da aba MOVIMENTAÇÕES (cabeçalho na linha 4), achando a linha pelo profissional. */
+function preencherMov(buf: Buffer, pessoa: string, valores: Record<string, string>, ocorrencia = 0): Buffer {
+  const wb = XLSX.read(buf, { type: "buffer" });
+  const ws = wb.Sheets["MOVIMENTAÇÕES"];
+  const linhas = XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: "" });
+  const cab = linhas[3].map(String);
+  let visto = 0;
+  for (let i = 4; i < linhas.length; i++) {
+    if (String(linhas[i][cab.indexOf("Profissional")]) !== pessoa) continue;
+    if (visto++ < ocorrencia) continue;
+    for (const [col, v] of Object.entries(valores)) ws[XLSX.utils.encode_cell({ r: i, c: cab.indexOf(col) })] = { t: "s", v };
+    break;
+  }
+  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+}
+
+test("Aba MOVIMENTAÇÕES: as pessoas por equipe (banner, pessoas, vagas) e a lista de ações em branco", () => {
+  const r = lerPlanilhasEfetivos([P3686(false), PLT(false)], { anoReferencia: 2026, cliente: "MRN" });
+  const wb = XLSX.read(baseDe(r), { type: "buffer" });
+  const linhas = XLSX.utils.sheet_to_json<string[]>(wb.Sheets["MOVIMENTAÇÕES"], { header: 1, defval: "" });
+  assert.deepEqual(linhas[3].slice(0, 13).map(String), ["Equipe", "Contrato", "Função", "Profissional", "Situação hoje", "Viatura", "Ação", "Equipe destino", "Novo status", "Até (férias, afastamento)", "A partir de", "Observação", "Conferência"]);
+  const corpo = linhas.slice(4);
+  const banners = corpo.filter((l) => !l[3] && /pessoas/.test(String(l[4])));
+  assert.equal(banners.length, r.equipes.filter((e) => e.grupo !== "Apoio").length, "um banner por equipe");
+  assert.equal(corpo.filter((l) => l[3]).length, r.vagas.filter((v) => v.nome).length, "uma linha por pessoa");
+  assert.ok(corpo.some((l) => !l[3] && l[4] === "Vaga aberta"), "a vaga aberta aparece, sem profissional");
+  assert.ok(corpo.every((l) => !l[6] && !l[7]), "Ação e Equipe destino saem em branco para preencher");
+  // lê de volta sem pedido nenhum e sem aviso novo
+  const volta = lerPlanilhaEfetivos(baseDe(r), { anoReferencia: 2026 });
+  assert.equal(volta.movimentos, undefined);
+});
+
+test("Aba MOVIMENTAÇÕES: mover, liberar, desmobilizar e mudar status viram plano; o que não dá é recusado com aviso", () => {
+  const r = lerPlanilhasEfetivos([P3686(false), PLT(false)], { anoReferencia: 2026, cliente: "MRN" });
+  let f = baseDe(r);
+  f = preencherMov(f, "Ana Flavia", { Ação: "Mover para outra equipe", "Equipe destino": "GESTÃO", Observação: "reforço" });
+  f = preencherMov(f, "Jonas", { Ação: "Liberar para outra equipe", "A partir de": "10/10/2026" });
+  f = preencherMov(f, "Magson Lopes", { Ação: "Desmobilizar (desligar)" });
+  f = preencherMov(f, "Daniel Lira", { Ação: "Mudar status", "Novo status": "Férias", "A partir de": "10/11/2026", "Até (férias, afastamento)": "29/11/2026" });
+  f = preencherMov(f, "Lais Barbosa", { Ação: "Mover para outra equipe", "Equipe destino": "EQUIPE QUE NAO EXISTE" });
+  f = preencherMov(f, "Isabele Macedo", { Ação: "Mover para outra equipe", "Equipe destino": "GESTÃO", "A partir de": "01/01/2030" });
+  f = preencherMov(f, "Luiz Fernando", { Ação: "Voar" });
+  f = preencherMov(f, "Samuel Garcia", { Ação: "Mover para outra equipe" }); // sem destino
+  const lido = lerPlanilhaEfetivos(f, { anoReferencia: 2026 });
+  assert.equal(lido.movimentos?.length, 7, "o pedido de ação inválida não vira movimento");
+  assert.ok(lido.avisos.some((a) => /«Voar».*não é uma das opções/.test(a)));
+  const ferias = lido.movimentos!.find((m) => m.nome === "Daniel Lira")!;
+  assert.deepEqual([ferias.acao, ferias.status, ferias.ausencia], ["status", "Vigente", { tipo: "Férias", inicio: "2026-11-10", fim: "2026-11-29" }]);
+
+  const plano = planejarAtualizacao(lido, atualDe(r), "2026-10-16");
+  const resumo = plano.movimentos.map((m) => [m.rotulo.split(" (")[0], m.acao, m.destinoNome]);
+  // na ordem da planilha (a equipe GESTÃO vem antes da EQUIPE 01)
+  assert.deepEqual(resumo, [["Daniel Lira", "status", null], ["Ana Flavia", "mover", "GESTÃO"], ["Jonas", "liberar", null], ["Magson Lopes", "desmobilizar", null]]);
+  assert.equal(plano.movimentos.find((m) => m.rotulo.startsWith("Daniel"))!.ausencia?.tipo, "Férias");
+  assert.equal(plano.movimentos.find((m) => m.rotulo.startsWith("Ana"))!.observacao, "reforço");
+  const avisos = plano.avisos.join("\n");
+  assert.match(avisos, /Lais Barbosa.*«EQUIPE QUE NAO EXISTE» não existe/);
+  assert.match(avisos, /Isabele Macedo.*data \(01\/01\/2030\) é futura/);
+  assert.match(avisos, /Samuel Garcia.*sem a equipe de destino/);
+  // quem pediu mover para a própria equipe ou já está fora: nada a fazer
+  assert.equal(totalDeMudancas(plano) >= 4, true);
+});
+
+test("Aba MOVIMENTAÇÕES: pessoa que já foi movida (não está mais na equipe da linha) e duas ações para a mesma pessoa não passam", () => {
+  const r = lerPlanilhasEfetivos([PLT(false)], { anoReferencia: 2026, cliente: "MRN" });
+  let f = baseDe(r);
+  f = preencherMov(f, "Ana Flavia", { Ação: "Mover para outra equipe", "Equipe destino": "GESTÃO" });
+  const atual = atualDe(r);
+  // no sistema a Ana já está em outra equipe: a linha do Excel (equipe antiga) não acha a pessoa
+  const gestao = atual.equipes.find((e) => e.nome === "GESTÃO")!;
+  const comAnaNaGestao: Atuais = { ...atual, vagas: atual.vagas.map((v) => (v.nome === "Ana Flavia" ? { ...v, equipeId: gestao.id } : v)) };
+  const plano = planejarAtualizacao(lerPlanilhaEfetivos(f, { anoReferencia: 2026 }), comAnaNaGestao, "2026-10-16");
+  assert.equal(plano.movimentos.length, 0);
+  assert.match(plano.avisos.join("\n"), /Ana Flavia.*não encontrei esta pessoa na equipe «EQUIPE 01 - FAUNA E FLORA LT»/);
+  // a mesma pessoa duas vezes (duas linhas iguais): só vale a primeira
+  let g = baseDe(r);
+  g = preencherMov(g, "Ana Flavia", { Ação: "Liberar para outra equipe" });
+  const lido = lerPlanilhaEfetivos(g, { anoReferencia: 2026 });
+  lido.movimentos!.push({ ...lido.movimentos![0], linha: 99, acao: "desmobilizar" });
+  const plano2 = planejarAtualizacao(lido, atual, "2026-10-16");
+  assert.equal(plano2.movimentos.length, 1);
+  assert.match(plano2.avisos.join("\n"), /já tem outra movimentação/);
+});
+
+test("Base em branco: a aba MOVIMENTAÇÕES vem vazia para escrever (equipe, profissional e ação) e não atrapalha a leitura", () => {
+  const wb = XLSX.read(montarModeloEmBranco("AGA", { pessoas: 3, equipes: 2, viaturas: 2 }), { type: "buffer" });
+  assert.ok(wb.SheetNames.includes("MOVIMENTAÇÕES"));
+  const linhas = XLSX.utils.sheet_to_json<string[]>(wb.Sheets["MOVIMENTAÇÕES"], { header: 1, defval: "" });
+  assert.equal(linhas[3][3], "Profissional");
+  assert.equal(linhas[3][6], "Ação");
+  assert.ok(linhas.length >= 150);
 });

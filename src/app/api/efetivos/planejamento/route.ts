@@ -6,6 +6,7 @@ import { instanteBrasilia } from "@/lib/efetivos/hoje";
 import { lerPlanilhaEfetivos, normalizar } from "@/lib/efetivos/importarPlanilha";
 import { planejarAtualizacao, totalDeMudancas } from "@/lib/efetivos/planejamento";
 import { filtrarPorCliente } from "@/lib/efetivos/clientes";
+import { aplicarMovimento } from "@/lib/efetivos/aplicarMovimento";
 import { STATUS_VEICULO } from "@/lib/efetivos/veiculos";
 
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -51,13 +52,13 @@ export async function POST(req: Request) {
   );
   const { equipes, vagas, veiculos, contratos, ausencias, usosVeiculo } = escopo;
   const plano = planejarAtualizacao(lido, {
-    equipes: equipes.map((e) => ({ id: e.id, codigo: e.codigo, nome: e.nome, projeto: e.projeto, inicio: diaDe(e.inicio), fim: diaDe(e.fim), local: e.local, gestor: e.gestor, observacao: e.observacao })),
+    equipes: equipes.map((e) => ({ id: e.id, codigo: e.codigo, nome: e.nome, projeto: e.projeto, inicio: diaDe(e.inicio), fim: diaDe(e.fim), local: e.local, gestor: e.gestor, observacao: e.observacao, grupo: e.grupo })),
     vagas: vagas.map((v) => ({ id: v.id, equipeId: v.equipeId, numero: v.numero, origem: v.origem, nome: v.nome, cargo: v.cargo, status: v.status, previsaoInicio: diaDe(v.previsaoInicio), contratoAtual: v.contratoAtual, disponivelAPartir: diaDe(v.disponivelAPartir), destino: v.destino, observacao: v.observacao })),
     veiculos: veiculos.map((v) => ({ id: v.id, identificacao: v.identificacao, placa: v.placa, modelo: v.modelo, tracao4x4: v.tracao4x4, status: v.status, observacao: v.observacao, substituidoPorId: v.substituidoPorId, trocaEm: diaDe(v.trocaEm) })),
     contratos: contratos.map((c) => ({ codigo: c.codigo, nome: c.nome, cliente: c.cliente, gestor: c.gestor, local: c.local, observacao: c.observacao })),
     ausencias: ausencias.map((x) => ({ vagaId: x.vagaId, tipo: x.tipo, inicio: diaDe(x.inicio)!, fim: diaDe(x.fim)! })),
     usos: (usosVeiculo ?? []).map((u) => ({ veiculoId: u.veiculoId, equipeId: u.equipeId, inicio: diaDe(u.inicio), fim: diaDe(u.fim) })),
-  });
+  }, instanteBrasilia().iso);
 
   // viatura nova com o mesmo nome de uma que é de outro cliente: não cria (e não mexe nela)
   const idsNoEscopo = new Set(veiculos.map((v) => v.id));
@@ -79,6 +80,7 @@ export async function POST(req: Request) {
     viaturasNovas: plano.veiculosNovos.length,
     periodosDeViatura: plano.usos.length,
     trocas: plano.trocas.length,
+    movimentacoes: plano.movimentos.length,
     total: totalDeMudancas(plano),
     exemplos: [
       ...plano.equipes.slice(0, 6).map((x) => `${x.rotulo}: ${Object.entries(x.mudancas).map(([k, v]) => `${k} ${v}`).join(", ")}`),
@@ -87,14 +89,17 @@ export async function POST(req: Request) {
       ...plano.veiculosNovos.slice(0, 4).map((x) => `Nova viatura ${x.identificacao}${x.status ? ` (${x.status})` : ""}`),
       ...plano.usos.slice(0, 4).map((x) => `${x.rotulo}: ${x.inicio ?? "?"} a ${x.fim ?? "?"}`),
       ...plano.trocas.slice(0, 4).map((x) => `Troca ${x.rotulo}${x.trocaEm ? ` em ${x.trocaEm}` : ""}`),
+      ...plano.movimentos.slice(0, 8).map((x) => `${x.rotulo}: ${x.acao === "mover" ? `mover para ${x.destinoNome}` : x.acao === "liberar" ? "liberar para outra equipe" : x.acao === "desmobilizar" ? "desmobilizar" : x.ausencia ? `${x.ausencia.tipo} de ${x.ausencia.inicio} a ${x.ausencia.fim}` : `status ${x.status}`}`),
     ],
     avisos: plano.avisos,
   };
   if (simular || plano.avisos.length > 0 && totalDeMudancas(plano) === 0) return NextResponse.json(resumo);
 
   const dia = (d: string | null | undefined) => (d && dataValida(d) ? dataDe(d) : null);
+  const historicoMov: { id: string; texto: string }[] = [];
   await prisma.$transaction(
     async (tx) => {
+      historicoMov.length = 0;
       for (const x of plano.equipes) {
         const m = x.mudancas;
         await tx.efetivoEquipe.update({ where: { id: x.id }, data: { ...(m.inicio ? { inicio: dia(m.inicio) } : {}), ...(m.fim ? { fim: dia(m.fim) } : {}), ...(m.local ? { local: m.local } : {}), ...(m.gestor ? { gestor: m.gestor } : {}), ...(m.observacao ? { observacao: m.observacao } : {}) } });
@@ -128,6 +133,11 @@ export async function POST(req: Request) {
         const data = { inicio: dia(x.inicio), fim: dia(x.fim) };
         await tx.efetivoVeiculoUso.upsert({ where: { veiculoId_equipeId: { veiculoId, equipeId: x.equipeId } }, create: { veiculoId, equipeId: x.equipeId, ...data }, update: data });
       }
+      // movimentações da aba MOVIMENTAÇÕES (mover de equipe, liberar, desmobilizar, status), na ordem da planilha
+      for (const x of plano.movimentos) {
+        const texto = await aplicarMovimento(tx, x, instanteBrasilia().iso);
+        if (texto) historicoMov.push({ id: x.vagaId, texto });
+      }
       // a troca planejada
       for (const x of plano.trocas) {
         const veiculoId = idDe(x.veiculoId, x.veiculoNovo);
@@ -138,6 +148,7 @@ export async function POST(req: Request) {
     },
     { timeout: 60000, maxWait: 15000 }
   );
-  await registrar(a.userId, "PLANEJAMENTO_IMPORTADO", "IMPORTACAO", undefined, `Planejamento preenchido enviado por ${a.nome} ("${arquivo.name}"): ${resumo.equipes} equipes, ${resumo.posicoes} posições, ${resumo.viaturas} viaturas, ${resumo.contratos} contratos, ${resumo.ausencias} ausências, ${resumo.viaturasNovas} viaturas novas, ${resumo.periodosDeViatura} períodos de viatura e ${resumo.trocas} trocas`);
+  for (const h of historicoMov) await registrar(a.userId, "VAGA_MOVIDA", "VAGA", h.id, `${h.texto} (pela planilha, por ${a.nome})`);
+  await registrar(a.userId, "PLANEJAMENTO_IMPORTADO", "IMPORTACAO", undefined, `Planejamento preenchido enviado por ${a.nome} ("${arquivo.name}"): ${resumo.equipes} equipes, ${resumo.posicoes} posições, ${resumo.viaturas} viaturas, ${resumo.contratos} contratos, ${resumo.ausencias} ausências, ${resumo.viaturasNovas} viaturas novas, ${resumo.periodosDeViatura} períodos de viatura, ${resumo.trocas} trocas e ${resumo.movimentacoes} movimentações de pessoas`);
   return NextResponse.json({ ...resumo, simulacao: false });
 }

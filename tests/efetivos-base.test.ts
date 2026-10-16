@@ -240,7 +240,7 @@ test("Base em Excel: o que sai do sistema entra de volta igual (equipes, posiç�
   const original = lerPlanilhaEfetivos(PLANILHA(), { anoReferencia: 2026 });
   const buf = montarPlanilhaBase(dadosDe(original), indexar({ ausencias: [], alocacoes: [] }), "2026-10-15", original.conferencia ?? null);
   const wb = XLSX.read(buf, { type: "buffer" });
-  assert.deepEqual(wb.SheetNames, ["LEIA-ME", "PESSOAS", "EQUIPES", "VIATURAS"], "o mínimo de abas para concentrar o preenchimento");
+  assert.deepEqual(wb.SheetNames, ["LEIA-ME", "MOVIMENTAÇÕES", "PESSOAS", "EQUIPES", "VIATURAS"], "o mínimo de abas para concentrar o preenchimento");
   const volta = lerPlanilhaEfetivos(buf, { anoReferencia: 2026 });
   assert.equal(volta.formato, "base");
   assert.equal(volta.equipes.length, original.equipes.length);

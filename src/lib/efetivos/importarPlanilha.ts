@@ -122,6 +122,22 @@ export function veiculosUnicos(usos: VeiculoImportado[]): VeiculoUnico[] {
   return [...porChave.values()];
 }
 
+/** Um pedido da aba MOVIMENTAÇÕES: o que fazer com uma pessoa (mover de equipe, liberar, desmobilizar, mudar status). */
+export type MovimentoPedido = {
+  /** número da linha no Excel */
+  linha: number;
+  equipe: string;
+  funcao: string;
+  nome: string;
+  acao: "mover" | "liberar" | "desmobilizar" | "status";
+  destino: string;
+  /** só em "mudar status": o status já interpretado e, se o período foi informado, a ausência */
+  status: string | null;
+  ausencia: { tipo: string; inicio: Dia; fim: Dia } | null;
+  data: Dia | null;
+  observacao: string | null;
+};
+
 export type ResultadoImportacao = {
   formato: "painel" | "divisao" | "original" | "cruzado" | "base" | "contratos";
   equipes: EquipeImportada[];
@@ -129,6 +145,8 @@ export type ResultadoImportacao = {
   veiculos: VeiculoImportado[];
   contratos: ContratoImportado[];
   avisos: string[];
+  /** pedidos da aba MOVIMENTAÇÕES (só a base traz) */
+  movimentos?: MovimentoPedido[];
   // o que a conferencia precisa para provar de onde vem cada numero (formatos cruzado e por contrato)
   conferencia?: ConferenciaDaImportacao;
 };
@@ -1022,6 +1040,78 @@ const ESTADOS_QUE_NAO_SAO_AUSENCIA = ["Vigente", "Em contratação", "Desmobiliz
  * fim) e VIATURAS (cada viatura uma vez). Tudo que se preenche está nessas abas; o resto o sistema calcula.
  * Status + período (início e fim) viram uma ausência com data; status sem datas fica como está escrito.
  */
+/** A equipe da linha de quem está fora das equipes de campo (a reserva) é escrita assim na aba. */
+const EQUIPE_DA_RESERVA = ["", "(reserva)", "reserva", "fora das equipes", "fora das equipes de campo", "(fora das equipes de campo)"];
+
+/** Lê a aba MOVIMENTAÇÕES: uma linha com profissional e ação é um pedido; banners de equipe e vagas abertas ficam de fora. */
+function lerMovimentacoes(wb: XLSX.WorkBook, avisos: string[]): MovimentoPedido[] {
+  const aba = wb.SheetNames.find((n) => normalizar(n) === "movimentacoes");
+  if (!aba) return [];
+  const { linhas, numero } = lerLinhasNumeradas(wb.Sheets[aba]);
+  const ch = acharCabecalho(linhas, ["profissional", "acao"]);
+  if (!ch) return [];
+  const c = ch.cab;
+  const iEq = col(c, "equipe");
+  const iFun = col(c, "funcao");
+  const iNome = col(c, "profissional");
+  const iAcao = col(c, "acao");
+  const iDest = col(c, "equipe destino");
+  const iSt = col(c, "novo status");
+  const iAte = col(c, "ate", "ate (ferias, afastamento)");
+  const iData = col(c, "a partir de");
+  const iObs = col(c, "observacao");
+  const out: MovimentoPedido[] = [];
+  for (let i = ch.indice + 1; i < linhas.length; i++) {
+    const r = linhas[i];
+    const nome = texto(r[iNome]);
+    const acaoBruta = normalizar(r[iAcao]);
+    if (!acaoBruta) continue;
+    const linha = numero[i];
+    if (!nome) {
+      avisos.push(`Movimentações, linha ${linha}: escolheu uma ação mas não há profissional nessa linha (banner de equipe ou vaga aberta); ignorada.`);
+      continue;
+    }
+    const acao: MovimentoPedido["acao"] | null = acaoBruta.startsWith("mover") ? "mover" : acaoBruta.startsWith("liberar") ? "liberar" : acaoBruta.startsWith("desmobilizar") ? "desmobilizar" : acaoBruta.startsWith("mudar status") ? "status" : null;
+    if (!acao) {
+      avisos.push(`Movimentações, linha ${linha}: a ação «${texto(r[iAcao])}» não é uma das opções (Mover para outra equipe, Liberar para outra equipe, Desmobilizar, Mudar status); ignorada.`);
+      continue;
+    }
+    const equipeBruta = normalizar(r[iEq]);
+    const data = iData >= 0 ? paraDia(r[iData]) : null;
+    const ate = iAte >= 0 ? paraDia(r[iAte]) : null;
+    let status: string | null = null;
+    let ausencia: MovimentoPedido["ausencia"] = null;
+    if (acao === "status") {
+      const statusBruto = iSt >= 0 ? texto(r[iSt]) : "";
+      if (!statusBruto) {
+        avisos.push(`Movimentações, linha ${linha} (${nome}): «Mudar status» sem o novo status; ignorada.`);
+        continue;
+      }
+      const st = statusDaPlanilha(statusBruto);
+      if (data && ate && data <= ate && !ESTADOS_QUE_NAO_SAO_AUSENCIA.includes(st.status)) {
+        ausencia = { tipo: statusBruto, inicio: data, fim: ate };
+        status = "Vigente";
+      } else {
+        if ((data && !ate && !ESTADOS_QUE_NAO_SAO_AUSENCIA.includes(st.status)) || (ate && !data)) avisos.push(`Movimentações, linha ${linha} (${nome}): o período do status precisa de «A partir de» e «Até»; o status foi aplicado sem período.`);
+        status = st.status;
+      }
+    }
+    out.push({
+      linha,
+      equipe: EQUIPE_DA_RESERVA.includes(equipeBruta) ? "" : texto(r[iEq]),
+      funcao: iFun >= 0 ? texto(r[iFun]) : "",
+      nome,
+      acao,
+      destino: iDest >= 0 ? texto(r[iDest]) : "",
+      status,
+      ausencia,
+      data,
+      observacao: iObs >= 0 ? textoOuNulo(r[iObs]) : null,
+    });
+  }
+  return out;
+}
+
 function lerBaseV3(wb: XLSX.WorkBook, nomeAba: string): ResultadoImportacao {
   const avisos: string[] = [];
   const linhas = lerLinhas(wb.Sheets[nomeAba]);
@@ -1256,5 +1346,6 @@ function lerBaseV3(wb: XLSX.WorkBook, nomeAba: string): ResultadoImportacao {
       ja.cliente ??= e.cliente ?? null;
     }
   }
-  return { formato: "base", equipes: [...equipes.values()], vagas, veiculos: [...veiculos.values()], contratos: [...contratos.values()], avisos };
+  const movimentos = lerMovimentacoes(wb, avisos);
+  return { formato: "base", equipes: [...equipes.values()], vagas, veiculos: [...veiculos.values()], contratos: [...contratos.values()], avisos, ...(movimentos.length ? { movimentos } : {}) };
 }

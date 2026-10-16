@@ -2,10 +2,10 @@
 // equipes, previsão de entrada, contrato atual/disponível a partir de/destino, placa e modelo das viaturas, períodos de ausência).
 // Regras: só preenche; uma célula em branco NUNCA apaga o que já está no sistema; nada do que veio das planilhas (nomes, cargos,
 // empresas, status) é tocado. Puro: recebe o que foi lido e o que o sistema tem, devolve o que mudaria.
-import { normalizar, type ResultadoImportacao } from "./importarPlanilha";
+import { normalizar, type MovimentoPedido, type ResultadoImportacao } from "./importarPlanilha";
 import type { Dia } from "./disponibilidade";
 
-export type AtuaisEquipe = { id: string; codigo: string; nome: string; projeto: string; inicio: Dia | null; fim: Dia | null; local: string | null; gestor: string | null; observacao: string | null };
+export type AtuaisEquipe = { id: string; codigo: string; nome: string; projeto: string; inicio: Dia | null; fim: Dia | null; local: string | null; gestor: string | null; observacao: string | null; /** "Apoio" = a reserva (fora das equipes de campo) */ grupo?: string };
 export type AtuaisVaga = { id: string; equipeId: string; numero: number | null; origem: string | null; nome: string | null; cargo: string; status: string; previsaoInicio: Dia | null; contratoAtual: string | null; disponivelAPartir: Dia | null; destino: string | null; observacao: string | null };
 export type AtuaisVeiculo = { id: string; identificacao: string; placa: string | null; modelo: string | null; tracao4x4: boolean | null; status: string; observacao: string | null; substituidoPorId?: string | null; trocaEm?: Dia | null };
 export type AtuaisUso = { veiculoId: string; equipeId: string; inicio: Dia | null; fim: Dia | null };
@@ -13,6 +13,19 @@ export type AtuaisContrato = { codigo: string; nome: string | null; cliente: str
 export type AtuaisAusencia = { vagaId: string; tipo: string; inicio: Dia; fim: Dia };
 
 export type Atuais = { equipes: AtuaisEquipe[]; vagas: AtuaisVaga[]; veiculos: AtuaisVeiculo[]; contratos: AtuaisContrato[]; ausencias: AtuaisAusencia[]; usos?: AtuaisUso[] };
+
+/** O que fazer com uma pessoa, já resolvido contra o que o sistema tem (a posição e a equipe de destino existem). */
+export type MovimentoPlanejado = {
+  vagaId: string;
+  rotulo: string;
+  acao: MovimentoPedido["acao"];
+  destinoEquipeId: string | null;
+  destinoNome: string | null;
+  status: string | null;
+  ausencia: { tipo: string; inicio: Dia; fim: Dia } | null;
+  data: Dia | null;
+  observacao: string | null;
+};
 
 export type PlanoAtualizacao = {
   equipes: { id: string; rotulo: string; mudancas: Partial<Pick<AtuaisEquipe, "inicio" | "fim" | "local" | "gestor" | "observacao">> }[];
@@ -26,11 +39,13 @@ export type PlanoAtualizacao = {
   usos: { veiculoId: string | null; veiculoNovo: string | null; equipeId: string; rotulo: string; inicio: Dia | null; fim: Dia | null; criar: boolean }[];
   /** troca planejada: a viatura (ou a nova) será substituída pela outra */
   trocas: { veiculoId: string | null; veiculoNovo: string | null; alvoId: string | null; alvoNovo: string | null; rotulo: string; trocaEm: Dia | null }[];
+  /** a aba MOVIMENTAÇÕES: mover de equipe, liberar, desmobilizar, mudar status */
+  movimentos: MovimentoPlanejado[];
   /** linhas do Excel que não acharam par no sistema, e datas recusadas */
   avisos: string[];
 };
 
-export const totalDeMudancas = (p: PlanoAtualizacao) => p.equipes.length + p.vagas.length + p.veiculos.length + p.contratos.length + p.ausencias.length + p.veiculosNovos.length + p.usos.length + p.trocas.length;
+export const totalDeMudancas = (p: PlanoAtualizacao) => p.equipes.length + p.vagas.length + p.veiculos.length + p.contratos.length + p.ausencias.length + p.veiculosNovos.length + p.usos.length + p.trocas.length + p.movimentos.length;
 
 const STATUS_VEICULO_OK = ["Em operação", "Disponível", "Em manutenção", "Parado", "Devolvido", "Prevista"];
 
@@ -45,8 +60,8 @@ function diferencas<T extends Record<string, unknown>>(novo: Partial<T>, atual: 
   return out;
 }
 
-export function planejarAtualizacao(lido: ResultadoImportacao, atual: Atuais): PlanoAtualizacao {
-  const plano: PlanoAtualizacao = { equipes: [], vagas: [], veiculos: [], contratos: [], ausencias: [], veiculosNovos: [], usos: [], trocas: [], avisos: [] };
+export function planejarAtualizacao(lido: ResultadoImportacao, atual: Atuais, hoje: Dia = new Date().toISOString().slice(0, 10)): PlanoAtualizacao {
+  const plano: PlanoAtualizacao = { equipes: [], vagas: [], veiculos: [], contratos: [], ausencias: [], veiculosNovos: [], usos: [], trocas: [], movimentos: [], avisos: [] };
 
   // ---- equipes: pelo nome (o código do Excel pode não ser o do sistema)
   const equipePorNome = new Map<string, AtuaisEquipe[]>();
@@ -158,5 +173,63 @@ export function planejarAtualizacao(lido: ResultadoImportacao, atual: Atuais): P
     const m = diferencas({ nome: c.nome ?? null, cliente: c.cliente, gestor: c.gestor, local: c.local ?? null, observacao: c.observacao ?? null }, { nome: s.nome, cliente: s.cliente, gestor: s.gestor, local: s.local, observacao: s.observacao } as Record<string, unknown>) as PlanoAtualizacao["contratos"][number]["mudancas"];
     if (Object.keys(m).length) plano.contratos.push({ codigo: c.codigo, mudancas: m });
   }
+  // ---- movimentações (aba MOVIMENTAÇÕES): mover de equipe, liberar, desmobilizar, mudar status
+  const equipePorId = new Map(atual.equipes.map((e) => [e.id, e]));
+  const ehReserva = (e: AtuaisEquipe | undefined) => e?.grupo === "Apoio";
+  const jaPedidas = new Set<string>();
+  for (const m of lido.movimentos ?? []) {
+    const onde = `Movimentações, linha ${m.linha} (${m.nome})`;
+    // acha a pessoa: pelo nome, na equipe que a linha diz (em branco = fora das equipes de campo)
+    const nomeN = normalizar(m.nome);
+    const equipeN = normalizar(m.equipe);
+    let achadas = atual.vagas.filter((v) => v.nome && normalizar(v.nome) === nomeN && (equipeN ? normalizar(equipePorId.get(v.equipeId)?.nome ?? "") === equipeN : ehReserva(equipePorId.get(v.equipeId))));
+    if (achadas.length > 1 && m.funcao) achadas = achadas.filter((v) => normalizar(v.cargo) === normalizar(m.funcao));
+    if (achadas.length === 0) {
+      plano.avisos.push(`${onde}: não encontrei esta pessoa ${m.equipe ? `na equipe «${m.equipe}»` : "fora das equipes de campo"} (já foi movida ou o nome mudou?); ignorada.`);
+      continue;
+    }
+    if (achadas.length > 1) {
+      plano.avisos.push(`${onde}: há mais de uma pessoa com este nome ${m.equipe ? `na equipe «${m.equipe}»` : "fora das equipes"}; ignorada para não errar.`);
+      continue;
+    }
+    const v = achadas[0];
+    if (jaPedidas.has(v.id)) {
+      plano.avisos.push(`${onde}: esta pessoa já tem outra movimentação nesta planilha; só vale a primeira.`);
+      continue;
+    }
+    const origem = equipePorId.get(v.equipeId);
+    if (m.acao !== "status" && m.data && m.data > hoje) {
+      plano.avisos.push(`${onde}: a data (${m.data.slice(8, 10)}/${m.data.slice(5, 7)}/${m.data.slice(0, 4)}) é futura e o sistema aplica na hora; reenvie nesse dia ou apague a data para aplicar agora.`);
+      continue;
+    }
+    const base = { vagaId: v.id, rotulo: `${m.nome} (${origem?.nome ?? "—"})`, acao: m.acao, destinoEquipeId: null as string | null, destinoNome: null as string | null, status: null as string | null, ausencia: null as MovimentoPlanejado["ausencia"], data: m.data, observacao: m.observacao };
+    if (m.acao === "mover") {
+      const destinos = atual.equipes.filter((e) => !ehReserva(e) && normalizar(e.nome) === normalizar(m.destino));
+      if (!m.destino) {
+        plano.avisos.push(`${onde}: «Mover» sem a equipe de destino; ignorada.`);
+        continue;
+      }
+      if (destinos.length !== 1) {
+        plano.avisos.push(destinos.length === 0 ? `${onde}: a equipe de destino «${m.destino}» não existe (ou não é do seu cliente); ignorada.` : `${onde}: a equipe de destino «${m.destino}» aparece mais de uma vez; ignorada.`);
+        continue;
+      }
+      if (destinos[0].id === v.equipeId) {
+        plano.avisos.push(`${onde}: já está na equipe «${m.destino}»; nada a mover.`);
+        continue;
+      }
+      plano.movimentos.push({ ...base, destinoEquipeId: destinos[0].id, destinoNome: destinos[0].nome });
+    } else if (m.acao === "liberar" || m.acao === "desmobilizar") {
+      if (ehReserva(origem)) {
+        plano.avisos.push(`${onde}: já está fora das equipes de campo; nada a ${m.acao === "liberar" ? "liberar" : "desmobilizar"}.`);
+        continue;
+      }
+      plano.movimentos.push(base);
+    } else {
+      if (!m.status || (m.status === v.status && !m.ausencia)) continue; // nada mudou
+      plano.movimentos.push({ ...base, status: m.status, ausencia: m.ausencia });
+    }
+    jaPedidas.add(v.id);
+  }
+
   return plano;
 }

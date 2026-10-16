@@ -5,7 +5,7 @@ import { useDados } from "./DadosContext";
 import { chamar } from "./comum";
 import { Aviso } from "./ui";
 
-type Resumo = { simulacao: boolean; equipes: number; posicoes: number; viaturas: number; contratos: number; ausencias: number; total: number; exemplos: string[]; avisos: string[] };
+type Resumo = { simulacao: boolean; equipes: number; posicoes: number; viaturas: number; contratos: number; ausencias: number; movimentacoes?: number; viaturasNovas?: number; periodosDeViatura?: number; trocas?: number; total: number; exemplos: string[]; avisos: string[] };
 
 /**
  * Envia a base em Excel PREENCHIDA (as colunas em amarelo: início e fim das equipes, previsão de entrada, placas, períodos de
@@ -37,7 +37,7 @@ export default function EnviarPlanejamento({ onConcluido }: { onConcluido?: () =
     if (simular) return setResumo(r.dados as Resumo);
     setResumo(null);
     const d = r.dados as Resumo;
-    setOk(d.total === 0 ? "Nada mudou: o Excel não trazia nada novo." : `Planejamento aplicado: ${d.equipes} equipes, ${d.posicoes} posições, ${d.viaturas} viaturas, ${d.contratos} contratos e ${d.ausencias} ausências.`);
+    setOk(d.total === 0 ? "Nada mudou: o Excel não trazia nada novo." : `Planejamento aplicado: ${d.equipes} equipes, ${d.posicoes} posições, ${d.viaturas} viaturas, ${d.contratos} contratos e ${d.ausencias} ausências${d.movimentacoes ? `; ${d.movimentacoes} movimentações de pessoas feitas` : ""}.`);
     if (arquivoRef.current) arquivoRef.current.value = "";
     setNome("");
     await recarregar();
@@ -47,7 +47,7 @@ export default function EnviarPlanejamento({ onConcluido }: { onConcluido?: () =
   return (
     <div className="space-y-3 px-6 py-5">
       <p className="text-xs text-gray-500">
-        Baixe a base (<strong>Baixar Excel</strong>), preencha as colunas em <strong>amarelo</strong> (início e fim de cada equipe na aba EQUIPES, previsão de entrada e contrato atual na aba BASE, placas na aba VIATURAS, períodos de férias na aba AUSÊNCIAS) e envie de volta. Só preenche: célula em branco não apaga nada, e o que veio das planilhas do Samuel não é alterado.
+        Baixe a base (<strong>Baixar Excel</strong>), preencha as colunas em <strong>amarelo</strong> (início e fim de cada equipe na aba EQUIPES, status e previsão de entrada na aba PESSOAS, placas e tempo das viaturas na aba VIATURAS) e, para mexer em gente, a aba <strong>MOVIMENTAÇÕES</strong> (mover de equipe, liberar, desmobilizar, mudar status), e envie de volta. Só preenche: célula em branco não apaga nada, e o que veio das planilhas do Samuel não é alterado.
       </p>
       <div className="flex flex-wrap items-end gap-3">
         <label>
@@ -80,6 +80,8 @@ export default function EnviarPlanejamento({ onConcluido }: { onConcluido?: () =
               <li>Viaturas (placa, modelo…): <strong>{resumo.viaturas}</strong></li>
               <li>Contratos: <strong>{resumo.contratos}</strong></li>
               <li>Ausências com período: <strong>{resumo.ausencias}</strong></li>
+              <li>Viaturas novas, períodos e trocas: <strong>{(resumo.viaturasNovas ?? 0) + (resumo.periodosDeViatura ?? 0) + (resumo.trocas ?? 0)}</strong></li>
+              <li>Movimentações de pessoas (aba MOVIMENTAÇÕES): <strong>{resumo.movimentacoes ?? 0}</strong></li>
             </ul>
           )}
           {resumo.exemplos.length > 0 && (

@@ -250,6 +250,51 @@ function aba(linhas: unknown[][], largs: number[], filtro = true): XLSX.WorkShee
   return ws;
 }
 
+export const COLUNAS_MOVIMENTACOES = ["Equipe", "Contrato", "Função", "Profissional", "Situação hoje", "Viatura", "Ação", "Equipe destino", "Novo status", "Até (férias, afastamento)", "A partir de", "Observação", "Conferência"] as const;
+export const ACOES_MOVIMENTACAO = ["Mover para outra equipe", "Liberar para outra equipe", "Desmobilizar (desligar)", "Mudar status"] as const;
+export const TITULO_MOVIMENTACOES = "MOVIMENTAÇÕES · mover, liberar, desmobilizar ou mudar o status das pessoas";
+export const AJUDA_MOVIMENTACOES = "Na linha da pessoa, escolha a Ação. Mover: escolha também a Equipe destino. Mudar status: escolha o Novo status (para férias e afastamento, preencha também A partir de e Até). Depois envie a planilha em Base > Enviar planejamento preenchido.";
+
+/** A aba MOVIMENTAÇÕES: as pessoas de cada equipe, uma equipe depois da outra, com as colunas amarelas para mexer em quem for. */
+function abaMovimentacoes(d: DadosBase, linhas: LinhaBase[]): XLSX.WorkSheet {
+  const larg = COLUNAS_MOVIMENTACOES.length;
+  const vazio = () => Array.from({ length: larg }, () => "" as string | number);
+  const linhasDaAba: unknown[][] = [[TITULO_MOVIMENTACOES], [AJUDA_MOVIMENTACOES], [""], [...COLUNAS_MOVIMENTACOES]];
+  const porEquipe = new Map<string, LinhaBase[]>();
+  for (const l of linhas) porEquipe.set(l.equipeId, [...(porEquipe.get(l.equipeId) ?? []), l]);
+  const blocos: { nome: string; contrato: string; periodo: string; equipeId: string; reserva: boolean }[] = [];
+  for (const e of d.equipes.filter((x) => !ehReservaDeApoio(x))) {
+    blocos.push({ nome: e.nome, contrato: e.projeto === "A definir" ? "" : e.projeto, periodo: e.inicio || e.fim ? `${e.inicio ? fmtBr(e.inicio) : "?"} a ${e.fim ? fmtBr(e.fim) : "sem fim"}` : "sem datas", equipeId: e.id, reserva: false });
+  }
+  for (const e of d.equipes.filter((x) => ehReservaDeApoio(x))) blocos.push({ nome: "FORA DAS EQUIPES (disponíveis)", contrato: "", periodo: "", equipeId: e.id, reserva: true });
+  for (const b of blocos) {
+    const doBloco = porEquipe.get(b.equipeId) ?? [];
+    if (b.reserva && doBloco.length === 0) continue;
+    const comNome = doBloco.filter((l) => l.posicao === "Com nome").length;
+    const abertas = doBloco.filter((l) => l.posicao === "Vaga aberta").length;
+    const banner = vazio();
+    banner[0] = b.nome;
+    banner[1] = b.contrato;
+    banner[2] = b.periodo;
+    banner[4] = `${comNome} pessoas${abertas ? ` · ${abertas} ${abertas === 1 ? "vaga aberta" : "vagas abertas"}` : ""}`;
+    linhasDaAba.push(banner);
+    for (const l of doBloco) {
+      const r = vazio();
+      r[0] = b.reserva ? "(reserva)" : b.nome;
+      r[1] = b.contrato;
+      r[2] = l.cargo;
+      r[3] = l.nome;
+      r[4] = l.posicao === "Com nome" ? l.situacaoHoje : l.posicao;
+      r[5] = l.viatura;
+      linhasDaAba.push(r);
+    }
+  }
+  const ws = XLSX.utils.aoa_to_sheet(linhasDaAba);
+  ws["!cols"] = larguras([36, 12, 30, 30, 26, 10, 26, 36, 16, 14, 13, 32, 30]);
+  ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 3, c: 0 }, e: { r: Math.max(4, linhasDaAba.length - 1), c: larg - 1 } }) };
+  return ws;
+}
+
 /**
  * A planilha-base, o mínimo de abas para concentrar o preenchimento:
  *   PESSOAS  — uma linha por posição: cadastro geral (cliente, contrato, equipe, pessoa), status e planejamento da pessoa;
@@ -386,6 +431,9 @@ export function montarPlanilhaBase(d: DadosBase, idx: Pick<Indice, "ausencias">,
   }
   XLSX.utils.book_append_sheet(wb, wsVt, "VIATURAS");
 
+  // ---- MOVIMENTAÇÕES: as pessoas por equipe, para mover, liberar, desmobilizar ou mudar o status
+  XLSX.utils.book_append_sheet(wb, abaMovimentacoes(d, linhas), "MOVIMENTAÇÕES");
+
   // ---- LEIA-ME: a sequência em poucas linhas
   const emCampo = linhas.filter((l) => !l.reserva);
   const nomes = (conferencia?.fontes ?? []).filter((f) => !/apoio/i.test(f.nome)).map((f) => f.nome);
@@ -397,6 +445,7 @@ export function montarPlanilhaBase(d: DadosBase, idx: Pick<Indice, "ausencias">,
     ["1. EQUIPES   Início da equipe e Fim da equipe (dd/mm/aaaa). Sem o fim, o sistema não sabe quando as pessoas ficam livres. Também: Local / frente, Gestor, Observação."],
     ["2. PESSOAS   Status (Vigente, Férias, Afastado, Em contratação, Em mobilização...), e o período do status (Status: início / Status: fim) para férias e afastamentos."],
     ["              Previsão de entrada (vaga aberta ou em contratação), Contrato atual (outro) + Disponível a partir de (pessoa ainda em outro contrato), Destino, Observação."],
+    ["4. MOVIMENTAÇÕES  As pessoas de cada equipe, uma equipe depois da outra. Na linha da pessoa escolha a Ação (Mover para outra equipe, Liberar, Desmobilizar, Mudar status), a Equipe destino e a data."],
     ["3. VIATURAS  Placa, Modelo, 4x4 e Status (na primeira linha de cada viatura). Uma linha por viatura e equipe: Início na equipe e Fim na equipe dizem por quanto tempo ela fica lá, e a coluna \"Confere com a equipe?\" compara com o período da equipe."],
     ["              Troca de viatura: \"Será substituída por\" + \"Troca em\". A viatura que vai chegar aparece como Prevista e depois é movimentada no sistema (Viaturas > Trocar)."],
     [""],
@@ -406,7 +455,7 @@ export function montarPlanilhaBase(d: DadosBase, idx: Pick<Indice, "ausencias">,
     [`Conferência: ${emCampo.length} posições nas equipes${nomes.length ? ` (vindas de ${nomes.join(" e ")}; cada linha lida está em uma posição, sem repetir)` : ""}. A coluna Origem diz de qual planilha e linha veio cada uma; Conferir marca o que precisa de confirmação (só avisa, nunca muda o dado).`],
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(leia), "LEIA-ME");
-  wb.SheetNames = ["LEIA-ME", "PESSOAS", "EQUIPES", "VIATURAS"];
+  wb.SheetNames = ["LEIA-ME", "MOVIMENTAÇÕES", "PESSOAS", "EQUIPES", "VIATURAS"];
 
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
@@ -429,6 +478,12 @@ export function montarModeloEmBranco(cliente: string, linhas = { pessoas: 300, e
   const vtLinhas = Array.from({ length: linhas.viaturas }, () => vtCab.map((c) => (c === "Cliente" ? cliente : null)));
   XLSX.utils.book_append_sheet(wb, aba([vtCab, ...vtLinhas], [12, 12, 18, 6, 14, 9, 44, 12, 14, 14, 13, 13, 34, 8, 16, 12, 30]), "VIATURAS");
 
+  const movVazias = Array.from({ length: 150 }, () => COLUNAS_MOVIMENTACOES.map(() => null));
+  const wsMov = XLSX.utils.aoa_to_sheet([[TITULO_MOVIMENTACOES], [AJUDA_MOVIMENTACOES], [""], [...COLUNAS_MOVIMENTACOES], ...movVazias]);
+  wsMov["!cols"] = larguras([36, 12, 30, 30, 26, 10, 26, 36, 16, 14, 13, 32, 30]);
+  wsMov["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 3, c: 0 }, e: { r: 153, c: COLUNAS_MOVIMENTACOES.length - 1 } }) };
+  XLSX.utils.book_append_sheet(wb, wsMov, "MOVIMENTAÇÕES");
+
   const leia = [
     [`BASE DAS EQUIPES DE CAMPO — ${cliente} (EM BRANCO, PARA PREENCHER)`],
     [""],
@@ -449,6 +504,6 @@ export function montarModeloEmBranco(cliente: string, linhas = { pessoas: 300, e
     ["Depois da primeira carga, quem tem acesso do cliente atualiza pelo sistema (ou baixa a base, preenche as colunas amarelas e envia em Base > Enviar planejamento preenchido). Célula em branco nunca apaga o que já está no sistema."],
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(leia), "LEIA-ME");
-  wb.SheetNames = ["LEIA-ME", "PESSOAS", "EQUIPES", "VIATURAS"];
+  wb.SheetNames = ["LEIA-ME", "MOVIMENTAÇÕES", "PESSOAS", "EQUIPES", "VIATURAS"];
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
