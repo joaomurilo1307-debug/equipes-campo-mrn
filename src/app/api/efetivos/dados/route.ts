@@ -8,6 +8,6 @@ export async function GET() {
   const a = await exigir("ver");
   if ("erro" in a) return a.erro;
   const editor = podeEditar(a.nivel);
-  const dados = await carregarDados(editor);
-  return NextResponse.json({ nivel: a.nivel, podeEditar: editor, ...dados });
+  const dados = await carregarDados(editor, a.cliente);
+  return NextResponse.json({ nivel: a.nivel, podeEditar: editor, cliente: a.cliente, ...dados });
 }

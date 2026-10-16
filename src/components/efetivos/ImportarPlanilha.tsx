@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { useDados } from "./DadosContext";
 import { chamar, hojeBr } from "./comum";
 import { Aviso } from "./ui";
+import { CLIENTES_PADRAO } from "@/lib/efetivos/clientes";
 
 function dataDoNomeDoArquivo(nome: string): string | null {
   const m = /(\d{2})_(\d{2})_(\d{4})/.exec(nome);
@@ -18,6 +19,7 @@ export default function ImportarPlanilha({ onConcluido }: { onConcluido?: () => 
   const [nomeArquivo, setNomeArquivo] = useState("");
   const [dataRef, setDataRef] = useState(hojeBr());
   const [acrescentar, setAcrescentar] = useState(false);
+  const [cliente, setCliente] = useState<string>(CLIENTES_PADRAO[0]);
   const [resumo, setResumo] = useState<any | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
@@ -32,6 +34,7 @@ export default function ImportarPlanilha({ onConcluido }: { onConcluido?: () => 
     const fd = new FormData();
     for (const a of arquivos) fd.append("arquivo", a);
     fd.append("dataReferencia", dataRef);
+    fd.append("cliente", cliente);
     const q = [simular ? "simular=1" : "", acrescentar ? "acrescentar=1" : ""].filter(Boolean).join("&");
     const r = await chamar("POST", `/api/efetivos/importar${q ? `?${q}` : ""}`, fd);
     setOcupado(false);
@@ -71,6 +74,14 @@ export default function ImportarPlanilha({ onConcluido }: { onConcluido?: () => 
             }}
             className="mt-1 block text-sm"
           />
+        </label>
+        <label>
+          <span className="label" title="As planilhas por contrato não dizem de que cliente são. A base em Excel já traz o cliente e ignora este campo.">Cliente das planilhas</span>
+          <select value={cliente} onChange={(e) => setCliente(e.target.value)} className="field">
+            {CLIENTES_PADRAO.map((c) => (
+              <option key={c}>{c}</option>
+            ))}
+          </select>
         </label>
         <label>
           <span className="label">Data da planilha</span>

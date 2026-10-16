@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { dataDe, exigir, registrar } from "@/lib/efetivos/servidor";
+import { dataDe, exigir, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
 import { dia } from "@/lib/efetivos/esquemas";
 import { TIPOS_AUSENCIA } from "@/lib/efetivos/disponibilidade";
 
@@ -25,6 +25,10 @@ export async function POST(req: Request) {
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Dados inválidos", detalhes: parsed.error.flatten() }, { status: 422 });
   const d = parsed.data;
   const ids = Array.from(new Set(d.vagaIds ?? [d.vagaId!]));
+  for (const id of ids) {
+    const fora = await foraDoEscopo(a, { vagaId: id });
+    if (fora) return fora;
+  }
 
   const vagas = await prisma.efetivoVaga.findMany({ where: { id: { in: ids } }, include: { equipe: true } });
   if (vagas.length !== ids.length) return NextResponse.json({ error: "Alguma das pessoas escolhidas não existe mais" }, { status: 404 });

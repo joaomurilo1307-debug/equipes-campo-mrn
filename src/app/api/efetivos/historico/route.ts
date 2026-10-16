@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 // Quem mexeu em que e quando (escalas, ausencias, veiculos, importacoes). So quem edita enxerga.
 export async function GET() {
-  const a = await exigir("editar");
+  const a = await exigir("global");
   if ("erro" in a) return a.erro;
   const linhas = await prisma.auditLog.findMany({ orderBy: { createdAt: "desc" }, take: 400 });
   return NextResponse.json({

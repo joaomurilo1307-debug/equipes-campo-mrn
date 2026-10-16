@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { dataDe, diaDe, exigir, registrar } from "@/lib/efetivos/servidor";
-import { STATUS_VAGA, dataValida } from "@/lib/efetivos/disponibilidade";
+import { dataDe, diaDe, exigir, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
+import { dataValida } from "@/lib/efetivos/disponibilidade";
 
 const dia = z.string().refine(dataValida, "Data inválida (AAAA-MM-DD)");
 
@@ -13,7 +13,7 @@ const schema = z
     empresa: z.string().trim().min(1).max(60),
     cargo: z.string().trim().min(1).max(120),
     nome: z.string().trim().max(120).nullable(),
-    status: z.enum(STATUS_VAGA),
+    status: z.string().trim().min(1).max(60),
     previsaoInicio: dia.nullable(),
     nivel: z.string().trim().max(30).nullable(),
     direcao4x4: z.boolean().nullable(),
@@ -33,9 +33,17 @@ const schema = z
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { vagaId: params.id });
+    if (fora) return fora;
+  }
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success || Object.keys(parsed.data).length === 0) {
     return NextResponse.json({ error: "Dados inválidos", detalhes: parsed.success ? undefined : parsed.error.flatten() }, { status: 422 });
+  }
+  {
+    const fora = await foraDoEscopo(a, { equipeId: parsed.data.equipeId, veiculoId: parsed.data.veiculoId });
+    if (fora) return fora;
   }
   const antes = await prisma.efetivoVaga.findUnique({ where: { id: params.id }, include: { equipe: true } });
   if (!antes) return NextResponse.json({ error: "Vaga não encontrada" }, { status: 404 });
@@ -87,6 +95,10 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { vagaId: params.id });
+    if (fora) return fora;
+  }
   const vaga = await prisma.efetivoVaga.findUnique({ where: { id: params.id }, include: { equipe: true, alocacoes: { include: { campanha: { select: { codigo: true } } } } } });
   if (!vaga) return NextResponse.json({ error: "Vaga não encontrada" }, { status: 404 });
   if (vaga.alocacoes.length > 0) {

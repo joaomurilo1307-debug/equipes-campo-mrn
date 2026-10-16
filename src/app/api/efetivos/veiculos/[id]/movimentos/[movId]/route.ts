@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { dataDe, diaDe, exigir, registrar } from "@/lib/efetivos/servidor";
+import { dataDe, diaDe, exigir, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
 import { dia } from "@/lib/efetivos/esquemas";
 import { validarEdicaoMovimento } from "@/lib/efetivos/veiculos";
 
@@ -21,8 +21,16 @@ const schema = z
 export async function PATCH(req: Request, { params }: { params: { id: string; movId: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { veiculoId: params.id });
+    if (fora) return fora;
+  }
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success || Object.keys(parsed.data).length === 0) return NextResponse.json({ error: "Dados inválidos" }, { status: 422 });
+  {
+    const fora = await foraDoEscopo(a, { equipeId: parsed.data.equipeId, contrato: parsed.data.projeto });
+    if (fora) return fora;
+  }
   const veiculo = await prisma.efetivoVeiculo.findUnique({ where: { id: params.id }, include: { movimentos: true } });
   const mov = veiculo?.movimentos.find((m) => m.id === params.movId);
   if (!veiculo || !mov) return NextResponse.json({ error: "Passagem não encontrada" }, { status: 404 });
@@ -61,6 +69,10 @@ export async function PATCH(req: Request, { params }: { params: { id: string; mo
 export async function DELETE(_req: Request, { params }: { params: { id: string; movId: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { veiculoId: params.id });
+    if (fora) return fora;
+  }
   const mov = await prisma.efetivoVeiculoMovimento.findFirst({ where: { id: params.movId, veiculoId: params.id }, include: { veiculo: true } });
   if (!mov) return NextResponse.json({ error: "Passagem não encontrada" }, { status: 404 });
   await prisma.efetivoVeiculoMovimento.delete({ where: { id: mov.id } });

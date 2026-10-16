@@ -8,6 +8,7 @@ const schema = z
   .object({
     role: z.enum(["ADMIN", "EDITOR", "VISUALIZADOR"]),
     active: z.boolean(),
+    cliente: z.string().trim().max(60).nullable(),
     password: z.string().min(8, "A senha precisa ter pelo menos 8 caracteres").max(100),
   })
   .partial();
@@ -27,10 +28,13 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     return NextResponse.json({ error: "Você não pode desativar nem rebaixar o seu próprio acesso" }, { status: 409 });
   }
   const { password, ...resto } = parsed.data;
+  if (resto.cliente !== undefined) resto.cliente = resto.cliente || null;
+  if (resto.role === "ADMIN" || (!resto.role && alvo.role === "ADMIN")) resto.cliente = null; // a administração vê todos os clientes
   await prisma.user.update({ where: { id: alvo.id }, data: { ...resto, ...(password ? { passwordHash: await bcrypt.hash(password, 10) } : {}) } });
   const partes: string[] = [];
   if (resto.role && resto.role !== alvo.role) partes.push(`papel ${alvo.role} → ${resto.role}`);
   if (resto.active !== undefined && resto.active !== alvo.active) partes.push(resto.active ? "reativado" : "desativado");
+  if (resto.cliente !== undefined && (resto.cliente || null) !== (alvo.cliente ?? null)) partes.push(`cliente ${alvo.cliente ?? "todos"} → ${resto.cliente || "todos"}`);
   if (password) partes.push("senha redefinida");
   if (partes.length) await registrar(a.userId, "USUARIO_ALTERADO", "USUARIO", alvo.id, `Acesso de ${alvo.name}: ${partes.join("; ")} (por ${a.nome})`);
   return NextResponse.json({ ok: true });

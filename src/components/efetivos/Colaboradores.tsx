@@ -5,10 +5,11 @@
 import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { temNome } from "@/lib/efetivos/disponibilidade";
-import { useDados } from "./DadosContext";
+import { useDados, useShell } from "./DadosContext";
 import { BarraPartes, BarrasHorizontais, Legenda, Rosca } from "./graficos";
 import { A_DEFINIR, contratosConhecidos, corDoContrato, ehReserva, fmtDiaCurto, rotuloContrato, type Equipe, type Vaga } from "./comum";
 import { IcBaixo, IcMais } from "./icones";
+import ModalStatus from "./modais/ModalStatus";
 import ModalVaga from "./modais/ModalVaga";
 import { ModalColocarEmEquipe, ModalDesmobilizar } from "./modais/ModaisVagas";
 import { CabecalhoPagina, PontoContrato, Secao, Segmentado } from "./ui";
@@ -21,6 +22,8 @@ const SEM = "—";
 
 export default function Colaboradores() {
   const { dados, hoje, equipePorId, nomeDe, situacaoDe, contratoNoDia } = useDados();
+  const { clientes } = useShell();
+  const [graficos, setGraficos] = useState(false);
   const podeEditar = dados.podeEditar;
   const params = useSearchParams();
   const [busca, setBusca] = useState("");
@@ -32,7 +35,7 @@ export default function Colaboradores() {
   const [desmobilizados, setDesmobilizados] = useState(false);
   const [visao, setVisao] = useState<"contrato" | "lista">("contrato");
   const [fechados, setFechados] = useState<Set<string>>(new Set());
-  const [modal, setModal] = useState<{ t: "novo" } | { t: "editar"; v: Vaga } | { t: "equipe"; v: Vaga } | { t: "desmob"; v: Vaga } | null>(null);
+  const [modal, setModal] = useState<{ t: "novo" } | { t: "editar"; v: Vaga } | { t: "equipe"; v: Vaga } | { t: "desmob"; v: Vaga } | { t: "status"; v: Vaga } | null>(null);
 
   const contratosCadastrados = useMemo(() => contratosConhecidos(dados), [dados]);
 
@@ -157,6 +160,9 @@ export default function Colaboradores() {
                 desmobilizar
               </button>
             )}
+            <button onClick={() => setModal({ t: "status", v: l.v })} className="rounded px-1.5 py-0.5 text-[11px] font-semibold text-gray-500 hover:bg-gray-100">
+              status
+            </button>
             <button onClick={() => setModal({ t: "editar", v: l.v })} className="rounded px-1.5 py-0.5 text-[11px] font-semibold text-gray-500 hover:bg-gray-100">
               editar
             </button>
@@ -172,11 +178,16 @@ export default function Colaboradores() {
         titulo="Colaboradores"
         subtitulo="Cadastro geral de todas as pessoas, por contrato e equipe. Quem sai de uma equipe (ou cuja equipe termina) fica disponível aqui, para ser puxado para outra."
         acoes={
-          podeEditar && (
-            <button onClick={() => setModal({ t: "novo" })} className="btn-primary">
-              <IcMais tam={16} /> Novo colaborador
+          <>
+            <button onClick={() => setGraficos((g) => !g)} className="btn-ghost">
+              {graficos ? "Ocultar gráficos" : "Ver gráficos"}
             </button>
-          )
+            {podeEditar && (
+              <button onClick={() => setModal({ t: "novo" })} className="btn-primary">
+                <IcMais tam={16} /> Novo colaborador
+              </button>
+            )}
+          </>
         }
       />
 
@@ -200,7 +211,8 @@ export default function Colaboradores() {
         ))}
       </section>
 
-      {/* gráficos */}
+      {/* gráficos (escondidos por padrão: o Painel já mostra) */}
+      {graficos && (
       <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)]">
         <Secao titulo="Colaboradores por contrato" sub="Por empresa, em cada contrato.">
           <BarrasHorizontais
@@ -240,6 +252,7 @@ export default function Colaboradores() {
           {porFuncao.length > 7 && <p className="mt-2 text-[11px] text-gray-400">+ {porFuncao.length - 7} outras funções</p>}
         </Secao>
       </div>
+      )}
 
       {/* filtros */}
       <div className="card flex flex-wrap items-end gap-2.5 p-3">
@@ -335,6 +348,7 @@ export default function Colaboradores() {
                           </span>
                           <PontoContrato cor={k === "__sem" || k === "__livres" ? "#9AA8A1" : corDoContrato(k)} />
                           <span className="font-display text-[14px] font-semibold tracking-tight text-ink">{k === "__livres" ? "Disponíveis para uma equipe" : k === "__sem" ? "Sem contrato" : rotuloContrato(k)}</span>
+                          {clientes.length > 1 && k !== "__livres" && k !== "__sem" && dados.contratos.find((c) => c.codigo === k)?.cliente && <span className="chip-mute">{dados.contratos.find((c) => c.codigo === k)?.cliente}</span>}
                           <span className="num rounded bg-white px-1.5 text-[11px] font-semibold text-gray-600 ring-1 ring-line">{total}</span>
                           {k !== "__livres" && <span className="text-[11px] text-gray-500">{eqs.size} equipe{eqs.size === 1 ? "" : "s"}</span>}
                         </button>
@@ -370,6 +384,7 @@ export default function Colaboradores() {
       {modal?.t === "novo" && <ModalVaga onFechar={() => setModal(null)} onSalvo={() => setModal(null)} />}
       {modal?.t === "editar" && <ModalVaga vaga={modal.v} onFechar={() => setModal(null)} onSalvo={() => setModal(null)} />}
       {modal?.t === "equipe" && <ModalColocarEmEquipe vaga={modal.v} onFechar={() => setModal(null)} />}
+      {modal?.t === "status" && <ModalStatus vaga={modal.v} onFechar={() => setModal(null)} />}
       {modal?.t === "desmob" && <ModalDesmobilizar vaga={modal.v} onFechar={() => setModal(null)} />}
     </div>
   );

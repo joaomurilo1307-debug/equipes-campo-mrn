@@ -6,7 +6,7 @@ import { normalizar, type ResultadoImportacao } from "./importarPlanilha";
 import type { Dia } from "./disponibilidade";
 
 export type AtuaisEquipe = { id: string; codigo: string; nome: string; projeto: string; inicio: Dia | null; fim: Dia | null; local: string | null; gestor: string | null; observacao: string | null };
-export type AtuaisVaga = { id: string; equipeId: string; numero: number | null; origem: string | null; nome: string | null; cargo: string; previsaoInicio: Dia | null; contratoAtual: string | null; disponivelAPartir: Dia | null; destino: string | null; observacao: string | null };
+export type AtuaisVaga = { id: string; equipeId: string; numero: number | null; origem: string | null; nome: string | null; cargo: string; status: string; previsaoInicio: Dia | null; contratoAtual: string | null; disponivelAPartir: Dia | null; destino: string | null; observacao: string | null };
 export type AtuaisVeiculo = { id: string; identificacao: string; placa: string | null; modelo: string | null; tracao4x4: boolean | null; status: string; observacao: string | null };
 export type AtuaisContrato = { codigo: string; nome: string | null; cliente: string | null; gestor: string | null; local: string | null; observacao: string | null };
 export type AtuaisAusencia = { vagaId: string; tipo: string; inicio: Dia; fim: Dia };
@@ -15,7 +15,7 @@ export type Atuais = { equipes: AtuaisEquipe[]; vagas: AtuaisVaga[]; veiculos: A
 
 export type PlanoAtualizacao = {
   equipes: { id: string; rotulo: string; mudancas: Partial<Pick<AtuaisEquipe, "inicio" | "fim" | "local" | "gestor" | "observacao">> }[];
-  vagas: { id: string; rotulo: string; mudancas: Partial<Pick<AtuaisVaga, "previsaoInicio" | "contratoAtual" | "disponivelAPartir" | "destino" | "observacao">> }[];
+  vagas: { id: string; rotulo: string; mudancas: Partial<Pick<AtuaisVaga, "status" | "previsaoInicio" | "contratoAtual" | "disponivelAPartir" | "destino" | "observacao">> }[];
   veiculos: { id: string; rotulo: string; mudancas: Partial<Pick<AtuaisVeiculo, "placa" | "modelo" | "tracao4x4" | "status" | "observacao">> }[];
   contratos: { codigo: string; mudancas: Partial<Pick<AtuaisContrato, "nome" | "cliente" | "gestor" | "local" | "observacao">> }[];
   ausencias: { vagaId: string; rotulo: string; tipo: string; inicio: Dia; fim: Dia }[];
@@ -45,8 +45,9 @@ export function planejarAtualizacao(lido: ResultadoImportacao, atual: Atuais): P
   const equipePorNome = new Map<string, AtuaisEquipe[]>();
   for (const e of atual.equipes) equipePorNome.set(normalizar(e.nome), [...(equipePorNome.get(normalizar(e.nome)) ?? []), e]);
   const equipeDoArquivo = new Map<string, AtuaisEquipe>(); // código no Excel -> equipe do sistema
+  const reservas = new Set(lido.equipes.filter((e) => e.grupo === "Apoio").map((e) => e.codigo));
   for (const e of lido.equipes) {
-    if (e.codigo === "APOIO") continue;
+    if (e.grupo === "Apoio") continue;
     const achadas = equipePorNome.get(normalizar(e.nome)) ?? [];
     if (achadas.length !== 1) {
       plano.avisos.push(achadas.length === 0 ? `Equipe «${e.nome}» do Excel não existe no sistema: ignorada (use Nova equipe se for uma equipe nova).` : `Equipe «${e.nome}» aparece ${achadas.length} vezes no sistema: ignorada para não errar de equipe.`);
@@ -72,18 +73,19 @@ export function planejarAtualizacao(lido: ResultadoImportacao, atual: Atuais): P
   for (const v of atual.vagas) if (v.numero != null) vagaPorNumero.set(`${v.equipeId}|${v.numero}|${normalizar(v.cargo)}`, v);
   const vagaDeAusencia = new Map<string, AtuaisVaga>();
   for (const v of lido.vagas) {
-    if (v.equipeCodigo === "APOIO") continue;
+    if (reservas.has(v.equipeCodigo)) continue;
     const s = (v.origem ? vagaPorOrigem.get(v.origem) : undefined) ?? (() => {
       const eq = equipeDoArquivo.get(v.equipeCodigo);
       return eq && v.numero != null ? vagaPorNumero.get(`${eq.id}|${v.numero}|${normalizar(v.cargo)}`) : undefined;
     })();
     const rotulo = `${v.nome ?? v.cargo} (${v.origem ?? `Nº ${v.numero}`})`;
-    const traz = v.previsaoInicio || v.contratoAtual || v.disponivelAPartir || v.destino || (v.ausencias?.length ?? 0) > 0;
+    const traz = v.previsaoInicio || v.contratoAtual || v.disponivelAPartir || v.destino || (v.ausencias?.length ?? 0) > 0 || !v.statusEmBranco;
     if (!s) {
       if (traz) plano.avisos.push(`Posição «${rotulo}» do Excel não foi encontrada no sistema: o que foi preenchido nela foi ignorado.`);
       continue;
     }
-    const m = diferencas({ previsaoInicio: v.previsaoInicio ?? null, contratoAtual: v.contratoAtual ?? null, disponivelAPartir: v.disponivelAPartir ?? null, destino: v.destino ?? null, observacao: v.observacao }, { previsaoInicio: s.previsaoInicio, contratoAtual: s.contratoAtual, disponivelAPartir: s.disponivelAPartir, destino: s.destino, observacao: s.observacao } as Record<string, unknown>) as PlanoAtualizacao["vagas"][number]["mudancas"];
+    // status em branco no Excel não muda nada; com texto, vale o que está escrito
+    const m = diferencas({ status: v.statusEmBranco ? null : v.status, previsaoInicio: v.previsaoInicio ?? null, contratoAtual: v.contratoAtual ?? null, disponivelAPartir: v.disponivelAPartir ?? null, destino: v.destino ?? null, observacao: v.observacao }, { status: s.status, previsaoInicio: s.previsaoInicio, contratoAtual: s.contratoAtual, disponivelAPartir: s.disponivelAPartir, destino: s.destino, observacao: s.observacao } as Record<string, unknown>) as PlanoAtualizacao["vagas"][number]["mudancas"];
     if (Object.keys(m).length) plano.vagas.push({ id: s.id, rotulo, mudancas: m });
     if (v.ausencias?.length) vagaDeAusencia.set(v.origem ?? rotulo, s);
     for (const a of v.ausencias ?? []) {

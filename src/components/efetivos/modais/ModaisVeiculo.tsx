@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { STATUS_VEICULO, localizacaoNoDia } from "@/lib/efetivos/veiculos";
 import { useDados } from "../DadosContext";
+import { clienteDaEquipe } from "@/lib/efetivos/clientes";
 import { A_DEFINIR, chamar, contratosConhecidos, corDoContrato, fmtDia, hojeBr, rotuloContrato, type Movimento, type Veiculo, ehReserva } from "../comum";
 import { IcLapis, IcLixo } from "../icones";
 import { Aviso, Campo, Modal, PontoContrato, RodapeModal } from "../ui";
@@ -14,8 +15,9 @@ function useContratos() {
 
 /** Mover o veículo: a partir de uma data ele passa a estar em outro contrato, equipe e local. */
 export function ModalMover({ veiculo, periodo, onFechar }: { veiculo: Veiculo; periodo?: { inicio: string; fim: string }; onFechar: () => void }) {
-  const { dados, recarregar, hoje, equipePorId } = useDados();
-  const contratos = useContratos();
+  const { dados, completos, recarregar, hoje, equipePorId } = useDados();
+  // os destinos vêm de tudo o que o usuário vê (não só do cliente escolhido na tela): a administração leva a viatura de um cliente a outro
+  const contratos = useMemo(() => contratosConhecidos(completos), [completos]);
   const atual = localizacaoNoDia(dados.movimentos.filter((m) => m.veiculoId === veiculo.id), hoje);
   const atualEq = atual?.equipeId ? equipePorId.get(atual.equipeId) : null;
   const [f, setF] = useState({ inicio: periodo?.inicio ?? hoje, fim: periodo?.fim ?? "", projeto: "", equipeId: "", local: "", observacao: "" });
@@ -24,7 +26,7 @@ export function ModalMover({ veiculo, periodo, onFechar }: { veiculo: Veiculo; p
   const set = (k: keyof typeof f, v: string) => setF((x) => ({ ...x, [k]: v }));
 
   function escolherEquipe(id: string) {
-    const eq = dados.equipes.find((e) => e.id === id);
+    const eq = completos.equipes.find((e) => e.id === id);
     setF((x) => ({ ...x, equipeId: id, projeto: x.projeto || (eq && eq.projeto !== A_DEFINIR ? eq.projeto : "") }));
   }
 
@@ -62,9 +64,9 @@ export function ModalMover({ veiculo, periodo, onFechar }: { veiculo: Veiculo; p
           <Campo rotulo="Equipe">
             <select value={f.equipeId} onChange={(e) => escolherEquipe(e.target.value)} className="field">
               <option value="">—</option>
-              {dados.equipes.filter((e) => !ehReserva(e)).map((e) => (
+              {completos.equipes.filter((e) => !ehReserva(e)).map((e) => (
                 <option key={e.id} value={e.id}>
-                  {e.codigo} · {e.nome}
+                  {clienteDaEquipe(e, completos.contratos) ? `${clienteDaEquipe(e, completos.contratos)} · ` : ""}{e.codigo} · {e.nome}
                 </option>
               ))}
             </select>

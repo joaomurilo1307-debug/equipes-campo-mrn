@@ -15,7 +15,7 @@ const schema = z.object({
 // (o da campanha, salvo quando foi escolhido um trecho). Quem esta ausente ou ocupado nesse periodo e recusado
 // (409), sem gravar nada.
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
-  const a = await exigir("editar");
+  const a = await exigir("global");
   if ("erro" in a) return a.erro;
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Dados inválidos" }, { status: 422 });

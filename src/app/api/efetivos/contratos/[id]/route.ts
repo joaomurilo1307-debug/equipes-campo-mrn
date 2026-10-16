@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { exigir, registrar } from "@/lib/efetivos/servidor";
+import { exigir, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
 
 const schema = z
   .object({
@@ -19,8 +19,13 @@ const schema = z
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { contratoId: params.id });
+    if (fora) return fora;
+  }
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success || Object.keys(parsed.data).length === 0) return NextResponse.json({ error: "Dados inválidos" }, { status: 422 });
+  if (a.cliente && parsed.data.cliente !== undefined && (parsed.data.cliente || null) !== a.cliente) return NextResponse.json({ error: "Só a administração muda o cliente de um contrato" }, { status: 403 });
   const antes = await prisma.efetivoContrato.findUnique({ where: { id: params.id } });
   if (!antes) return NextResponse.json({ error: "Contrato não encontrado" }, { status: 404 });
   const d = parsed.data;
@@ -56,6 +61,10 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { contratoId: params.id });
+    if (fora) return fora;
+  }
   const c = await prisma.efetivoContrato.findUnique({ where: { id: params.id } });
   if (!c) return NextResponse.json({ error: "Contrato não encontrado" }, { status: 404 });
   await prisma.efetivoContrato.delete({ where: { id: c.id } });

@@ -219,7 +219,7 @@ test("Falha: a planilha por contrato sem nenhuma posição abaixo do cabeçalho 
 
 // ---------------------------------------------------------------- base em Excel
 
-test("Base das planilhas por contrato: a conferência prova que nenhuma linha ficou de fora e a base lê de volta igual", () => {
+test("Base das planilhas por contrato: 3 abas, e a base lê de volta igual", () => {
   const original = lerPlanilhasEfetivos([P3686(), PLT()], { anoReferencia: 2026 });
   const dados: DadosBase = {
     equipes: original.equipes.map((e) => ({ id: e.codigo, codigo: e.codigo, nome: e.nome, projeto: e.projeto, gestor: e.gestor, grupo: e.grupo, local: null, observacao: null, status: e.status, inicio: null, fim: null })),
@@ -251,9 +251,9 @@ test("Base das planilhas por contrato: a conferência prova que nenhuma linha fi
   };
   const buf = montarPlanilhaBase(dados, indexar({ ausencias: [], alocacoes: [] }), "2026-10-15", original.conferencia ?? null);
   const wb = XLSX.read(buf, { type: "buffer" });
-  const conf = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets["CONFERÊNCIA"], { header: 1 }).map((l) => (l as unknown[]).join(" | "));
-  assert.ok(conf.some((l) => /^Total \| 22 \| 22 \| nenhuma linha ficou de fora/.test(l)), conf.join("\n"));
-  assert.ok(conf.some((l) => /^3687 LT › EQUIPE DE LT PARA APOIO \| 3 \| 3 \| todas as linhas estão na base/.test(l)));
+  assert.deepEqual(wb.SheetNames, ["LEIA-ME", "PESSOAS", "EQUIPES", "VIATURAS"]);
+  const leia = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets["LEIA-ME"], { header: 1 }).map((l) => (l as unknown[]).join(" "));
+  assert.ok(leia.some((l) => /Conferência: 16 posições nas equipes/.test(l)), leia.join("\n"));
 
   const volta = lerPlanilhaEfetivos(buf, { anoReferencia: 2026 });
   assert.equal(volta.formato, "base");
@@ -323,8 +323,9 @@ test("Viatura vale só onde a célula mesclada cobre; viatura repetida em vária
 // ---------------------------------------------------------------- base com colunas para preencher
 
 function baseDe(r: ReturnType<typeof lerPlanilhasEfetivos>): Buffer {
+  const unicos = veiculosUnicos(r.veiculos);
   const dados: DadosBase = {
-    equipes: r.equipes.map((e) => ({ id: e.codigo, codigo: e.codigo, nome: e.nome, projeto: e.projeto, gestor: e.gestor, grupo: e.grupo, local: null, observacao: null, status: e.status, inicio: e.inicio ?? null, fim: e.fim ?? null })),
+    equipes: r.equipes.map((e) => ({ id: e.codigo, codigo: e.codigo, nome: e.nome, projeto: e.projeto, gestor: e.gestor, grupo: e.grupo, local: e.local ?? null, observacao: e.observacao ?? null, status: e.status, inicio: e.inicio ?? null, fim: e.fim ?? null, cliente: e.cliente ?? null })),
     vagas: r.vagas.map((v, i) => ({
       id: `v${i}`,
       numero: v.numero,
@@ -336,11 +337,11 @@ function baseDe(r: ReturnType<typeof lerPlanilhasEfetivos>): Buffer {
       atividade: v.atividade,
       nivel: v.nivel ?? null,
       direcao4x4: v.direcao4x4 ?? null,
-      contratoAtual: null,
-      disponivelAPartir: null,
-      destino: null,
+      contratoAtual: v.contratoAtual ?? null,
+      disponivelAPartir: v.disponivelAPartir ?? null,
+      destino: v.destino ?? null,
       previsaoInicio: v.previsaoInicio ?? null,
-      veiculoId: v.carroRef ? veiculosUnicos(r.veiculos).findIndex((u) => u.refs.includes(v.carroRef!)) + "" : null,
+      veiculoId: v.carroRef ? String(unicos.findIndex((u) => u.refs.includes(v.carroRef!))) : null,
       contrato: v.contrato ?? null,
       grupo: v.grupo ?? null,
       semNome: !!v.semNome && !v.nome,
@@ -348,9 +349,9 @@ function baseDe(r: ReturnType<typeof lerPlanilhasEfetivos>): Buffer {
       origem: v.origem ?? null,
       conferir: v.conferir ?? null,
     })),
-    veiculos: veiculosUnicos(r.veiculos).map((u, i) => ({ id: `${i}`, codigo: `VEI-${i + 1}`, identificacao: u.identificacao, placa: u.placa, modelo: u.modelo, tracao4x4: u.tracao4x4, status: u.status || "Em operação", observacao: u.observacao })),
-    ausencias: [],
-    contratos: r.contratos.map((c) => ({ codigo: c.codigo, nome: null, cliente: null, gestor: null, local: null, observacao: null, ativo: true })),
+    veiculos: unicos.map((u, i) => ({ id: `${i}`, codigo: `VEI-${i + 1}`, identificacao: u.identificacao, placa: u.placa, modelo: u.modelo, tracao4x4: u.tracao4x4, status: u.status || "Em operação", observacao: u.observacao, cliente: u.cliente })),
+    ausencias: r.vagas.flatMap((v, i) => [...(v.ausencia ? [v.ausencia] : []), ...(v.ausencias ?? [])].map((a, k) => ({ id: `a${i}-${k}`, vagaId: `v${i}`, tipo: a.tipo, inicio: a.inicio, fim: a.fim, observacao: null }))),
+    contratos: r.contratos.map((c) => ({ codigo: c.codigo, nome: null, cliente: c.cliente, gestor: c.gestor, local: null, observacao: null, ativo: true })),
   };
   return montarPlanilhaBase(dados, indexar({ ausencias: [], alocacoes: [] }), "2026-10-15", r.conferencia ?? null);
 }
@@ -369,43 +370,67 @@ function preencher(buf: Buffer, aba: string, linhaDe: (r: Record<string, string>
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }
 
-test("Base: as colunas de planejamento saem em branco e, preenchidas no Excel, entram no sistema (datas das equipes, previsão de entrada, ausências)", () => {
-  const r = lerPlanilhasEfetivos([P3686(false), PLT(false)], { anoReferencia: 2026 });
+test("Base de 3 abas: o planejamento sai em branco e, preenchido no Excel (datas das equipes, status com período, previsão de entrada), entra no sistema", () => {
+  const r = lerPlanilhasEfetivos([P3686(false), PLT(false)], { anoReferencia: 2026, cliente: "MRN" });
   const buf = baseDe(r);
   const wb = XLSX.read(buf, { type: "buffer" });
-  // sem datas nas planilhas: início e fim das equipes vêm em branco
+  assert.deepEqual(wb.SheetNames, ["LEIA-ME", "PESSOAS", "EQUIPES", "VIATURAS"]);
+  // equipes: cliente MRN, sem datas (as planilhas não trazem)
   const eqs = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets["EQUIPES"]);
   assert.ok(eqs.length >= 5);
-  assert.ok(eqs.every((e) => !e["Início da equipe"] && !e["Fim da equipe"]));
-  const cab = (XLSX.utils.sheet_to_json<string[]>(wb.Sheets["BASE"], { header: 1 })[0] as string[]).map(String);
-  for (const c of ["Previsão de entrada", "Contrato atual (outro)", "Disponível a partir de", "Destino", "Observação"]) assert.ok(cab.includes(c), c);
+  assert.ok(eqs.every((e) => e["Cliente"] === "MRN" && !e["Início da equipe"] && !e["Fim da equipe"]));
+  // pessoas: tudo que se preenche está na mesma aba, ao lado do status
+  const cab = (XLSX.utils.sheet_to_json<string[]>(wb.Sheets["PESSOAS"], { header: 1 })[0] as string[]).map(String);
+  for (const c of ["Cliente", "Contrato", "Equipe", "Profissional", "Status", "Status: início", "Status: fim", "Previsão de entrada", "Contrato atual (outro)", "Disponível a partir de", "Destino", "Observação", "Situação hoje"]) assert.ok(cab.includes(c), c);
   assert.ok(!cab.includes("Grupo") && !cab.includes("Gestor MRN"), "grupo e gestor não vêm das planilhas");
-  // as férias sem período já vêm listadas em AUSÊNCIAS, com a pessoa e o tipo, para preencher a data
-  const au = XLSX.utils.sheet_to_json<Record<string, string>>(wb.Sheets["AUSÊNCIAS"]);
-  assert.deepEqual(au.map((a) => a["Profissional"]), ["Matheus Vander / Bianca Calixto"]);
-  assert.ok(au.every((a) => a["Tipo"] === "Férias" && !a["Início"] && !a["Fim"]));
+  const pes = XLSX.utils.sheet_to_json<Record<string, string>>(wb.Sheets["PESSOAS"]);
+  const ferias = pes.find((x) => String(x["Profissional"]).includes("Matheus"))!;
+  assert.equal(ferias["Status"], "Férias", "o status é o que a planilha escreve");
+  assert.ok(!ferias["Status: início"] && !ferias["Status: fim"], "o período fica em branco para preencher");
 
   // a pessoa preenche no Excel
-  let preenchido = preencher(buf, "EQUIPES", (x) => x["Equipe"] === "EQUIPE DE FELINOS", { "Início da equipe": "01/11/2026", "Fim da equipe": "30/11/2026" });
-  preenchido = preencher(preenchido, "EQUIPES", (x) => x["Equipe"] === "EQUIPE 01 - FAUNA E FLORA LT", { "Início da equipe": "05/10/2026" }); // só início: sem fim
-  preenchido = preencher(preenchido, "BASE", (x) => x["Profissional"] === "Leandro Mourão", { "Previsão de entrada": "20/10/2026" });
-  preenchido = preencher(preenchido, "AUSÊNCIAS", (x) => x["Profissional"] === "Matheus Vander / Bianca Calixto", { "Início": "10/11/2026", "Fim": "29/11/2026" });
-  const volta = lerPlanilhaEfetivos(preenchido, { anoReferencia: 2026 });
+  let f = preencher(buf, "EQUIPES", (x) => x["Equipe"] === "EQUIPE DE FELINOS", { "Início da equipe": "01/11/2026", "Fim da equipe": "30/11/2026" });
+  f = preencher(f, "EQUIPES", (x) => x["Equipe"] === "EQUIPE 01 - FAUNA E FLORA LT", { "Início da equipe": "05/10/2026" }); // só início: sem fim
+  f = preencher(f, "PESSOAS", (x) => x["Profissional"] === "Leandro Mourão", { "Previsão de entrada": "20/10/2026" });
+  f = preencher(f, "PESSOAS", (x) => String(x["Profissional"]).includes("Matheus"), { "Status: início": "10/11/2026", "Status: fim": "29/11/2026" });
+  const volta = lerPlanilhaEfetivos(f, { anoReferencia: 2026 });
   assert.equal(volta.formato, "base");
   const felinos = volta.equipes.find((e) => e.nome === "EQUIPE DE FELINOS")!;
+  assert.equal(felinos.cliente, "MRN");
   assert.equal(felinos.inicio, "2026-11-01");
   assert.equal(felinos.fim, "2026-11-30");
   const lt1 = volta.equipes.find((e) => e.nome === "EQUIPE 01 - FAUNA E FLORA LT")!;
   assert.equal(lt1.inicio, "2026-10-05");
   assert.equal(lt1.fim ?? null, null);
   assert.equal(volta.vagas.find((v) => v.nome === "Leandro Mourão")!.previsaoInicio, "2026-10-20");
-  const ferias = volta.vagas.find((v) => v.nome === "Matheus Vander / Bianca Calixto")!;
-  assert.deepEqual(ferias.ausencias, [{ tipo: "Férias", inicio: "2026-11-10", fim: "2026-11-29" }]);
-  // o que não foi preenchido continua sem data (nada é inventado)
+  // férias com período: a pessoa segue Vigente e a ausência tem data
+  const m = volta.vagas.find((v) => v.nome?.includes("Matheus"))!;
+  assert.equal(m.status, "Vigente");
+  assert.deepEqual(m.ausencias, [{ tipo: "Férias", inicio: "2026-11-10", fim: "2026-11-29" }]);
+  // o que não foi preenchido continua sem data, e o status literal ("Delisgar") volta igual
   assert.equal(volta.vagas.find((v) => v.nome === "Luiz Fernando")!.previsaoInicio ?? null, null);
-  // todas as posições e o status literal ("Férias", "Delisgar") voltam iguais
-  assert.equal(volta.vagas.length, r.vagas.length);
   assert.equal(volta.vagas.find((v) => v.nome === "Magson Lopes")!.status, "Delisgar");
+  assert.equal(volta.vagas.length, r.vagas.length);
+  assert.deepEqual(volta.contratos.map((c) => [c.codigo, c.cliente]).sort(), r.contratos.map((c) => [c.codigo, "MRN"]).sort());
+});
+
+test("Base: a pessoa fora de qualquer equipe fica na reserva do cliente dela, e cada cliente tem a sua", () => {
+  const r = lerPlanilhasEfetivos([P3686(false)], { anoReferencia: 2026, cliente: "MRN" });
+  const buf = baseDe(r);
+  // acrescenta, na aba PESSOAS, uma pessoa sem equipe da AGA e outra da MRN
+  const wb = XLSX.read(buf, { type: "buffer" });
+  const ws = wb.Sheets["PESSOAS"];
+  const cab = (XLSX.utils.sheet_to_json<string[]>(ws, { header: 1, defval: "" })[0] as string[]).map(String);
+  const n = XLSX.utils.sheet_to_json(ws, { header: 1 }).length;
+  const poe = (linha: number, v: Record<string, string>) => Object.entries(v).forEach(([c, x]) => (ws[XLSX.utils.encode_cell({ r: linha, c: cab.indexOf(c) })] = { t: "s", v: x }));
+  poe(n, { Cliente: "AGA", "Profissional": "Pedro Alves", Empresa: "Consominas", Função: "Biólogo de Fauna", Status: "Vigente" });
+  poe(n + 1, { Cliente: "MRN", "Profissional": "Rita Souza", Empresa: "Consominas", Função: "Biólogo de Fauna", Status: "Vigente" });
+  ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: n + 1, c: cab.length - 1 } });
+  const volta = lerPlanilhaEfetivos(XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer, { anoReferencia: 2026 });
+  const reservas = volta.equipes.filter((e) => e.grupo === "Apoio");
+  assert.deepEqual(reservas.map((e) => [e.codigo, e.cliente]).sort(), [["APOIO-AGA", "AGA"], ["APOIO-MRN", "MRN"]]);
+  const pedro = volta.vagas.find((v) => v.nome === "Pedro Alves")!;
+  assert.equal(pedro.equipeCodigo, "APOIO-AGA");
 });
 
 test("Base: cada viatura aparece uma vez em VIATURAS, com as equipes que usam", () => {
@@ -417,26 +442,27 @@ test("Base: cada viatura aparece uma vez em VIATURAS, com as equipes que usam", 
       ["EQUIPE C", "3686 PNM", "Consominas", "Resgate", "Superior", "Biólogo", "Eva Dias", "Sim", "VL 02", ""],
     ],
   });
-  const r = lerPlanilhaEfetivos(arq, { anoReferencia: 2026 });
+  const r = lerPlanilhaEfetivos(arq, { anoReferencia: 2026, cliente: "MRN" });
   const wb = XLSX.read(baseDe(r), { type: "buffer" });
   const vt = XLSX.utils.sheet_to_json<Record<string, string | number>>(wb.Sheets["VIATURAS"]);
   assert.equal(vt.length, 2);
   const vl1 = vt.find((x) => x["Viatura"] === "VL 01")!;
   assert.equal(vl1["Nº de equipes"], 2);
-  assert.equal(vl1["Equipes que usam"], "EQ-01, EQ-02");
+  assert.equal(vl1["Equipes que usam"], "EQUIPE A · EQUIPE B");
+  assert.equal(vl1["Cliente"], "MRN");
   assert.equal(vl1["Placa"], "");
 });
 
 // ---------------------------------------------------------------- enviar o planejamento preenchido
 
 test("Planejamento preenchido: só preenche; em branco nunca apaga; datas erradas, linhas sem par e status inventado são recusados", () => {
-  const r = lerPlanilhasEfetivos([P3686(false), PLT(false)], { anoReferencia: 2026 });
+  const r = lerPlanilhasEfetivos([P3686(false), PLT(false)], { anoReferencia: 2026, cliente: "MRN" });
   const base = baseDe(r);
   const atual: Atuais = {
     equipes: r.equipes.map((e) => ({ id: e.codigo, codigo: e.codigo, nome: e.nome, projeto: e.projeto, inicio: null, fim: e.nome === "EQUIPE DE FELINOS" ? "2026-12-31" : null, local: null, gestor: null, observacao: null })),
-    vagas: r.vagas.map((v) => ({ id: v.origem!, equipeId: v.equipeCodigo, numero: v.numero, origem: v.origem ?? null, nome: v.nome, cargo: v.cargo, previsaoInicio: null, contratoAtual: null, disponivelAPartir: null, destino: null, observacao: v.observacao })),
+    vagas: r.vagas.map((v) => ({ id: v.origem!, equipeId: v.equipeCodigo, numero: v.numero, origem: v.origem ?? null, nome: v.nome, cargo: v.cargo, status: v.status, previsaoInicio: null, contratoAtual: null, disponivelAPartir: null, destino: null, observacao: v.observacao })),
     veiculos: veiculosUnicos(r.veiculos).map((u, i) => ({ id: `veic${i}`, identificacao: u.identificacao, placa: null, modelo: null, tracao4x4: null, status: "Em operação", observacao: u.observacao })),
-    contratos: r.contratos.map((c) => ({ codigo: c.codigo, nome: null, cliente: null, gestor: null, local: null, observacao: null })),
+    contratos: r.contratos.map((c) => ({ codigo: c.codigo, nome: null, cliente: "MRN", gestor: null, local: null, observacao: null })),
     ausencias: [],
   };
   // base em branco: nada muda
@@ -445,9 +471,11 @@ test("Planejamento preenchido: só preenche; em branco nunca apaga; datas errada
   let f = preencher(base, "EQUIPES", (x) => x["Equipe"] === "EQUIPE DE FELINOS", { "Início da equipe": "01/11/2026" }); // fim em branco: o fim que o sistema já tem fica
   f = preencher(f, "EQUIPES", (x) => x["Equipe"] === "EQUIPE 01 - FAUNA E FLORA LT", { "Início da equipe": "05/10/2026", "Fim da equipe": "25/10/2026" });
   f = preencher(f, "EQUIPES", (x) => x["Equipe"] === "EQUIPE 05 - EMERGENCIAL", { "Início da equipe": "10/10/2026", "Fim da equipe": "01/10/2026" }); // fim antes do início
-  f = preencher(f, "BASE", (x) => x["Profissional"] === "Leandro Mourão", { "Previsão de entrada": "20/10/2026" });
-  f = preencher(f, "AUSÊNCIAS", (x) => x["Profissional"] === "Matheus Vander / Bianca Calixto", { "Início": "10/11/2026", "Fim": "29/11/2026" });
-  f = preencher(f, "VIATURAS", (x) => x["Viatura"] === "VL 01", { "Placa": "ABC1D23", "Status": "Voando" }); // status que não existe
+  f = preencher(f, "PESSOAS", (x) => x["Profissional"] === "Leandro Mourão", { "Previsão de entrada": "20/10/2026" });
+  f = preencher(f, "PESSOAS", (x) => String(x["Profissional"]).includes("Matheus"), { "Status: início": "10/11/2026", "Status: fim": "29/11/2026" }); // as férias ganham período
+  f = preencher(f, "PESSOAS", (x) => x["Profissional"] === "Jonas", { Status: "Em mobilização" }); // muda o status escrito
+  f = preencher(f, "PESSOAS", (x) => x["Profissional"] === "Magson Lopes", { Status: "" }); // em branco: não muda nada
+  f = preencher(f, "VIATURAS", (x) => x["Viatura"] === "VL 01", { Placa: "ABC1D23", Status: "Voando" }); // status que não existe
   const plano = planejarAtualizacao(lerPlanilhaEfetivos(f, { anoReferencia: 2026 }), atual);
 
   const felinos = plano.equipes.find((x) => x.rotulo === "EQUIPE DE FELINOS")!;
@@ -455,7 +483,12 @@ test("Planejamento preenchido: só preenche; em branco nunca apaga; datas errada
   assert.deepEqual(plano.equipes.find((x) => x.rotulo === "EQUIPE 01 - FAUNA E FLORA LT")!.mudancas, { inicio: "2026-10-05", fim: "2026-10-25" });
   assert.equal(plano.equipes.some((x) => x.rotulo === "EQUIPE 05 - EMERGENCIAL"), false);
   assert.ok(plano.avisos.some((a) => /EQUIPE 05 - EMERGENCIAL.*antes do início/.test(a)));
-  assert.deepEqual(plano.vagas.map((x) => [x.rotulo.split(" (")[0], x.mudancas]), [["Leandro Mourão", { previsaoInicio: "2026-10-20" }]]);
+  const porNome = new Map(plano.vagas.map((x) => [x.rotulo.split(" (")[0], x.mudancas]));
+  assert.deepEqual(porNome.get("Leandro Mourão"), { previsaoInicio: "2026-10-20" });
+  assert.deepEqual(porNome.get("Jonas"), { status: "Em mobilização" });
+  assert.equal(porNome.has("Magson Lopes"), false, "status em branco não muda o que está no sistema");
+  // férias que ganharam período: a pessoa passa a Vigente e a ausência tem data
+  assert.deepEqual(porNome.get("Matheus Vander / Bianca Calixto"), { status: "Vigente" });
   assert.equal(plano.ausencias.length, 1);
   assert.equal(plano.ausencias[0].tipo, "Férias");
   assert.deepEqual(plano.veiculos.map((x) => [x.rotulo, x.mudancas]), [["VL 01", { placa: "ABC1D23" }]]);

@@ -12,7 +12,7 @@ export function dadosMock(): any {
   if (cache) return cache;
   // DEV_MOCK_XLSX aceita varias planilhas separadas por ";" (as planilhas por contrato se juntam numa base so)
   const lido = lerPlanilhasEfetivos(process.env.DEV_MOCK_XLSX!.split(";").map((f) => readFileSync(f)), { anoReferencia: 2026 });
-  const equipes = lido.equipes.map((e) => ({ id: e.codigo, codigo: e.codigo, nome: e.nome, projeto: e.projeto, contratoConfirmado: true, gestor: e.gestor, grupo: e.grupo, local: (e.local ?? null) as string | null, observacao: (e.observacao ?? null) as string | null, status: e.status, inicio: (e.inicio ?? null) as string | null, fim: (e.fim ?? null) as string | null, campanhaId: null as string | null }));
+  const equipes = lido.equipes.map((e) => ({ id: e.codigo, codigo: e.codigo, nome: e.nome, projeto: e.projeto, contratoConfirmado: true, gestor: e.gestor, grupo: e.grupo, local: (e.local ?? null) as string | null, observacao: (e.observacao ?? null) as string | null, status: e.status, inicio: (e.inicio ?? null) as string | null, fim: (e.fim ?? null) as string | null, campanhaId: null as string | null, cliente: (e.cliente ?? null) as string | null }));
   // a mesma viatura em várias equipes é uma viatura só
   const unicos = veiculosUnicos(lido.veiculos);
   const idPorRef = new Map<string, string>();
@@ -26,6 +26,7 @@ export function dadosMock(): any {
     tracao4x4: u.tracao4x4,
     status: u.status || "Em operação",
     observacao: u.observacao,
+    cliente: (u.cliente ?? null) as string | null,
   }));
   const vagas = lido.vagas.map((v, i) => ({
     id: `v${i + 1}`,

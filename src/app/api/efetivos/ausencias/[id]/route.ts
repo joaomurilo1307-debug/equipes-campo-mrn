@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { dataDe, diaDe, exigir, registrar } from "@/lib/efetivos/servidor";
+import { dataDe, diaDe, exigir, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
 import { dia } from "@/lib/efetivos/esquemas";
 import { TIPOS_AUSENCIA } from "@/lib/efetivos/disponibilidade";
 
@@ -18,6 +18,10 @@ const schema = z
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { ausenciaId: params.id });
+    if (fora) return fora;
+  }
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success || Object.keys(parsed.data).length === 0) return NextResponse.json({ error: "Dados inválidos" }, { status: 422 });
   const antes = await prisma.efetivoAusencia.findUnique({ where: { id: params.id }, include: { vaga: { include: { equipe: true } } } });
@@ -49,6 +53,10 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { ausenciaId: params.id });
+    if (fora) return fora;
+  }
   const aus = await prisma.efetivoAusencia.findUnique({ where: { id: params.id }, include: { vaga: { include: { equipe: true } } } });
   if (!aus) return NextResponse.json({ error: "Ausência não encontrada" }, { status: 404 });
   await prisma.efetivoAusencia.delete({ where: { id: params.id } });

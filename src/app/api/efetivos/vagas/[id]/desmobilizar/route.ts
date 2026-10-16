@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { exigir, obterReserva, proximoNumeroDeVaga, registrar } from "@/lib/efetivos/servidor";
+import { exigir, obterReserva, proximoNumeroDeVaga, registrar, foraDoEscopo, clienteDaEquipeNoBanco } from "@/lib/efetivos/servidor";
 import { dataValida } from "@/lib/efetivos/disponibilidade";
 import { instanteBrasilia } from "@/lib/efetivos/hoje";
 import { textoDaDesmobilizacao, vagaAbertaNoLugarDe } from "@/lib/efetivos/vagas";
@@ -18,6 +18,10 @@ const schema = z.object({
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { vagaId: params.id });
+    if (fora) return fora;
+  }
   const parsed = schema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) return NextResponse.json({ error: "Dados inválidos" }, { status: 422 });
   const d = parsed.data;
@@ -29,7 +33,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   const dia = d.data ?? instanteBrasilia().iso;
 
   const r = await prisma.$transaction(async (tx) => {
-    const reserva = await obterReserva(tx);
+    const reserva = await obterReserva(tx, await clienteDaEquipeNoBanco(vaga.equipe));
     let aberta = null;
     if (d.abrirVaga) {
       aberta = await tx.efetivoVaga.create({

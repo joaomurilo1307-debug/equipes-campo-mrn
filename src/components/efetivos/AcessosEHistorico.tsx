@@ -4,15 +4,19 @@ import { useCallback, useEffect, useState } from "react";
 import { chamar } from "./comum";
 import { Aviso, CabecalhoPagina, Campo, Modal, RodapeModal } from "./ui";
 import { IcMais } from "./icones";
+import { CLIENTES_PADRAO } from "@/lib/efetivos/clientes";
+
+/** Os clientes que se pode escolher para um acesso: os padrão e os que já existem nos acessos. */
+const opcoesDeCliente = (lista: Usuario[] | null) => [...new Set([...CLIENTES_PADRAO, ...((lista ?? []).map((u) => u.cliente).filter((c): c is string => !!c))])];
 
 // ---------------------------------------------------------------- acessos (só o administrador)
 
-type Usuario = { id: string; name: string; email: string; role: "ADMIN" | "EDITOR" | "VISUALIZADOR"; active: boolean; createdAt: string };
+type Usuario = { id: string; name: string; email: string; role: "ADMIN" | "EDITOR" | "VISUALIZADOR"; active: boolean; cliente: string | null; createdAt: string };
 const ROTULO_PAPEL: Record<string, string> = { ADMIN: "Administrador", EDITOR: "Editor", VISUALIZADOR: "Somente consulta" };
 const DESCRICAO_PAPEL: Record<string, string> = {
-  ADMIN: "Tudo, inclusive criar e gerenciar acessos.",
-  EDITOR: "Monta e movimenta equipes, lança ausências, mexe em veículos e importa planilha.",
-  VISUALIZADOR: "Só consulta painel, quadro, equipes, vagas e frota; não vê o motivo das ausências.",
+  ADMIN: "Vê todos os clientes e faz tudo: movimenta pessoas, equipes e viaturas entre contratos e clientes, importa bases e cria acessos.",
+  EDITOR: "Monta e movimenta equipes, lança ausências e mexe em viaturas, só no cliente do acesso (ou em todos, se não houver cliente).",
+  VISUALIZADOR: "Só consulta, no cliente do acesso; não vê o motivo das ausências.",
 };
 
 export function Acessos() {
@@ -41,7 +45,7 @@ export function Acessos() {
     <div>
       <CabecalhoPagina
         titulo="Acessos"
-        subtitulo="Quem entra no sistema. Cada pessoa tem o seu usuário e a sua senha."
+        subtitulo="Quem entra no sistema. Cada pessoa tem o seu usuário e a sua senha; o acesso pode ficar restrito a um cliente (MRN, AGA)."
         acoes={
           <button onClick={() => setNovo(true)} className="btn-primary">
             <IcMais tam={16} /> Novo acesso
@@ -64,6 +68,7 @@ export function Acessos() {
               <th>Nome</th>
               <th>E-mail</th>
               <th>Papel</th>
+              <th>Cliente</th>
               <th>Situação</th>
               <th />
             </tr>
@@ -82,6 +87,20 @@ export function Acessos() {
                     ))}
                   </select>
                 </td>
+                <td>
+                  {u.role === "ADMIN" ? (
+                    <span className="text-[12px] text-gray-500">todos os clientes</span>
+                  ) : (
+                    <select value={u.cliente ?? ""} onChange={(e) => alterar(u, { cliente: e.target.value || null })} className="rounded-md border border-line bg-white px-2 py-1 text-sm" title="Cliente a que este acesso fica restrito">
+                      <option value="">Todos os clientes</option>
+                      {opcoesDeCliente(lista).map((c) => (
+                        <option key={c} value={c}>
+                          só {c}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </td>
                 <td>{u.active ? <span className="chip-ok">Ativo</span> : <span className="chip-mute">Desativado</span>}</td>
                 <td className="whitespace-nowrap text-right">
                   <button onClick={() => setSenhaDe(u)} className="btn-ghost btn-sm">
@@ -95,7 +114,7 @@ export function Acessos() {
             ))}
             {!lista && !erro && (
               <tr>
-                <td colSpan={5} className="py-8 text-center text-gray-400">
+                <td colSpan={6} className="py-8 text-center text-gray-400">
                   Carregando…
                 </td>
               </tr>
@@ -103,20 +122,20 @@ export function Acessos() {
           </tbody>
         </table>
       </div>
-      {novo && <ModalNovoAcesso onFechar={() => setNovo(false)} onSalvo={() => { setNovo(false); carregar(); }} />}
+      {novo && <ModalNovoAcesso clientes={opcoesDeCliente(lista)} onFechar={() => setNovo(false)} onSalvo={() => { setNovo(false); carregar(); }} />}
       {senhaDe && <ModalSenha usuario={senhaDe} onFechar={() => setSenhaDe(null)} />}
     </div>
   );
 }
 
-function ModalNovoAcesso({ onFechar, onSalvo }: { onFechar: () => void; onSalvo: () => void }) {
-  const [f, setF] = useState({ name: "", email: "", password: "", role: "EDITOR" });
+function ModalNovoAcesso({ clientes, onFechar, onSalvo }: { clientes: string[]; onFechar: () => void; onSalvo: () => void }) {
+  const [f, setF] = useState({ name: "", email: "", password: "", role: "EDITOR", cliente: "" });
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   async function salvar() {
     setSalvando(true);
     setErro(null);
-    const r = await chamar("POST", "/api/usuarios", f);
+    const r = await chamar("POST", "/api/usuarios", { ...f, cliente: f.role === "ADMIN" ? null : f.cliente || null });
     setSalvando(false);
     if (!r.ok) return setErro(r.dados.error ?? "Não foi possível criar");
     onSalvo();
@@ -142,6 +161,18 @@ function ModalNovoAcesso({ onFechar, onSalvo }: { onFechar: () => void; onSalvo:
             ))}
           </select>
         </Campo>
+        {f.role !== "ADMIN" && (
+          <Campo rotulo="Cliente" dica="O usuário só vê e mexe nos dados deste cliente. Ex.: o Samuel, só MRN.">
+            <select value={f.cliente} onChange={(e) => setF({ ...f, cliente: e.target.value })} className="field">
+              <option value="">Todos os clientes</option>
+              {clientes.map((c) => (
+                <option key={c} value={c}>
+                  só {c}
+                </option>
+              ))}
+            </select>
+          </Campo>
+        )}
       </div>
       {erro && <div className="px-6 pb-4"><Aviso tipo="erro">{erro}</Aviso></div>}
       <RodapeModal>

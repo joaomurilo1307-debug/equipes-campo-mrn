@@ -14,6 +14,7 @@ export type Equipe = {
   inicio: Dia | null;
   fim: Dia | null;
   campanhaId: string | null;
+  cliente: string | null;
 };
 export type Contrato = { id: string; codigo: string; nome: string | null; cliente: string | null; gestor: string | null; local: string | null; observacao: string | null; ativo: boolean };
 export type Vaga = {
@@ -69,6 +70,7 @@ export type Veiculo = {
   tracao4x4: boolean | null;
   status: string;
   observacao: string | null;
+  cliente: string | null;
 };
 export type Movimento = {
   id: string;
@@ -86,6 +88,8 @@ export type MovimentoEquipe = { id: string; equipeId: string; inicio: Dia; fim: 
 export type DadosTela = {
   nivel: "ADMIN" | "EDITOR" | "DASHBOARD";
   podeEditar: boolean;
+  /** cliente a que o usuário está restrito (MRN, AGA...); nulo = vê todos */
+  cliente: string | null;
   equipes: Equipe[];
   vagas: Vaga[];
   ausencias: Ausencia[];

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { exigir, registrar } from "@/lib/efetivos/servidor";
+import { exigir, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
 import { STATUS_EQUIPE, dataValida } from "@/lib/efetivos/disponibilidade";
 import { dataDe } from "@/lib/efetivos/servidor";
 
@@ -15,6 +15,7 @@ const schema = z
     local: z.string().trim().max(160).nullable(),
     observacao: z.string().trim().max(600).nullable(),
     grupo: z.string().trim().max(40),
+    cliente: z.string().trim().max(60).nullable(),
     status: z.enum(STATUS_EQUIPE),
     // true = a pessoa responsavel conferiu o contrato da equipe
     contratoConfirmado: z.boolean(),
@@ -27,9 +28,18 @@ const schema = z
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { equipeId: params.id });
+    if (fora) return fora;
+  }
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success || Object.keys(parsed.data).length === 0) {
     return NextResponse.json({ error: "Dados inválidos" }, { status: 422 });
+  }
+  if (a.cliente && parsed.data.cliente !== undefined && (parsed.data.cliente || null) !== a.cliente) return NextResponse.json({ error: "Só a administração muda o cliente de uma equipe" }, { status: 403 });
+  {
+    const fora = await foraDoEscopo(a, { contrato: parsed.data.projeto });
+    if (fora) return fora;
   }
   const antes = await prisma.efetivoEquipe.findUnique({ where: { id: params.id } });
   if (!antes) return NextResponse.json({ error: "Equipe não encontrada" }, { status: 404 });
@@ -61,6 +71,10 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { equipeId: params.id });
+    if (fora) return fora;
+  }
   const equipe = await prisma.efetivoEquipe.findUnique({ where: { id: params.id }, include: { _count: { select: { vagas: true } } } });
   if (!equipe) return NextResponse.json({ error: "Equipe não encontrada" }, { status: 404 });
   if (equipe._count.vagas > 0) {

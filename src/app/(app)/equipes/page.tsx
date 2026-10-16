@@ -1,5 +1,10 @@
-import EquipesPessoas from "@/components/efetivos/EquipesPessoas";
+import { Suspense } from "react";
+import EquipesComAbas from "@/components/efetivos/EquipesComAbas";
 
 export default function Pagina() {
-  return <EquipesPessoas />;
+  return (
+    <Suspense fallback={null}>
+      <EquipesComAbas />
+    </Suspense>
+  );
 }

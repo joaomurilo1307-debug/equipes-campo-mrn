@@ -1,10 +1,9 @@
-import { Suspense } from "react";
-import Vagas from "@/components/efetivos/Vagas";
+import { redirect } from "next/navigation";
 
-export default function PaginaVagas({ searchParams }: { searchParams: Record<string, string | string[] | undefined> }) {
-  return (
-    <Suspense fallback={null}>
-      <Vagas key={JSON.stringify(searchParams)} />
-    </Suspense>
-  );
+// A tela agora é uma aba de /pessoas: o link antigo continua funcionando.
+export default function Pagina({ searchParams }: { searchParams: Record<string, string | string[] | undefined> }) {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(searchParams)) if (typeof v === "string" && k !== "aba") q.set(k, v);
+  q.set("aba", "vagas");
+  redirect(`/pessoas?${q}`);
 }

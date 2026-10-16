@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { exigir, registrar } from "@/lib/efetivos/servidor";
+import { exigir, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
 import { STATUS_VEICULO } from "@/lib/efetivos/veiculos";
 
 const schema = z
@@ -12,6 +12,7 @@ const schema = z
     tracao4x4: z.boolean().nullable(),
     status: z.enum(STATUS_VEICULO),
     observacao: z.string().trim().max(300).nullable(),
+    cliente: z.string().trim().max(60).nullable(),
   })
   .partial();
 
@@ -19,8 +20,13 @@ const schema = z
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { veiculoId: params.id });
+    if (fora) return fora;
+  }
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success || Object.keys(parsed.data).length === 0) return NextResponse.json({ error: "Dados inválidos" }, { status: 422 });
+  if (a.cliente && parsed.data.cliente !== undefined && (parsed.data.cliente || null) !== a.cliente) return NextResponse.json({ error: "Só a administração muda o cliente de uma viatura" }, { status: 403 });
   const antes = await prisma.efetivoVeiculo.findUnique({ where: { id: params.id } });
   if (!antes) return NextResponse.json({ error: "Veículo não encontrado" }, { status: 404 });
   const { placa, modelo, observacao, ...resto } = parsed.data;
@@ -50,6 +56,10 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { veiculoId: params.id });
+    if (fora) return fora;
+  }
   const v = await prisma.efetivoVeiculo.findUnique({ where: { id: params.id }, include: { _count: { select: { movimentos: true } } } });
   if (!v) return NextResponse.json({ error: "Veículo não encontrado" }, { status: 404 });
   await prisma.efetivoVeiculo.delete({ where: { id: v.id } });

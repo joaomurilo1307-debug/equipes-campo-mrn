@@ -2,6 +2,7 @@
 
 // Carrega uma vez os dados do sistema (poucas centenas de linhas) e entrega para todas as telas,
 // já com a regra de disponibilidade pronta para calcular qualquer data no próprio navegador.
+import { clientesDosDados, filtrarPorCliente } from "@/lib/efetivos/clientes";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { indexar, type Dia, type DadosEfetivos, type Indice } from "@/lib/efetivos/disponibilidade";
 import { contar, resumirDia, situacaoDaPosicao, type Contagem, type ResumoDoDia, type SituacaoDaPosicao } from "@/lib/efetivos/situacao";
@@ -16,6 +17,8 @@ type Ctx = {
   recarregar: () => Promise<void>;
   ocultarNomes: boolean;
   setOcultarNomes: (v: boolean) => void;
+  /** Tudo o que o usuário pode ver, sem o filtro de cliente da tela (para escolher destinos ao mover entre clientes). */
+  completos: DadosTela;
   /** As equipes de campo (sem a reserva de apoio). */
   equipesCampo: Equipe[];
   equipePorId: Map<string, Equipe>;
@@ -45,7 +48,20 @@ type Ctx = {
 
 const Contexto = createContext<Ctx | null>(null);
 
-type Shell = { ocultarNomes: boolean; setOcultarNomes: (v: boolean) => void; nivel: DadosTela["nivel"] | null; podeEditar: boolean; carregado: boolean };
+type Shell = {
+  ocultarNomes: boolean;
+  setOcultarNomes: (v: boolean) => void;
+  nivel: DadosTela["nivel"] | null;
+  podeEditar: boolean;
+  carregado: boolean;
+  /** cliente a que o usuário está restrito; nulo = administração, vê todos os clientes */
+  escopo: string | null;
+  /** os clientes que existem nos dados (MRN, AGA...) */
+  clientes: string[];
+  /** cliente escolhido para olhar (só a administração escolhe; vazio = todos) */
+  clienteSel: string;
+  setClienteSel: (v: string) => void;
+};
 const ContextoShell = createContext<Shell | null>(null);
 const ContextoErro = createContext<{ erro: { status: number; texto: string } | null; tentar: () => void }>({ erro: null, tentar: () => {} });
 
@@ -63,7 +79,8 @@ export function useShell(): Shell {
 }
 
 export function DadosProvider({ children }: { children: ReactNode }) {
-  const [dados, setDados] = useState<DadosTela | null>(null);
+  const [bruto, setDados] = useState<DadosTela | null>(null);
+  const [clienteSel, setClienteSelEstado] = useState("");
   const [erro, setErro] = useState<{ status: number; texto: string } | null>(null);
   const [ocultarNomes, setOcultarNomes] = useState(false);
   const [hoje, setHoje] = useState(hojeBr());
@@ -80,12 +97,34 @@ export function DadosProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    try {
+      setClienteSelEstado(localStorage.getItem("equipes.cliente") ?? "");
+    } catch {
+      // sem armazenamento: começa em "todos"
+    }
+  }, []);
+  const setClienteSel = useCallback((v: string) => {
+    setClienteSelEstado(v);
+    try {
+      localStorage.setItem("equipes.cliente", v);
+    } catch {
+      // sem armazenamento: vale só nesta tela
+    }
+  }, []);
+
+  useEffect(() => {
     recarregar();
     // ao voltar para a aba, atualiza (o Samuel e o João podem estar editando ao mesmo tempo)
     const h = () => document.visibilityState === "visible" && recarregar();
     document.addEventListener("visibilitychange", h);
     return () => document.removeEventListener("visibilitychange", h);
   }, [recarregar]);
+
+  // quem está restrito a um cliente já recebe só o dele do servidor; a administração pode olhar um cliente de cada vez
+  const escopo = bruto?.cliente ?? null;
+  const clientes = useMemo(() => (bruto ? clientesDosDados(bruto) : []), [bruto]);
+  const selecionado = escopo ? "" : clientes.includes(clienteSel) ? clienteSel : "";
+  const dados = useMemo(() => (bruto && selecionado ? filtrarPorCliente(bruto, selecionado) : bruto), [bruto, selecionado]);
 
   const pronto = useMemo(() => {
     if (!dados) return null;
@@ -155,11 +194,12 @@ export function DadosProvider({ children }: { children: ReactNode }) {
   }, [dados, hoje]);
 
   const hojeDia = hoje;
-  const shell: Shell = { ocultarNomes, setOcultarNomes, nivel: dados?.nivel ?? null, podeEditar: dados?.podeEditar ?? false, carregado: !!dados };
+  const shell: Shell = { ocultarNomes, setOcultarNomes, nivel: dados?.nivel ?? null, podeEditar: dados?.podeEditar ?? false, carregado: !!dados, escopo, clientes, clienteSel: selecionado, setClienteSel };
   const valor: Ctx | null =
     dados && pronto
       ? {
           dados,
+          completos: bruto!,
           ...pronto,
           hoje,
           recarregar,

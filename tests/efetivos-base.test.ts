@@ -240,22 +240,22 @@ test("Base em Excel: o que sai do sistema entra de volta igual (equipes, posiç�
   const original = lerPlanilhaEfetivos(PLANILHA(), { anoReferencia: 2026 });
   const buf = montarPlanilhaBase(dadosDe(original), indexar({ ausencias: [], alocacoes: [] }), "2026-10-15", original.conferencia ?? null);
   const wb = XLSX.read(buf, { type: "buffer" });
-  assert.deepEqual(wb.SheetNames, ["LEIA-ME", "BASE", "EQUIPES", "CONTRATOS", "VIATURAS", "AUSÊNCIAS", "CONFERÊNCIA"]);
+  assert.deepEqual(wb.SheetNames, ["LEIA-ME", "PESSOAS", "EQUIPES", "VIATURAS"], "o mínimo de abas para concentrar o preenchimento");
   const volta = lerPlanilhaEfetivos(buf, { anoReferencia: 2026 });
   assert.equal(volta.formato, "base");
   assert.equal(volta.equipes.length, original.equipes.length);
   assert.equal(volta.vagas.length, original.vagas.length);
   assert.equal(volta.veiculos.length, original.veiculos.length);
   assert.deepEqual(volta.contratos.map((c) => [c.codigo, c.gestor]).sort(), original.contratos.map((c) => [c.codigo, c.gestor]).sort());
-  const chave = (v: { equipeCodigo: string; cargo: string; empresa: string; atividade: string; nome: string | null; semNome?: boolean; status: string; contrato?: string | null; origem?: string | null; conferir?: string | null }) =>
-    [v.equipeCodigo, v.cargo, v.empresa, v.atividade, v.nome ?? "", v.semNome ? "S" : "-", v.status, v.contrato ?? "", v.origem ?? "", v.conferir ?? ""].join("|");
+  const chave = (v: { equipeCodigo: string; cargo: string; empresa: string; atividade: string; nome: string | null; semNome?: boolean; status: string; origem?: string | null; conferir?: string | null }) =>
+    [v.equipeCodigo, v.cargo, v.empresa, v.atividade, v.nome ?? "", v.semNome ? "S" : "-", v.status, v.origem ?? "", v.conferir ?? ""].join("|");
   assert.deepEqual(volta.vagas.map(chave).sort(), original.vagas.map(chave).sort());
   // a reserva mantém o código APOIO e o grupo
   assert.equal(volta.equipes.find((e) => e.codigo === "APOIO")?.grupo, "Apoio");
-  // a conferência diz que todas as linhas da aba 2 estão na base
-  const conf = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets["CONFERÊNCIA"], { header: 1 }).map((l) => (l as unknown[]).join(" | "));
-  assert.ok(conf.some((l) => /Linhas na aba 1 \(cadastro por contrato\) \| 10/.test(l)));
-  assert.ok(conf.some((l) => /todas as linhas da aba 2 estão na base/.test(l)));
+  // a aba PESSOAS tem uma linha por posição, sem a coluna de grupo (que não vem das planilhas)
+  const pessoas = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets["PESSOAS"]);
+  assert.equal(pessoas.length, original.vagas.length);
+  assert.ok(!("Grupo" in pessoas[0]));
 });
 
 test("Base: linhas com situação de hoje, contagem por origem e a reserva sem contrato", () => {

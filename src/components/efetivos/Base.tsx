@@ -91,7 +91,7 @@ export default function Base() {
     <div>
       <CabecalhoPagina
         titulo="Base"
-        subtitulo="Uma linha por posição, como na planilha-base em Excel: contrato, equipe, pessoa, viatura e de onde veio nas abas originais. Todo número do Painel é uma contagem destas linhas."
+        subtitulo="Uma linha por posição, como na aba PESSOAS do Excel. O Excel tem só 3 abas para preencher: EQUIPES (datas), PESSOAS (status e previsões) e VIATURAS (placa e modelo). Baixe, preencha as colunas amarelas e envie de volta."
         acoes={
           <>
             <a href="/api/efetivos/base" className={podeEditar ? "btn-ghost" : "btn-primary"} download>
@@ -302,7 +302,7 @@ export default function Base() {
           </table>
         </div>
       </div>
-      <p className="mt-3 text-[11.5px] text-gray-400">A coluna Origem diz de qual aba e linha da planilha original cada linha veio; “conferir” marca o que precisa de confirmação. O mesmo conteúdo sai no Excel, aba BASE.</p>
+      <p className="mt-3 text-[11.5px] text-gray-400">A coluna Origem diz de qual planilha e linha cada linha veio; “conferir” marca o que precisa de confirmação (só avisa, nunca muda o dado). O mesmo conteúdo sai no Excel, aba PESSOAS.</p>
 
       {editar && (
         <ModalVaga

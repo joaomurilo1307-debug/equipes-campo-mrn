@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ROTULO_ESTADO_EQUIPE, estadoDaEquipe } from "@/lib/efetivos/situacao";
-import { useDados } from "./DadosContext";
+import { useDados, useShell } from "./DadosContext";
+import { CLIENTES_PADRAO } from "@/lib/efetivos/clientes";
 import { A_DEFINIR, SEM_CONTRATO, chamar, contratosConhecidos, corDoContrato, fmtDia, rotuloContrato, type Contrato } from "./comum";
 import { IcLixo, IcMais, IcMover } from "./icones";
 import { CampoInline } from "./inline";
@@ -11,6 +12,8 @@ import { Aviso, CabecalhoPagina, Campo, Modal, PontoContrato, RodapeModal, Vazio
 
 export default function Contratos() {
   const { dados, hoje, recarregar, veiculosPorEquipe, equipesPorVeiculo, equipesCampo, contagemDe, equipePorId } = useDados();
+  const { clientes, escopo } = useShell();
+  const opcoesCliente = [...new Set([...CLIENTES_PADRAO, ...clientes])];
   const [sel, setSel] = useState<string>("");
   const [novo, setNovo] = useState(false);
   const [adicionar, setAdicionar] = useState("");
@@ -125,7 +128,7 @@ export default function Contratos() {
                   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     <CampoInline rotulo="Código (como o time chama)" valor={atual.codigo} onSalvar={(v) => salvarCampo("codigo", v)} desabilitado={!podeEditar || !atual.contrato} />
                     <CampoInline rotulo="Nome / descrição" valor={atual.contrato?.nome ?? ""} onSalvar={(v) => salvarCampo("nome", v)} desabilitado={!podeEditar} />
-                    <CampoInline rotulo="Cliente" valor={atual.contrato?.cliente ?? ""} onSalvar={(v) => salvarCampo("cliente", v)} desabilitado={!podeEditar} />
+                    <CampoInline rotulo="Cliente" valor={atual.contrato?.cliente ?? ""} lista={opcoesCliente} onSalvar={(v) => salvarCampo("cliente", v)} desabilitado={!podeEditar || !!escopo} />
                     <CampoInline rotulo="Gestor MRN" valor={atual.contrato?.gestor ?? ""} onSalvar={(v) => salvarCampo("gestor", v)} desabilitado={!podeEditar} />
                     <CampoInline rotulo="Local" valor={atual.contrato?.local ?? ""} onSalvar={(v) => salvarCampo("local", v)} desabilitado={!podeEditar} />
                     <CampoInline rotulo="Observações" valor={atual.contrato?.observacao ?? ""} linhas={1} onSalvar={(v) => salvarCampo("observacao", v)} desabilitado={!podeEditar} />
@@ -293,7 +296,8 @@ export default function Contratos() {
 
 function ModalNovoContrato({ onFechar, onCriado }: { onFechar: () => void; onCriado: (codigo: string) => void }) {
   const { recarregar } = useDados();
-  const [f, setF] = useState({ codigo: "", nome: "", cliente: "", gestor: "", local: "", observacao: "" });
+  const { clientes, escopo } = useShell();
+  const [f, setF] = useState({ codigo: "", nome: "", cliente: escopo ?? (clientes.length === 1 ? clientes[0] : ""), gestor: "", local: "", observacao: "" });
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
   const set = (k: keyof typeof f, v: string) => setF((x) => ({ ...x, [k]: v }));
@@ -315,8 +319,13 @@ function ModalNovoContrato({ onFechar, onCriado }: { onFechar: () => void; onCri
         <Campo rotulo="Nome / descrição" className="sm:col-span-2">
           <input value={f.nome} onChange={(e) => set("nome", e.target.value)} className="field" />
         </Campo>
-        <Campo rotulo="Cliente">
-          <input value={f.cliente} onChange={(e) => set("cliente", e.target.value)} className="field" />
+        <Campo rotulo="Cliente" dica={escopo ? "O contrato fica no cliente do seu acesso." : "MRN, AGA... Define quem vê este contrato."}>
+          <select value={f.cliente} onChange={(e) => set("cliente", e.target.value)} className="field" disabled={!!escopo}>
+            <option value="">Sem cliente</option>
+            {[...new Set([...CLIENTES_PADRAO, ...clientes])].map((c) => (
+              <option key={c}>{c}</option>
+            ))}
+          </select>
         </Campo>
         <Campo rotulo="Gestor MRN">
           <input value={f.gestor} onChange={(e) => set("gestor", e.target.value)} className="field" />

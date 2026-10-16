@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { dataDe, exigir, registrar } from "@/lib/efetivos/servidor";
+import { dataDe, exigir, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
 import { dia } from "@/lib/efetivos/esquemas";
 import { STATUS_VEICULO } from "@/lib/efetivos/veiculos";
 
@@ -12,6 +12,7 @@ const schema = z.object({
   tracao4x4: z.boolean().nullable().optional(),
   status: z.enum(STATUS_VEICULO).default("Em operação"),
   observacao: z.string().trim().max(300).nullable().optional(),
+  cliente: z.string().trim().max(60).nullable().optional(),
   // onde o veiculo esta desde ja (opcional): contrato/projeto, equipe e local
   localizacao: z
     .object({
@@ -29,6 +30,10 @@ export async function POST(req: Request) {
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Dados inválidos", detalhes: parsed.error.flatten() }, { status: 422 });
   const d = parsed.data;
+  {
+    const fora = await foraDoEscopo(a, { equipeId: d.localizacao?.equipeId, contrato: d.localizacao?.projeto });
+    if (fora) return fora;
+  }
   const placa = d.placa ? d.placa.toUpperCase().replace(/\s+/g, "") : null;
   if (placa && (await prisma.efetivoVeiculo.findFirst({ where: { placa } }))) {
     return NextResponse.json({ error: `Já existe um veículo com a placa ${placa}` }, { status: 409 });
@@ -40,7 +45,7 @@ export async function POST(req: Request) {
     const codigo = `VEI-${String(maior + 1).padStart(3, "0")}`;
     try {
       const veiculo = await prisma.efetivoVeiculo.create({
-        data: { codigo, identificacao: d.identificacao, placa, modelo: d.modelo || null, tracao4x4: d.tracao4x4 ?? null, status: d.status, observacao: d.observacao || null },
+        data: { codigo, identificacao: d.identificacao, placa, modelo: d.modelo || null, tracao4x4: d.tracao4x4 ?? null, status: d.status, observacao: d.observacao || null, cliente: a.cliente ?? (d.cliente || null) },
       });
       if (d.localizacao) {
         await prisma.efetivoVeiculoMovimento.create({

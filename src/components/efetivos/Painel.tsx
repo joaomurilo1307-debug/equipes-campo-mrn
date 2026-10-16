@@ -10,6 +10,7 @@ import { useDados } from "./DadosContext";
 import { BarraPartes, BarrasHorizontais, ColunasEmpilhadas, Legenda, Rosca, type Coluna, type Serie } from "./graficos";
 import { A_DEFINIR, COR_AUSENCIA, corDoContrato, fmtDia, fmtDiaCurto, rotuloContrato, segundaDaSemana, type Equipe } from "./comum";
 import { IcBaixo, IcCalendario, IcMais } from "./icones";
+import Pendencias from "./Pendencias";
 import { CabecalhoPagina, PontoContrato, Secao } from "./ui";
 
 const COR = { emEquipe: "#0E8F63", ausente: "#E63329", disponivel: "#2F6FDE", outro: "#9DB7E8", aberta: "#E0A100", semNome: "#9CC9BB" };
@@ -226,6 +227,11 @@ export default function Painel() {
           </div>
         </div>
       </section>
+
+      {/* o que falta preencher (datas, placas...) */}
+      <div className="my-4">
+        <Pendencias />
+      </div>
 
       {/* gráficos */}
       <div className="grid items-stretch gap-4 lg:grid-cols-2 2xl:grid-cols-12">

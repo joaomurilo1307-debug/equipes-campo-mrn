@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { dataDe, diaDe, exigir, registrar } from "@/lib/efetivos/servidor";
+import { clienteDaEquipeNoBanco, dataDe, diaDe, exigir, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
 import { dia } from "@/lib/efetivos/esquemas";
 import { planejarMovimento } from "@/lib/efetivos/veiculos";
 
@@ -20,9 +20,17 @@ const schema = z.object({
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { veiculoId: params.id });
+    if (fora) return fora;
+  }
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Dados inválidos", detalhes: parsed.error.flatten() }, { status: 422 });
   const d = parsed.data;
+  {
+    const fora = await foraDoEscopo(a, { equipeId: d.equipeId, contrato: d.projeto });
+    if (fora) return fora;
+  }
   const veiculo = await prisma.efetivoVeiculo.findUnique({ where: { id: params.id }, include: { movimentos: true } });
   if (!veiculo) return NextResponse.json({ error: "Veículo não encontrado" }, { status: 404 });
   if (d.equipeId && !(await prisma.efetivoEquipe.findUnique({ where: { id: d.equipeId } }))) return NextResponse.json({ error: "Equipe não encontrada" }, { status: 404 });
@@ -58,6 +66,11 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   const movimento = plano.fecharAnterior
     ? (await prisma.$transaction([prisma.efetivoVeiculoMovimento.update({ where: { id: plano.fecharAnterior.id }, data: { fim: dataDe(plano.fecharAnterior.fim) } }), criar]))[1]
     : await criar;
+  // levar a viatura para um contrato/equipe de outro cliente (só a administração) muda o cliente dela
+  const destContrato = await prisma.efetivoContrato.findUnique({ where: { codigo: d.projeto } });
+  const destEquipe = d.equipeId ? await prisma.efetivoEquipe.findUnique({ where: { id: d.equipeId } }) : null;
+  const destCliente = destContrato?.cliente?.trim() || (destEquipe ? await clienteDaEquipeNoBanco(destEquipe) : null);
+  if (destCliente && destCliente !== (veiculo.cliente ?? null)) await prisma.efetivoVeiculo.update({ where: { id: veiculo.id }, data: { cliente: destCliente } });
   await registrar(
     a.userId,
     "VEICULO_MOVIDO",

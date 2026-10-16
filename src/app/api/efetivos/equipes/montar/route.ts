@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { dadosParaRegra, dataDe, exigir, proximoNumeroDeVaga, registrar } from "@/lib/efetivos/servidor";
+import { dadosParaRegra, dataDe, exigir, proximoNumeroDeVaga, registrar, foraDoEscopo, clienteDaEquipeNoBanco } from "@/lib/efetivos/servidor";
 import { dataValida, validarAlocacao } from "@/lib/efetivos/disponibilidade";
 import { dadosAoEntrarNaEquipe, vagaAbertaNoLugarDe } from "@/lib/efetivos/vagas";
 
@@ -12,6 +12,7 @@ const schema = z
     nome: z.string().trim().min(1).max(120),
     projeto: z.string().trim().min(1).max(60),
     grupo: z.string().trim().max(40).default(""),
+    cliente: z.string().trim().max(60).nullable().optional(),
     gestor: z.string().trim().max(80).nullable().optional(),
     local: z.string().trim().max(160).nullable().optional(),
     observacao: z.string().trim().max(600).nullable().optional(),
@@ -51,6 +52,12 @@ export async function POST(req: Request) {
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Dados inválidos", detalhes: parsed.error.flatten() }, { status: 422 });
   const d = parsed.data;
+  {
+    const fora = await foraDoEscopo(a, { contrato: d.projeto });
+    if (fora) return fora;
+  }
+  const contratoDaEquipe = await prisma.efetivoContrato.findUnique({ where: { codigo: d.projeto } });
+  const clienteDaNova = a.cliente ?? contratoDaEquipe?.cliente?.trim() ?? (d.cliente || null);
   const ids = Array.from(new Set(d.colaboradorIds));
 
   if (d.campanhaId && !(await prisma.efetivoCampanha.findUnique({ where: { id: d.campanhaId } }))) {
@@ -59,6 +66,11 @@ export async function POST(req: Request) {
   const pessoas = await prisma.efetivoVaga.findMany({ where: { id: { in: ids } }, include: { equipe: true } });
   if (pessoas.length !== ids.length || pessoas.some((p) => !p.nome)) {
     return NextResponse.json({ error: "Algum colaborador escolhido não existe mais ou está sem nome" }, { status: 422 });
+  }
+  if (a.cliente) {
+    for (const p of pessoas) {
+      if ((await clienteDaEquipeNoBanco(p.equipe)) !== a.cliente) return NextResponse.json({ error: `${p.nome} não é do cliente ${a.cliente}. Só a administração move pessoas entre clientes.` }, { status: 403 });
+    }
   }
   if (d.inicio && d.fim && ids.length > 0) {
     const { regra } = await dadosParaRegra();
@@ -81,6 +93,7 @@ export async function POST(req: Request) {
         nome: d.nome,
         projeto: d.projeto,
         grupo: d.grupo,
+        cliente: clienteDaNova,
         gestor: d.gestor || null,
         local: d.local || null,
         observacao: d.observacao || null,

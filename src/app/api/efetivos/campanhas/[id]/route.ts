@@ -9,7 +9,7 @@ const schema = campanhaSchema.partial();
 
 // Campanha nao e apagada: cancelar libera as pessoas e preserva o historico.
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
-  const a = await exigir("editar");
+  const a = await exigir("global");
   if ("erro" in a) return a.erro;
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success || Object.keys(parsed.data).length === 0) {
@@ -86,7 +86,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 
 // Exclui uma campanha criada por engano (as escalas dela saem juntas e as pessoas ficam livres). Para guardar o historico, prefira Cancelar.
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
-  const a = await exigir("editar");
+  const a = await exigir("global");
   if ("erro" in a) return a.erro;
   const c = await prisma.efetivoCampanha.findUnique({ where: { id: params.id }, include: { _count: { select: { alocacoes: true } } } });
   if (!c) return NextResponse.json({ error: "Campanha não encontrada" }, { status: 404 });

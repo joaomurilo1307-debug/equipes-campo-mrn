@@ -1,6 +1,7 @@
 "use client";
 
 // Controle de vagas da equipe: abrir vagas, desmobilizar (a vaga fica aberta) e puxar um colaborador do cadastro.
+import { clienteDaEquipe } from "@/lib/efetivos/clientes";
 import { useMemo, useState } from "react";
 import { temNome } from "@/lib/efetivos/disponibilidade";
 import { useDados } from "../DadosContext";
@@ -315,17 +316,28 @@ export function ModalPuxar({ equipe, vagaPreSelecionada, onFechar }: { equipe: E
 
 /** O mesmo movimento visto do colaborador: escolhe a equipe e a vaga que ele vai ocupar. */
 export function ModalColocarEmEquipe({ vaga, onFechar }: { vaga: Vaga; onFechar: () => void }) {
-  const { dados, recarregar, equipePorId, vagasPorEquipe, nomeDe } = useDados();
+  const { completos, recarregar, equipePorId, nomeDe } = useDados();
   const atual = equipePorId.get(vaga.equipeId);
   const veioDeEquipe = !!atual && atual.grupo !== "Apoio";
-  const equipes = useMemo(() => dados.equipes.filter((e) => e.grupo !== "Apoio" && e.id !== vaga.equipeId && e.status !== "Inativa"), [dados.equipes, vaga.equipeId]);
-  const contratos = useMemo(() => [...new Set(equipes.map((e) => e.projeto))].sort((a, b) => (a === "A definir" ? 1 : b === "A definir" ? -1 : a.localeCompare(b, "pt-BR", { numeric: true }))), [equipes]);
+  // as equipes de destino vêm de tudo o que o usuário vê (não só do cliente escolhido na tela): a administração move entre clientes
+  const equipes = useMemo(() => completos.equipes.filter((e) => e.grupo !== "Apoio" && e.id !== vaga.equipeId && e.status !== "Inativa"), [completos.equipes, vaga.equipeId]);
+  const clienteDe = (e: { projeto: string; cliente: string | null }) => clienteDaEquipe(e, completos.contratos) ?? "";
+  // um grupo por (cliente, contrato)
+  const contratos = useMemo(
+    () =>
+      [...new Set(equipes.map((e) => `${clienteDaEquipe(e, completos.contratos) ?? ""}\u0000${e.projeto}`))].sort((a, b) => {
+        const [ca, pa] = a.split("\u0000");
+        const [cb, pb] = b.split("\u0000");
+        return ca.localeCompare(cb, "pt-BR") || (pa === "A definir" ? 1 : pb === "A definir" ? -1 : pa.localeCompare(pb, "pt-BR", { numeric: true }));
+      }),
+    [equipes, completos.contratos]
+  );
   const [equipeId, setEquipeId] = useState("");
   const [lugar, setLugar] = useState("nova");
   const [abrirNaOrigem, setAbrirNaOrigem] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
-  const lugares = useMemo(() => (equipeId ? (vagasPorEquipe.get(equipeId) ?? []).filter((v) => !temNome(v)) : []), [vagasPorEquipe, equipeId]);
+  const lugares = useMemo(() => (equipeId ? completos.vagas.filter((v) => v.equipeId === equipeId && !temNome(v)) : []), [completos.vagas, equipeId]);
 
   async function salvar() {
     setSalvando(true);
@@ -343,17 +355,20 @@ export function ModalColocarEmEquipe({ vaga, onFechar }: { vaga: Vaga; onFechar:
         <Campo rotulo="Equipe">
           <select value={equipeId} onChange={(e) => (setEquipeId(e.target.value), setLugar("nova"))} className="field">
             <option value="">Escolha…</option>
-            {contratos.map((c) => (
-              <optgroup key={c} label={rotuloContrato(c)}>
+            {contratos.map((chave) => {
+              const [cli, c] = chave.split("\u0000");
+              return (
+              <optgroup key={chave} label={`${cli ? `${cli} · ` : ""}${rotuloContrato(c)}`}>
                 {equipes
-                  .filter((e) => e.projeto === c)
+                  .filter((e) => e.projeto === c && clienteDe(e) === cli)
                   .map((e) => (
                     <option key={e.id} value={e.id}>
                       {e.nome}
                     </option>
                   ))}
               </optgroup>
-            ))}
+              );
+            })}
           </select>
         </Campo>
         {equipeId && (

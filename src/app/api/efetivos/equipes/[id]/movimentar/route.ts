@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { dataDe, diaDe, exigir, registrar } from "@/lib/efetivos/servidor";
+import { dataDe, diaDe, exigir, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
 import { dia } from "@/lib/efetivos/esquemas";
 import { instanteBrasilia } from "@/lib/efetivos/hoje";
 import { planejarMovimentoDeEquipe } from "@/lib/efetivos/movimentoEquipe";
@@ -24,9 +24,17 @@ const schema = z.object({
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { equipeId: params.id });
+    if (fora) return fora;
+  }
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Dados inválidos", detalhes: parsed.error.flatten() }, { status: 422 });
   const d = parsed.data;
+  {
+    const fora = await foraDoEscopo(a, { contrato: d.projeto });
+    if (fora) return fora;
+  }
   const equipe = await prisma.efetivoEquipe.findUnique({ where: { id: params.id }, include: { movimentos: true } });
   if (!equipe) return NextResponse.json({ error: "Equipe não encontrada" }, { status: 404 });
   if (equipe.grupo === "Apoio") return NextResponse.json({ error: "A reserva não é uma equipe de campo" }, { status: 422 });

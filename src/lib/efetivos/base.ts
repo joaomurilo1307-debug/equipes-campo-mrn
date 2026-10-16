@@ -3,10 +3,11 @@
 // Tudo que o sistema conta (Painel, Contratos...) é uma contagem de linhas desta base.
 import * as XLSX from "xlsx";
 import { temNome, type Dia, type Indice } from "./disponibilidade";
+import { clienteDaEquipe } from "./clientes";
 import { ROTULO_SITUACAO, ehReservaDeApoio, situacaoDaPosicao, type EquipeDoDia, type Situacao } from "./situacao";
 
 export type DadosBase = {
-  equipes: (EquipeDoDia & { gestor: string | null; local: string | null; observacao: string | null })[];
+  equipes: (EquipeDoDia & { gestor: string | null; local: string | null; observacao: string | null; cliente?: string | null })[];
   vagas: {
     id: string;
     numero: number | null;
@@ -30,7 +31,7 @@ export type DadosBase = {
     origem?: string | null;
     conferir?: string | null;
   }[];
-  veiculos: { id: string; codigo: string; identificacao: string; placa: string | null; modelo: string | null; tracao4x4: boolean | null; status: string; observacao: string | null }[];
+  veiculos: { id: string; codigo: string; identificacao: string; placa: string | null; modelo: string | null; tracao4x4: boolean | null; status: string; observacao: string | null; cliente?: string | null }[];
   ausencias: { id: string; vagaId: string; tipo: string; inicio: Dia; fim: Dia; observacao: string | null }[];
   contratos: { codigo: string; nome: string | null; cliente: string | null; gestor: string | null; local: string | null; observacao: string | null; ativo: boolean }[];
   movimentos?: { veiculoId: string; inicio: Dia; fim: Dia | null; projeto: string; equipeId: string | null }[];
@@ -49,20 +50,20 @@ export type ConferenciaDaImportacao = {
 };
 
 export const COLUNAS_BASE = [
-  "Nº",
+  "Cliente",
   "Contrato",
   "Equipe",
-  "Cód. equipe",
-  "Atividade",
-  "Empresa",
-  "Cargo / Função",
-  "Nível",
   "Profissional",
-  "Posição",
-  "Status",
+  "Empresa",
+  "Função",
+  "Nível",
+  "Atividade",
   "Direção 4x4",
   "Viatura",
-  // a partir daqui: colunas para PREENCHER (ficam em branco; as planilhas não trazem)
+  // a partir daqui: o que se PREENCHE (em branco; as planilhas não trazem)
+  "Status",
+  "Status: início",
+  "Status: fim",
   "Previsão de entrada",
   "Contrato atual (outro)",
   "Disponível a partir de",
@@ -70,12 +71,20 @@ export const COLUNAS_BASE = [
   "Observação",
   // o que o sistema calcula e de onde veio cada linha
   "Situação hoje",
+  "Posição",
   "Origem",
   "Conferir",
-  "Contrato da pessoa",
+  "Nº",
 ] as const;
 
 export type LinhaBase = {
+  cliente: string;
+  /** posição da reserva (pessoa fora de qualquer equipe) */
+  reserva: boolean;
+  /** o status como aparece no Excel: o da ausência em vigor (ou a próxima), senão o status da pessoa */
+  statusExibido: string;
+  statusInicio: string;
+  statusFim: string;
   numero: number | null;
   contrato: string;
   gestor: string;
@@ -116,13 +125,26 @@ export function linhasDaBase(d: DadosBase, idx: Pick<Indice, "ausencias">, hoje:
   const equipePorId = new Map(d.equipes.map((e) => [e.id, e]));
   const ordemEquipe = new Map(d.equipes.map((e, i) => [e.id, ehReservaDeApoio(e) ? 9999 : i]));
   const veiculoPorId = new Map(d.veiculos.map((v) => [v.id, v]));
+  const ausenciasDaVaga = new Map<string, DadosBase["ausencias"]>();
+  for (const a of d.ausencias) ausenciasDaVaga.set(a.vagaId, [...(ausenciasDaVaga.get(a.vagaId) ?? []), a]);
+  // a ausência que vale para mostrar: a de hoje; senão a próxima; ausência que já passou não aparece
+  const ausenciaEmFoco = (vagaId: string) => {
+    const l = (ausenciasDaVaga.get(vagaId) ?? []).filter((a) => a.fim >= hoje).sort((x, y) => x.inicio.localeCompare(y.inicio));
+    return l.find((a) => a.inicio <= hoje) ?? l[0] ?? null;
+  };
   const linhas = d.vagas.map((v): LinhaBase => {
     const e = equipePorId.get(v.equipeId);
+    const foco = ausenciaEmFoco(v.id);
     const sit = situacaoDaPosicao(v, e, idx, hoje);
     const posicao: LinhaBase["posicao"] = temNome(v) ? "Com nome" : v.semNome ? "Sem nome informado" : "Vaga aberta";
     return {
+      cliente: e ? clienteDaEquipe(e, d.contratos) ?? "" : "",
+      reserva: !e || ehReservaDeApoio(e),
+      statusExibido: foco ? foco.tipo : v.status,
+      statusInicio: foco ? fmtBr(foco.inicio) : "",
+      statusFim: foco ? fmtBr(foco.fim) : "",
       numero: v.numero,
-      contrato: e && !ehReservaDeApoio(e) ? e.projeto : "",
+      contrato: e && !ehReservaDeApoio(e) && e.projeto !== "A definir" ? e.projeto : "",
       gestor: e?.gestor ?? "",
       grupo: v.grupo ?? e?.grupo ?? "",
       equipe: e ? (ehReservaDeApoio(e) ? "Reserva (fora das equipes de campo)" : e.nome) : "",
@@ -226,56 +248,55 @@ function aba(linhas: unknown[][], largs: number[], filtro = true): XLSX.WorkShee
 }
 
 /**
- * A planilha-base: BASE (uma linha por posição) + EQUIPES + CONTRATOS + VIATURAS + AUSÊNCIAS + CONFERÊNCIA.
- * É o mesmo formato que o sistema lê de volta ("Base unificada").
+ * A planilha-base, o mínimo de abas para concentrar o preenchimento:
+ *   PESSOAS  — uma linha por posição: cadastro geral (cliente, contrato, equipe, pessoa), status e planejamento da pessoa;
+ *   EQUIPES  — contrato, início e fim de cada equipe;
+ *   VIATURAS — cada viatura uma vez (placa, modelo, quem usa).
+ * As colunas em branco que se preenchem (datas, previsões, placas) ficam à vista; o que o sistema calcula vai à direita.
+ * É o mesmo formato que o sistema lê de volta.
  */
 export function montarPlanilhaBase(d: DadosBase, idx: Pick<Indice, "ausencias">, hoje: Dia, conferencia?: ConferenciaDaImportacao | null): Buffer {
   const linhas = linhasDaBase(d, idx, hoje);
   const campo = d.equipes.filter((e) => !ehReservaDeApoio(e));
   const equipePorId = new Map(d.equipes.map((e) => [e.id, e]));
-  const veiculoPorId = new Map(d.veiculos.map((v) => [v.id, v]));
   const wb = XLSX.utils.book_new();
 
-  // ---- BASE: o que as planilhas dizem (esquerda) + colunas para PREENCHER (datas e planejamento) + o que o sistema calcula (direita)
-  const cab = [...COLUNAS_BASE] as string[];
+  // ---- PESSOAS
   const dados = linhas.map((l) => [
-    l.numero ?? "",
+    l.cliente,
     l.contrato,
-    l.equipe,
-    l.codigoEquipe,
-    l.atividade,
+    l.reserva ? "" : l.equipe,
+    l.nome,
     l.empresa,
     l.cargo,
     l.nivel,
-    l.nome,
-    l.posicao,
-    l.status,
+    l.atividade,
     l.direcao4x4,
     l.viatura,
+    l.statusExibido,
+    l.statusInicio,
+    l.statusFim,
     l.previsaoEntrada,
     l.contratoAtual,
     l.disponivelAPartir,
     l.destino,
     l.observacao,
     l.situacaoHoje,
+    l.posicao,
     l.origem,
     l.conferir,
-    l.contratoDaPessoa,
+    l.numero ?? "",
   ]);
-  XLSX.utils.book_append_sheet(wb, aba([cab, ...dados], [6, 12, 40, 9, 17, 17, 34, 10, 30, 18, 17, 10, 9, 15, 16, 16, 22, 36, 30, 46, 60, 14]), "BASE");
+  XLSX.utils.book_append_sheet(wb, aba([[...COLUNAS_BASE] as string[], ...dados], [9, 12, 40, 30, 17, 34, 10, 17, 10, 9, 17, 12, 12, 14, 16, 16, 22, 36, 30, 18, 46, 60, 6]), "PESSOAS");
 
-  // ---- EQUIPES: aqui entra o planejamento (início e fim de cada equipe)
-  const porEquipe = new Map<string, { posicoes: number; comNome: number; semNome: number; abertas: number; fontes: Map<string, Set<string>> }>();
+  // ---- EQUIPES
+  const porEquipe = new Map<string, { posicoes: number; comNome: number; semNome: number; abertas: number }>();
   for (const l of linhas) {
-    const r = porEquipe.get(l.equipeId) ?? { posicoes: 0, comNome: 0, semNome: 0, abertas: 0, fontes: new Map<string, Set<string>>() };
+    const r = porEquipe.get(l.equipeId) ?? { posicoes: 0, comNome: 0, semNome: 0, abertas: 0 };
     r.posicoes++;
     if (l.posicao === "Com nome") r.comNome++;
     else if (l.posicao === "Sem nome informado") r.semNome++;
     else r.abertas++;
-    for (const { fonte, linha } of origensPorFonte(l.origem)) {
-      if (!r.fontes.has(fonte)) r.fontes.set(fonte, new Set());
-      r.fontes.get(fonte)!.add(linha);
-    }
     porEquipe.set(l.equipeId, r);
   }
   const viaturasPorEquipe = new Map<string, Set<string>>();
@@ -289,185 +310,45 @@ export function montarPlanilhaBase(d: DadosBase, idx: Pick<Indice, "ausencias">,
     equipesPorViatura.get(v.veiculoId)!.add(v.equipeId);
     if (temNome(v)) pessoasPorViatura.set(v.veiculoId, (pessoasPorViatura.get(v.veiculoId) ?? 0) + 1);
   }
-  const faixa = (s: Set<string>) => (s.size === 0 ? "" : `${[...s].map(Number).sort((a, b) => a - b)[0]}–${[...s].map(Number).sort((a, b) => a - b).slice(-1)[0]}`);
-  const eqCab = ["Cód. equipe", "Contrato", "Equipe", "Início da equipe", "Fim da equipe", "Local / frente", "Gestor MRN", "Observação", "Status", "Posições", "Com nome", "Sem nome informado", "Vagas abertas", "Viaturas", "Linhas na planilha de origem"];
-  const eqDados = d.equipes.map((e) => {
+  const eqCab = ["Cliente", "Contrato", "Equipe", "Início da equipe", "Fim da equipe", "Local / frente", "Gestor", "Observação", "Status", "Posições", "Com nome", "Sem nome informado", "Vagas abertas", "Viaturas"];
+  const eqDados = campo.map((e) => {
     const r = porEquipe.get(e.id);
-    return [
-      e.codigo,
-      ehReservaDeApoio(e) ? "" : e.projeto,
-      e.nome,
-      fmtBr(e.inicio),
-      fmtBr(e.fim),
-      e.local ?? "",
-      e.gestor ?? "",
-      e.observacao ?? "",
-      e.status,
-      r?.posicoes ?? 0,
-      r?.comNome ?? 0,
-      r?.semNome ?? 0,
-      r?.abertas ?? 0,
-      viaturasPorEquipe.get(e.id)?.size ?? 0,
-      r ? [...r.fontes].map(([f, ls]) => `${f} ${faixa(ls)}`).join(" · ") : "",
-    ];
+    return [clienteDaEquipe(e, d.contratos) ?? "", e.projeto === "A definir" ? "" : e.projeto, e.nome, fmtBr(e.inicio), fmtBr(e.fim), e.local ?? "", e.gestor ?? "", e.observacao ?? "", e.status, r?.posicoes ?? 0, r?.comNome ?? 0, r?.semNome ?? 0, r?.abertas ?? 0, viaturasPorEquipe.get(e.id)?.size ?? 0];
   });
-  XLSX.utils.book_append_sheet(wb, aba([eqCab, ...eqDados], [11, 12, 44, 15, 15, 20, 14, 36, 10, 9, 9, 12, 12, 9, 34]), "EQUIPES");
-
-  // ---- CONTRATOS
-  const res = resumoPorContrato(linhas, new Map([...viaturasPorEquipe].map(([k, v]) => [k, v.size])));
-  const ctCodigos = new Set([...d.contratos.filter((c) => c.ativo).map((c) => c.codigo), ...campo.map((e) => e.projeto).filter((p) => p && p !== "A definir")]);
-  const ctCab = ["Contrato", "Nome / descrição", "Cliente", "Gestor MRN", "Local", "Equipes", "Posições", "Com nome", "Sem nome informado", "Vagas abertas", "Viaturas", "Observação"];
-  const viaturasDoContrato = (cod: string) => {
-    const ids = new Set<string>();
-    for (const e of campo.filter((x) => x.projeto === cod)) for (const id of viaturasPorEquipe.get(e.id) ?? []) ids.add(id);
-    return ids.size;
-  };
-  const ctDados = [...ctCodigos]
-    .sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true }))
-    .map((cod) => {
-      const c = d.contratos.find((x) => x.codigo === cod);
-      const r = res.get(cod);
-      return [cod, c?.nome ?? "", c?.cliente ?? "", c?.gestor ?? "", c?.local ?? "", r?.equipes ?? 0, r?.posicoes ?? 0, r?.comNome ?? 0, r?.semNome ?? 0, r?.abertas ?? 0, viaturasDoContrato(cod), c?.observacao ?? ""];
-    });
-  XLSX.utils.book_append_sheet(wb, aba([ctCab, ...ctDados], [14, 28, 12, 14, 18, 9, 10, 10, 12, 12, 9, 36]), "CONTRATOS");
+  XLSX.utils.book_append_sheet(wb, aba([eqCab, ...eqDados], [9, 12, 44, 15, 15, 20, 14, 36, 10, 9, 9, 12, 12, 9]), "EQUIPES");
 
   // ---- VIATURAS: cada viatura UMA vez (a mesma caminhonete em várias equipes não se repete)
-  const equipePorCodigoId = new Map(d.equipes.map((e) => [e.id, e]));
-  const vtCab = ["Viatura", "Placa", "Modelo", "4x4", "Status", "Observação", "Equipes que usam", "Nº de equipes", "Pessoas"];
+  const vtCab = ["Viatura", "Placa", "Modelo", "4x4", "Status", "Cliente", "Equipes que usam", "Nº de equipes", "Pessoas", "Observação"];
   const vtDados = d.veiculos
-    .filter((v) => (equipesPorViatura.get(v.id)?.size ?? 0) > 0)
+    .slice()
     .sort((a, b) => a.identificacao.localeCompare(b.identificacao, "pt-BR", { numeric: true }))
     .map((v) => {
-      const eqs = [...(equipesPorViatura.get(v.id) ?? [])].map((id) => equipePorCodigoId.get(id)?.codigo ?? "").filter(Boolean).sort();
-      return [v.identificacao, v.placa ?? "", v.modelo ?? "", v.tracao4x4 === true ? "Sim" : v.tracao4x4 === false ? "Não" : "", v.status, v.observacao ?? "", eqs.join(", "), eqs.length, pessoasPorViatura.get(v.id) ?? 0];
+      const eqs = [...(equipesPorViatura.get(v.id) ?? [])].map((id) => equipePorId.get(id)).filter((e): e is NonNullable<typeof e> => !!e);
+      const cliente = v.cliente?.trim() || [...new Set(eqs.map((e) => clienteDaEquipe(e, d.contratos)).filter(Boolean))].join(", ");
+      return [v.identificacao, v.placa ?? "", v.modelo ?? "", v.tracao4x4 === true ? "Sim" : v.tracao4x4 === false ? "Não" : "", v.status, cliente, eqs.map((e) => e.nome).join(" · "), eqs.length, pessoasPorViatura.get(v.id) ?? 0, v.observacao ?? ""];
     });
-  XLSX.utils.book_append_sheet(wb, aba([vtCab, ...vtDados], [12, 12, 18, 6, 14, 36, 40, 10, 9]), "VIATURAS");
+  XLSX.utils.book_append_sheet(wb, aba([vtCab, ...vtDados], [12, 12, 18, 6, 14, 9, 60, 10, 9, 36]), "VIATURAS");
 
-  // ---- AUSÊNCIAS: as com data (que o sistema já tem) + quem a planilha diz que está fora, para preencher o período
-  const vagaPorId = new Map(d.vagas.map((v) => [v.id, v]));
-  const auCab = ["Cód. equipe", "Equipe", "Profissional", "Tipo", "Início", "Fim", "Observação"];
-  const auDados: unknown[][] = d.ausencias
-    .map((a) => ({ a, v: vagaPorId.get(a.vagaId) }))
-    .filter((x) => !!x.v)
-    .map(({ a, v }) => {
-      const e = equipePorCodigoId.get(v!.equipeId);
-      return [e?.codigo ?? "", e?.nome ?? "", v!.nome ?? "", a.tipo, fmtBr(a.inicio), fmtBr(a.fim), a.observacao ?? ""];
-    });
-  const comDatas = new Set(d.ausencias.map((a) => a.vagaId));
-  for (const l of linhas) {
-    // quem a planilha diz que está de férias/afastado e ainda não tem período: a linha já vem com a pessoa e o tipo, falta a data
-    if (l.situacao !== "AUSENTE" || !l.nome || comDatas.has(l.vagaId)) continue;
-    if (!/f[eé]rias|afastad|restri/i.test(l.status)) continue;
-    auDados.push([l.codigoEquipe, l.equipe, l.nome, l.status, "", "", l.observacao]);
-  }
-  XLSX.utils.book_append_sheet(wb, aba([auCab, ...auDados], [11, 44, 30, 14, 12, 12, 36]), "AUSÊNCIAS");
-
-  // ---- CONFERÊNCIA
-  const conf: unknown[][] = [];
-  const aba1Usadas = new Set<string>();
-  const aba2Usadas = new Set<string>();
-  const aba3Usadas = new Set<string>();
-  const usadasPorFonte = new Map<string, Set<string>>();
-  let nas2 = 0;
-  let soAba1 = 0;
-  let soAba2 = 0;
-  for (const l of linhas) {
-    const o = origensDe(l.origem);
-    o.aba1.forEach((x) => aba1Usadas.add(x));
-    o.aba2.forEach((x) => aba2Usadas.add(x));
-    o.aba3.forEach((x) => aba3Usadas.add(x));
-    for (const { fonte, linha } of origensPorFonte(l.origem)) {
-      if (!usadasPorFonte.has(fonte)) usadasPorFonte.set(fonte, new Set());
-      usadasPorFonte.get(fonte)!.add(linha);
-    }
-    if (!l.contrato) continue;
-    if (o.aba1.length && o.aba2.length) nas2++;
-    else if (o.aba1.length) soAba1++;
-    else if (o.aba2.length) soAba2++;
-  }
-  const emCampo = linhas.filter((l) => l.contrato);
-  conf.push(["CONFERÊNCIA DA BASE", `gerada em ${fmtBr(hoje)}`]);
-  conf.push([]);
-  if (conferencia?.fontes) {
-    // planilhas por contrato: cada linha lida tem de aparecer em exatamente uma posição desta base
-    conf.push(["De onde vêm os números (planilha / aba)", "Linhas lidas", "Linhas que estão nesta base", "Situação"]);
-    let lidas = 0;
-    let naBase = 0;
-    for (const f of conferencia.fontes) {
-      const usadas = usadasPorFonte.get(f.nome)?.size ?? 0;
-      lidas += f.linhas;
-      naBase += usadas;
-      conf.push([f.nome, f.linhas, usadas, usadas === f.linhas ? "todas as linhas estão na base" : `ATENÇÃO: ${f.linhas - usadas} linha(s) não estão na base`]);
-    }
-    conf.push(["Total", lidas, naBase, naBase === lidas ? "nenhuma linha ficou de fora" : "ATENÇÃO: confira as linhas que faltam"]);
-    if (conferencia.fontes.some((f) => normalizar(f.nome).includes("apoio"))) {
-      conf.push(["", "", "", "A aba de apoio que se repete nas planilhas vale uma vez (a origem da posição cita as duas linhas); quem está no apoio e numa equipe é uma pessoa só."]);
-    }
-  } else {
-    conf.push(["De onde vêm os números", "Quantidade", "Observação"]);
-    if (conferencia) {
-      conf.push(["Linhas na aba 1 (cadastro por contrato)", conferencia.linhasAba1, `${conferencia.equipesAba1} equipes (cada célula mesclada de equipe é uma)`]);
-      conf.push(["Linhas na aba 2 (divisão de equipes)", conferencia.linhasAba2, `${conferencia.equipesAba2} equipes`]);
-      conf.push(["Linhas na aba 3 (apoio de outro contrato)", conferencia.linhasAba3, "pessoas liberadas de outro contrato"]);
-    }
-    conf.push(["Linhas da aba 1 usadas nas posições desta base", aba1Usadas.size, conferencia ? `+ ${conferencia.substituidas.length} da aba 1 sem posição equivalente (lista abaixo) = ${aba1Usadas.size + conferencia.substituidas.length}` : ""]);
-    conf.push(["Linhas da aba 2 usadas nas posições desta base", aba2Usadas.size, conferencia ? (aba2Usadas.size === conferencia.linhasAba2 ? "todas as linhas da aba 2 estão na base" : "ATENÇÃO: falta linha da aba 2") : ""]);
-    conf.push(["Linhas da aba 3 usadas", aba3Usadas.size, ""]);
-  }
-  conf.push([]);
-  conf.push(["Posições das equipes de campo", emCampo.length, `${emCampo.filter((l) => l.posicao === "Com nome").length} com nome · ${emCampo.filter((l) => l.posicao === "Sem nome informado").length} sem nome informado · ${emCampo.filter((l) => l.posicao === "Vaga aberta").length} vagas abertas`]);
-  if (!conferencia?.fontes) {
-    conf.push(["  nas duas abas (a pessoa/posição aparece nas duas)", nas2, "a posição vale como está na aba 2 (a divisão mais recente)"]);
-    conf.push(["  só na aba 2", soAba2, "equipes e posições que o cadastro por contrato não tem"]);
-    conf.push(["  só na aba 1", soAba1, "pessoas e posições que a divisão de equipes não tem: conferir"]);
-  }
-  const equipesCampo = d.equipes.filter((e) => !ehReservaDeApoio(e));
-  const comPeriodo = equipesCampo.filter((e) => e.inicio && e.fim).length;
-  const semFim = equipesCampo.filter((e) => !e.fim).length;
-  conf.push(["Planejamento: equipes com início e fim preenchidos", comPeriodo, `de ${equipesCampo.length} equipes`]);
-  conf.push(["Planejamento: equipes sem fim previsto", semFim, "sem o fim o sistema não sabe quando as pessoas da equipe ficam livres: preencher em EQUIPES"]);
-  conf.push(["Planejamento: posições com previsão de entrada", emCampo.filter((l) => l.previsaoEntrada).length, `de ${emCampo.filter((l) => l.posicao === "Vaga aberta" || /contrata|mobiliza/i.test(l.status)).length} vagas abertas ou em contratação/mobilização`]);
-  conf.push(["Pessoas na reserva (fora das equipes de campo)", linhas.filter((l) => !l.contrato && l.codigoEquipe === "APOIO").length, conferencia?.fontes ? "quem a aba de apoio cita e não está em nenhuma equipe" : "aba 3 + quem sai de uma equipe"]);
-  conf.push([]);
-  const paraConferir = linhas.filter((l) => l.conferir);
-  conf.push([`Para conferir (${paraConferir.length})`, "Equipe", "Profissional / posição", "Origem", "O que conferir"]);
-  for (const l of paraConferir) conf.push(["", l.equipe, l.nome || `${l.cargo} (${l.posicao.toLowerCase()})`, l.origem, l.conferir]);
-  if (conferencia && conferencia.substituidas.length) {
-    conf.push([]);
-    conf.push([`Linhas da aba 1 sem posição equivalente (${conferencia.substituidas.length})`, "Equipe", "O que era", "Origem", "Por que ficou de fora"]);
-    for (const s of conferencia.substituidas) conf.push(["", s.equipe, s.descricao, s.origem, "As vagas abertas desta equipe vêm da aba 2 (a divisão mais recente)"]);
-  }
-  XLSX.utils.book_append_sheet(wb, aba(conf, [52, 40, 40, 44, 70], false), "CONFERÊNCIA");
-
-  // ---- LEIA-ME
+  // ---- LEIA-ME: a sequência em poucas linhas
+  const emCampo = linhas.filter((l) => !l.reserva);
+  const nomes = (conferencia?.fontes ?? []).filter((f) => !/apoio/i.test(f.nome)).map((f) => f.nome);
   const leia = [
-    ["BASE ÚNICA DAS EQUIPES DE CAMPO"],
+    ["BASE DAS EQUIPES DE CAMPO"],
     [""],
-    ["Uma linha por posição (vaga) das equipes. Contrato -> equipe -> posição -> pessoa."],
-    [conferencia?.fontes ? `Esta planilha junta as planilhas de acompanhamento por contrato (${[...new Set(conferencia.fontes.map((f) => f.nome.split(" › ")[0]))].join(", ")})${conferencia.fontes.some((f) => normalizar(f.nome).includes("apoio")) ? " e a aba de apoio" : ""}. Só entram dados que estão escritos nas planilhas.` : "Esta planilha junta, numa só, as planilhas de acompanhamento das equipes (cadastro por contrato, divisão de equipes e apoio)."],
+    ["Três abas concentram tudo. Preencha só as colunas em amarelo; o resto o sistema calcula."],
     [""],
-    ["Posição"],
-    ["  Com nome: a posição tem uma pessoa identificada."],
-    ["  Sem nome informado: a posição está preenchida, mas o nome não foi informado (ex.: auxiliares da Coopermoura/MRN)."],
-    ["  Vaga aberta: a planilha diz \"Vago\" ou \"Em contratação\". É o que precisa ser preenchido."],
+    ["1. EQUIPES   Início da equipe e Fim da equipe (dd/mm/aaaa). Sem o fim, o sistema não sabe quando as pessoas ficam livres. Também: Local / frente, Gestor, Observação."],
+    ["2. PESSOAS   Status (Vigente, Férias, Afastado, Em contratação, Em mobilização...), e o período do status (Status: início / Status: fim) para férias e afastamentos."],
+    ["              Previsão de entrada (vaga aberta ou em contratação), Contrato atual (outro) + Disponível a partir de (pessoa ainda em outro contrato), Destino, Observação."],
+    ["3. VIATURAS  Placa, Modelo, 4x4 e Status. Cada viatura aparece uma vez; \"Equipes que usam\" mostra onde ela está."],
     [""],
-    ["Situação hoje (calculada)"],
-    ["  Em equipe: a pessoa está numa equipe de campo ativa."],
-    ["  Disponível: a pessoa está fora de equipe (reserva) ou a equipe dela terminou."],
-    ["  Ausente: férias, afastamento INSS, em contratação/mobilização ou restrição; continua na equipe."],
-    ["  Em outro contrato: ainda ocupada em outro contrato até a data informada."],
+    ["Cliente: MRN e AGA ficam na mesma base. Para mudar alguém de equipe, de contrato ou de cliente, use o sistema (Pessoas > Mover) — a administração faz o movimento entre clientes."],
+    ["Depois de preencher, envie em Base > Enviar planejamento preenchido: o sistema mostra o que vai mudar antes de aplicar. Só preenche; célula em branco não apaga nada."],
     [""],
-    ["Coluna Origem: de onde a linha veio (planilha/aba e linha). Coluna Conferir: o que precisa de confirmação (nunca muda o dado, só avisa)."],
-    [""],
-    ["O QUE PREENCHER (colunas em amarelo, em branco de propósito: as planilhas não trazem estes dados)"],
-    ["  EQUIPES: Início da equipe e Fim da equipe (dd/mm/aaaa), Local / frente, Gestor MRN, Observação. Sem o fim, o sistema não sabe quando as pessoas da equipe ficam livres."],
-    ["  BASE: Previsão de entrada (vaga aberta, em contratação ou em mobilização: quando o profissional entra); Contrato atual (outro) + Disponível a partir de (pessoa ainda em outro contrato até a data); Destino; Observação."],
-    ["  VIATURAS: Placa, Modelo, 4x4 e Status. Cada viatura aparece uma vez; \"Equipes que usam\" mostra as equipes em que ela está."],
-    ["  AUSÊNCIAS: Início e Fim das férias/afastamentos (a lista já traz quem a planilha diz que está fora)."],
-    ["Para editar: altere as células e carregue de volta em Base > Importar, ou edite direto no sistema e baixe de novo."],
+    [`Conferência: ${emCampo.length} posições nas equipes${nomes.length ? ` (vindas de ${nomes.join(" e ")}; cada linha lida está em uma posição, sem repetir)` : ""}. A coluna Origem diz de qual planilha e linha veio cada uma; Conferir marca o que precisa de confirmação (só avisa, nunca muda o dado).`],
   ];
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(leia), "LEIA-ME");
-  wb.SheetNames = ["LEIA-ME", "BASE", "EQUIPES", "CONTRATOS", "VIATURAS", "AUSÊNCIAS", "CONFERÊNCIA"];
+  wb.SheetNames = ["LEIA-ME", "PESSOAS", "EQUIPES", "VIATURAS"];
 
   return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
 }

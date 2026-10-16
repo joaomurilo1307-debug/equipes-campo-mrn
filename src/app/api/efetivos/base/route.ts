@@ -9,7 +9,7 @@ import { montarPlanilhaBase } from "@/lib/efetivos/base";
 export async function GET() {
   const a = await exigir("ver");
   if ("erro" in a) return a.erro;
-  const d = await carregarDados(a.nivel !== "DASHBOARD");
+  const d = await carregarDados(a.nivel !== "DASHBOARD", a.cliente);
   const hoje = instanteBrasilia().iso;
   const buf = montarPlanilhaBase(d as any, indexar({ ausencias: d.ausencias, alocacoes: [] }), hoje);
   await registrar(a.userId, "BASE_BAIXADA", "BASE", undefined, `Base única baixada em Excel por ${a.nome} (${d.vagas.length} posições)`);

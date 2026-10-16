@@ -25,7 +25,7 @@ export async function POST(req: Request) {
   if (tokenDeCargaValido(req)) {
     quem = { userId: null, nome: "Carga inicial" };
   } else {
-    const a = await exigir("editar");
+    const a = await exigir("global");
     if ("erro" in a) return a.erro;
     quem = { userId: a.userId, nome: a.nome };
   }
@@ -43,11 +43,13 @@ export async function POST(req: Request) {
   if (arquivos.some((a) => a.size > MAX_BYTES)) return NextResponse.json({ error: "Arquivo grande demais (máximo 8 MB cada)" }, { status: 422 });
   const nomeDosArquivos = arquivos.map((a) => a.name).join(" + ");
   const refInformada = String(form?.get("dataReferencia") ?? "");
+  // as planilhas por contrato não dizem de que cliente são: quem importa informa (MRN, AGA...)
+  const clienteInformado = String(form?.get("cliente") ?? "").trim() || undefined;
   const dataRef = dataValida(refInformada) ? refInformada : instanteBrasilia().iso;
 
   let lido;
   try {
-    lido = lerPlanilhasEfetivos(await Promise.all(arquivos.map(async (a) => Buffer.from(await a.arrayBuffer()))), { anoReferencia: Number(dataRef.slice(0, 4)) });
+    lido = lerPlanilhasEfetivos(await Promise.all(arquivos.map(async (a) => Buffer.from(await a.arrayBuffer()))), { anoReferencia: Number(dataRef.slice(0, 4)), cliente: clienteInformado });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message ?? "Não consegui ler a planilha" }, { status: 422 });
   }
@@ -93,13 +95,14 @@ export async function POST(req: Request) {
       const vagaMax = (await tx.efetivoVaga.aggregate({ _max: { numero: true } }))._max.numero ?? 0;
       const veiCodigos = proximoNumero((await tx.efetivoVeiculo.findMany({ select: { codigo: true } })).map((v) => v.codigo), "VEI", 3);
       let ordem = existentes.length;
-      const equipePorCodigoImportado = new Map<string, { id: string; projeto: string; nome: string }>();
+      const equipePorCodigoImportado = new Map<string, { id: string; projeto: string; nome: string; cliente: string | null }>();
+      const clientePorContrato = new Map(lido.contratos.map((c) => [c.codigo, c.cliente ?? null]));
 
       let n = 0;
       const codigosEmUso = new Set(existentes.map((x) => x.codigo));
       for (const e of equipesNovas) {
         // a reserva de apoio tem sempre o codigo APOIO (e por ele que o sistema a encontra); na planilha-base o codigo do arquivo e mantido
-        const manter = e.codigo === "APOIO" || (lido.formato === "base" && /^EQ-\d+$/.test(e.codigo));
+        const manter = e.codigo.startsWith("APOIO") || (lido.formato === "base" && /^EQ-\d+$/.test(e.codigo));
         const codigo = manter && !codigosEmUso.has(e.codigo) ? e.codigo : eqCodigos(++n);
         codigosEmUso.add(codigo);
         const criada = await tx.efetivoEquipe.create({
@@ -109,6 +112,7 @@ export async function POST(req: Request) {
             projeto: e.projeto,
             gestor: e.gestor,
             grupo: e.grupo,
+            cliente: e.cliente ?? clientePorContrato.get(e.projeto) ?? null,
             status: e.status,
             local: e.local ?? null,
             observacao: e.observacao ?? null,
@@ -117,7 +121,7 @@ export async function POST(req: Request) {
             ordem: ++ordem,
           },
         });
-        equipePorCodigoImportado.set(e.codigo, { id: criada.id, projeto: e.projeto, nome: e.nome });
+        equipePorCodigoImportado.set(e.codigo, { id: criada.id, projeto: e.projeto, nome: e.nome, cliente: criada.cliente });
       }
 
       // viaturas primeiro: cada pessoa aponta para a viatura em que vai. A mesma viatura em várias equipes é UMA viatura só;
@@ -126,7 +130,7 @@ export async function POST(req: Request) {
       let k = 0;
       for (const u of veiculosUnicos(veiculosNovos)) {
         const veiculo = await tx.efetivoVeiculo.create({
-          data: { codigo: veiCodigos(++k), identificacao: u.identificacao, placa: u.placa, modelo: u.modelo, tracao4x4: u.tracao4x4, status: u.status || "Em operação", observacao: u.observacao },
+          data: { codigo: veiCodigos(++k), identificacao: u.identificacao, placa: u.placa, modelo: u.modelo, tracao4x4: u.tracao4x4, status: u.status || "Em operação", observacao: u.observacao, cliente: u.cliente ?? (u.equipes[0] ? equipePorCodigoImportado.get(u.equipes[0])?.cliente ?? null : null) },
         });
         for (const ref of u.refs) veiculoPorRef.set(ref, veiculo.id);
       }

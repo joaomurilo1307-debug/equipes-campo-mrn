@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { exigir, proximoNumeroDeVaga, registrar } from "@/lib/efetivos/servidor";
+import { exigir, proximoNumeroDeVaga, registrar, foraDoEscopo } from "@/lib/efetivos/servidor";
 import { dadosAoEntrarNaEquipe, posicaoLivreParaOcupar, vagaAbertaNoLugarDe } from "@/lib/efetivos/vagas";
 
 const schema = z.object({
@@ -16,9 +16,18 @@ const schema = z.object({
 export async function POST(req: Request, { params }: { params: { id: string } }) {
   const a = await exigir("editar");
   if ("erro" in a) return a.erro;
+  {
+    const fora = await foraDoEscopo(a, { vagaId: params.id });
+    if (fora) return fora;
+  }
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Dados inválidos" }, { status: 422 });
   const d = parsed.data;
+  {
+    // quem é de um cliente só move para equipe do mesmo cliente; só a administração cruza de um cliente para outro
+    const fora = await foraDoEscopo(a, { equipeId: d.equipeId });
+    if (fora) return fora;
+  }
 
   const pessoa = await prisma.efetivoVaga.findUnique({ where: { id: params.id }, include: { equipe: true } });
   if (!pessoa) return NextResponse.json({ error: "Colaborador não encontrado" }, { status: 404 });

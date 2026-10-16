@@ -5,6 +5,7 @@ import { dataValida } from "@/lib/efetivos/disponibilidade";
 import { instanteBrasilia } from "@/lib/efetivos/hoje";
 import { lerPlanilhaEfetivos } from "@/lib/efetivos/importarPlanilha";
 import { planejarAtualizacao, totalDeMudancas } from "@/lib/efetivos/planejamento";
+import { filtrarPorCliente } from "@/lib/efetivos/clientes";
 
 const MAX_BYTES = 8 * 1024 * 1024;
 
@@ -33,16 +34,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Esta não é a base do sistema. Baixe a base em Base > Baixar Excel, preencha as colunas amarelas e envie de volta." }, { status: 422 });
   }
 
-  const [equipes, vagas, veiculos, contratos, ausencias] = await Promise.all([
+  const [equipesTodas, vagasTodas, veiculosTodos, contratosTodos, ausenciasTodas] = await Promise.all([
     prisma.efetivoEquipe.findMany(),
     prisma.efetivoVaga.findMany(),
     prisma.efetivoVeiculo.findMany(),
     prisma.efetivoContrato.findMany(),
     prisma.efetivoAusencia.findMany(),
   ]);
+  // quem é de um cliente só altera o que é do cliente dele
+  const escopo = filtrarPorCliente(
+    { equipes: equipesTodas, vagas: vagasTodas, ausencias: ausenciasTodas, campanhas: [], alocacoes: [], veiculos: veiculosTodos, movimentos: [], contratos: contratosTodos, movimentosEquipe: [] },
+    a.cliente
+  );
+  const { equipes, vagas, veiculos, contratos, ausencias } = escopo;
   const plano = planejarAtualizacao(lido, {
     equipes: equipes.map((e) => ({ id: e.id, codigo: e.codigo, nome: e.nome, projeto: e.projeto, inicio: diaDe(e.inicio), fim: diaDe(e.fim), local: e.local, gestor: e.gestor, observacao: e.observacao })),
-    vagas: vagas.map((v) => ({ id: v.id, equipeId: v.equipeId, numero: v.numero, origem: v.origem, nome: v.nome, cargo: v.cargo, previsaoInicio: diaDe(v.previsaoInicio), contratoAtual: v.contratoAtual, disponivelAPartir: diaDe(v.disponivelAPartir), destino: v.destino, observacao: v.observacao })),
+    vagas: vagas.map((v) => ({ id: v.id, equipeId: v.equipeId, numero: v.numero, origem: v.origem, nome: v.nome, cargo: v.cargo, status: v.status, previsaoInicio: diaDe(v.previsaoInicio), contratoAtual: v.contratoAtual, disponivelAPartir: diaDe(v.disponivelAPartir), destino: v.destino, observacao: v.observacao })),
     veiculos: veiculos.map((v) => ({ id: v.id, identificacao: v.identificacao, placa: v.placa, modelo: v.modelo, tracao4x4: v.tracao4x4, status: v.status, observacao: v.observacao })),
     contratos: contratos.map((c) => ({ codigo: c.codigo, nome: c.nome, cliente: c.cliente, gestor: c.gestor, local: c.local, observacao: c.observacao })),
     ausencias: ausencias.map((x) => ({ vagaId: x.vagaId, tipo: x.tipo, inicio: diaDe(x.inicio)!, fim: diaDe(x.fim)! })),
@@ -73,7 +80,7 @@ export async function POST(req: Request) {
       }
       for (const x of plano.vagas) {
         const m = x.mudancas;
-        await tx.efetivoVaga.update({ where: { id: x.id }, data: { ...(m.previsaoInicio ? { previsaoInicio: dia(m.previsaoInicio) } : {}), ...(m.contratoAtual ? { contratoAtual: m.contratoAtual } : {}), ...(m.disponivelAPartir ? { disponivelAPartir: dia(m.disponivelAPartir) } : {}), ...(m.destino ? { destino: m.destino } : {}), ...(m.observacao ? { observacao: m.observacao } : {}) } });
+        await tx.efetivoVaga.update({ where: { id: x.id }, data: { ...(m.status ? { status: m.status } : {}), ...(m.previsaoInicio ? { previsaoInicio: dia(m.previsaoInicio) } : {}), ...(m.contratoAtual ? { contratoAtual: m.contratoAtual } : {}), ...(m.disponivelAPartir ? { disponivelAPartir: dia(m.disponivelAPartir) } : {}), ...(m.destino ? { destino: m.destino } : {}), ...(m.observacao ? { observacao: m.observacao } : {}) } });
       }
       for (const x of plano.veiculos) await tx.efetivoVeiculo.update({ where: { id: x.id }, data: x.mudancas });
       for (const x of plano.contratos) await tx.efetivoContrato.update({ where: { codigo: x.codigo }, data: x.mudancas });

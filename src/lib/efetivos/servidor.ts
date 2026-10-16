@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma";
 import { alocacoesQueSeguram, type Dia } from "./disponibilidade";
 import { dadosMock, modoMock } from "@/lib/devMock";
 import { instanteBrasilia } from "./hoje";
+import { filtrarPorCliente } from "./clientes";
 
 export type NivelEfetivos = "ADMIN" | "EDITOR" | "DASHBOARD";
 
@@ -25,18 +26,28 @@ const NIVEL_POR_PAPEL: Record<string, NivelEfetivos> = { ADMIN: "ADMIN", EDITOR:
 
 export const podeEditar = (n: NivelEfetivos | null) => n === "ADMIN" || n === "EDITOR";
 
-type Exigencia = "ver" | "editar" | "admin";
+type Exigencia = "ver" | "editar" | "admin" | "global";
 
-/** Autentica e confere o nivel; devolve a resposta de erro pronta quando nao pode. */
-export async function exigir(
-  exigencia: Exigencia
-): Promise<{ erro: NextResponse } | { userId: string; nome: string; nivel: NivelEfetivos }> {
-  if (modoMock()) return { userId: "dev", nome: "Demonstração", nivel: "ADMIN" };
+export type Acesso = {
+  userId: string;
+  nome: string;
+  nivel: NivelEfetivos;
+  /** cliente a que o usuário está restrito (MRN, AGA...); nulo = vê e mexe em todos os clientes */
+  cliente: string | null;
+};
+
+/**
+ * Autentica e confere o nivel; devolve a resposta de erro pronta quando nao pode.
+ * "global" = quem edita E não está restrito a um cliente (importar bases, histórico geral, campanhas).
+ */
+export async function exigir(exigencia: Exigencia): Promise<{ erro: NextResponse } | Acesso> {
+  // DEV_MOCK_CLIENTE simula um usuário restrito a um cliente (só para olhar a tela em desenvolvimento)
+  if (modoMock()) return { userId: "dev", nome: "Demonstração", nivel: "ADMIN", cliente: process.env.DEV_MOCK_CLIENTE?.trim() || null };
   const session = await getServerSession(authOptions);
   const u = session?.user as any;
   if (!session || !u?.id) return { erro: NextResponse.json({ error: "Não autenticado" }, { status: 401 }) };
   const nivel = NIVEL_POR_PAPEL[u.role as string] ?? null;
-  const ok = exigencia === "ver" ? nivel !== null : exigencia === "editar" ? podeEditar(nivel) : nivel === "ADMIN";
+  const ok = exigencia === "ver" ? nivel !== null : exigencia === "admin" ? nivel === "ADMIN" : podeEditar(nivel);
   if (!ok || !nivel) {
     return {
       erro: NextResponse.json(
@@ -45,7 +56,66 @@ export async function exigir(
       ),
     };
   }
-  return { userId: u.id, nome: u.name ?? u.email ?? "Usuário", nivel };
+  // o escopo vem do banco a cada pedido: mudar o cliente de um usuário vale na hora
+  const dono = await prisma.user.findUnique({ where: { id: u.id }, select: { cliente: true, active: true } });
+  if (!dono || !dono.active) return { erro: NextResponse.json({ error: "Acesso desativado" }, { status: 401 }) };
+  const cliente = dono.cliente?.trim() || null;
+  if (exigencia === "global" && cliente) {
+    return { erro: NextResponse.json({ error: `Seu acesso é restrito ao cliente ${cliente}. Isto é da administração.` }, { status: 403 }) };
+  }
+  return { userId: u.id, nome: u.name ?? u.email ?? "Usuário", nivel, cliente };
+}
+
+// ---------------------------------------------------------------- acesso por cliente
+
+/** O cliente de uma equipe pelo banco: o do contrato dela; sem contrato cadastrado, o da equipe. */
+export async function clienteDaEquipeNoBanco(e: { projeto: string; cliente: string | null }): Promise<string | null> {
+  const c = await prisma.efetivoContrato.findUnique({ where: { codigo: e.projeto }, select: { cliente: true } });
+  return c?.cliente?.trim() || e.cliente?.trim() || null;
+}
+
+const FORA = (cliente: string) => NextResponse.json({ error: `Isto não é do cliente ${cliente}: seu acesso é restrito a ${cliente}. Peça à administração.` }, { status: 403 });
+
+/**
+ * Para quem está restrito a um cliente: confere se o que vai mexer é desse cliente. Devolve a resposta de erro, ou null se pode.
+ * Quem vê tudo (cliente nulo) passa sempre. Equipe, pessoa (vaga), viatura, contrato e ausência valem; o que não existe passa
+ * (a própria rota responde 404).
+ */
+export async function foraDoEscopo(
+  a: { cliente: string | null },
+  alvo: { equipeId?: string | null; vagaId?: string | null; veiculoId?: string | null; contrato?: string | null; contratoId?: string | null; ausenciaId?: string | null }
+): Promise<NextResponse | null> {
+  const cli = a.cliente;
+  if (!cli) return null;
+  if (alvo.equipeId) {
+    const e = await prisma.efetivoEquipe.findUnique({ where: { id: alvo.equipeId } });
+    if (e && (await clienteDaEquipeNoBanco(e)) !== cli) return FORA(cli);
+  }
+  if (alvo.vagaId) {
+    const v = await prisma.efetivoVaga.findUnique({ where: { id: alvo.vagaId }, include: { equipe: true } });
+    if (v && (await clienteDaEquipeNoBanco(v.equipe)) !== cli) return FORA(cli);
+  }
+  if (alvo.ausenciaId) {
+    const x = await prisma.efetivoAusencia.findUnique({ where: { id: alvo.ausenciaId }, include: { vaga: { include: { equipe: true } } } });
+    if (x && (await clienteDaEquipeNoBanco(x.vaga.equipe)) !== cli) return FORA(cli);
+  }
+  if (alvo.veiculoId) {
+    const v = await prisma.efetivoVeiculo.findUnique({ where: { id: alvo.veiculoId }, include: { ocupantes: { include: { equipe: true }, take: 1 } } });
+    if (v) {
+      const dele = v.cliente?.trim() || (v.ocupantes[0] ? await clienteDaEquipeNoBanco(v.ocupantes[0].equipe) : null);
+      if (dele !== cli) return FORA(cli);
+    }
+  }
+  if (alvo.contratoId) {
+    const c = await prisma.efetivoContrato.findUnique({ where: { id: alvo.contratoId } });
+    if (c && c.cliente?.trim() !== cli) return FORA(cli);
+  }
+  if (alvo.contrato) {
+    const c = await prisma.efetivoContrato.findUnique({ where: { codigo: alvo.contrato } });
+    // contrato ainda não cadastrado (ex.: "A definir") não pertence a outro cliente
+    if (c && c.cliente?.trim() !== cli) return FORA(cli);
+  }
+  return null;
 }
 
 /** Registra no historico quem fez o que (nunca derruba a operacao principal). */
@@ -84,7 +154,7 @@ async function aplicarMovimentosDeEquipe() {
   }
 }
 
-async function carregarDadosReal(editor: boolean) {
+async function carregarDadosReal(editor: boolean, cliente: string | null) {
   await aplicarMovimentosDeEquipe();
   const [equipes, vagas, ausencias, campanhas, alocacoes, veiculos, movimentos, contratos, movimentosEquipe] = await Promise.all([
     prisma.efetivoEquipe.findMany({ orderBy: [{ ordem: "asc" }, { codigo: "asc" }] }),
@@ -97,7 +167,7 @@ async function carregarDadosReal(editor: boolean) {
     prisma.efetivoContrato.findMany({ orderBy: { codigo: "asc" } }),
     prisma.efetivoEquipeMovimento.findMany({ orderBy: { inicio: "asc" } }),
   ]);
-  return {
+  const bruto = {
     equipes: equipes.map((e) => ({
       id: e.id,
       codigo: e.codigo,
@@ -112,6 +182,7 @@ async function carregarDadosReal(editor: boolean) {
       inicio: diaDe(e.inicio),
       fim: diaDe(e.fim),
       campanhaId: e.campanhaId,
+      cliente: e.cliente,
     })),
     vagas: vagas.map((v) => ({
       id: v.id,
@@ -173,6 +244,7 @@ async function carregarDadosReal(editor: boolean) {
       tracao4x4: v.tracao4x4,
       status: v.status,
       observacao: v.observacao,
+      cliente: v.cliente,
     })),
     movimentos: movimentos.map((m) => ({
       id: m.id,
@@ -188,10 +260,12 @@ async function carregarDadosReal(editor: boolean) {
     contratos: contratos.map((c) => ({ id: c.id, codigo: c.codigo, nome: c.nome, cliente: c.cliente, gestor: c.gestor, local: c.local, observacao: c.observacao, ativo: c.ativo })),
     movimentosEquipe: movimentosEquipe.map((m) => ({ id: m.id, equipeId: m.equipeId, inicio: diaDe(m.inicio)!, fim: diaDe(m.fim), projeto: m.projeto, local: m.local, observacao: m.observacao })),
   };
+  // quem está restrito a um cliente só recebe o que é dele (contratos, equipes, pessoas, viaturas, ausências...)
+  return filtrarPorCliente(bruto, cliente);
 }
 
-export async function carregarDados(editor: boolean): Promise<Awaited<ReturnType<typeof carregarDadosReal>>> {
-  return modoMock() ? (dadosMock() as Awaited<ReturnType<typeof carregarDadosReal>>) : carregarDadosReal(editor);
+export async function carregarDados(editor: boolean, cliente: string | null = null): Promise<Awaited<ReturnType<typeof carregarDadosReal>>> {
+  return modoMock() ? filtrarPorCliente(dadosMock() as Awaited<ReturnType<typeof carregarDadosReal>>, cliente) : carregarDadosReal(editor, cliente);
 }
 
 /** Dados no formato que a regra de disponibilidade espera (so alocacoes que seguram gente). */
@@ -208,12 +282,16 @@ export async function dadosParaRegra() {
   };
 }
 
-/** A "reserva": equipe especial (código APOIO) onde ficam as pessoas que não estão em nenhuma equipe de campo. Criada na hora se não existir. */
-export async function obterReserva(tx: Prisma.TransactionClient) {
-  const existente = await tx.efetivoEquipe.findUnique({ where: { codigo: "APOIO" } });
+/**
+ * A "reserva": equipe especial onde ficam as pessoas que não estão em nenhuma equipe de campo. Cada cliente tem a sua
+ * (APOIO-MRN, APOIO-AGA); sem cliente, a antiga APOIO. Criada na hora se não existir.
+ */
+export async function obterReserva(tx: Prisma.TransactionClient, cliente: string | null = null) {
+  const codigo = cliente ? `APOIO-${cliente.toUpperCase().replace(/[^A-Z0-9]+/g, "")}` : "APOIO";
+  const existente = await tx.efetivoEquipe.findUnique({ where: { codigo } });
   if (existente) return existente;
   const total = await tx.efetivoEquipe.count();
-  return tx.efetivoEquipe.create({ data: { codigo: "APOIO", nome: "FORA DAS EQUIPES DE CAMPO", projeto: "A definir", grupo: "Apoio", status: "Ativa", ordem: total + 1 } });
+  return tx.efetivoEquipe.create({ data: { codigo, nome: "FORA DAS EQUIPES DE CAMPO", projeto: "A definir", grupo: "Apoio", cliente, status: "Ativa", ordem: total + 1 } });
 }
 
 export async function proximoNumeroDeVaga(tx: Prisma.TransactionClient): Promise<number> {

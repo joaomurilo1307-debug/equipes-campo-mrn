@@ -8,41 +8,33 @@ import ConsominasLogo from "@/components/ConsominasLogo";
 import { DadosGate, DadosProvider, useShell } from "@/components/efetivos/DadosContext";
 import { DicaProvider } from "@/components/efetivos/quadro/dicas";
 import { ModalMinhaSenha } from "@/components/efetivos/AcessosEHistorico";
-import { IcBase, IcCalendario, IcCarro, IcContrato, IcEquipe, IcFechar, IcFerias, IcHistorico, IcMais, IcOlho, IcPainel, IcQuadro, IcRelatorio, IcSair, IcUsuarios, IcVaga } from "@/components/efetivos/icones";
+import { IcBase, IcBusca, IcCarro, IcContrato, IcEquipe, IcFechar, IcHistorico, IcMais, IcOlho, IcPainel, IcRelatorio, IcSair, IcUsuarios } from "@/components/efetivos/icones";
 
 type Item = { href: string; rotulo: string; icone: (p: { tam?: number }) => JSX.Element; so?: "editor" | "admin" };
 type Secao = { titulo: string; itens: Item[] };
 
-// A ordem segue o raciocínio de quem opera: ver o todo, entender a estrutura (contrato -> equipe -> vaga -> pessoa),
-// cuidar dos recursos, e por fim os dados (base em Excel, relatórios) e o administrativo.
+// A ordem segue o raciocínio de quem opera: primeiro consultar (como está e quem está livre), depois operar (pessoas, equipes,
+// viaturas), depois os cadastros e os dados (contratos, base em Excel, relatórios) e, por fim, quem acessa.
 const SECOES: Secao[] = [
   {
-    titulo: "Visão geral",
+    titulo: "Consultar",
     itens: [
       { href: "/painel", rotulo: "Painel", icone: IcPainel },
-      { href: "/quadro", rotulo: "Quadro de equipes", icone: IcQuadro },
-      { href: "/disponibilidade", rotulo: "Disponibilidade", icone: IcCalendario },
+      { href: "/consulta", rotulo: "Consulta", icone: IcBusca },
     ],
   },
   {
-    titulo: "Estrutura",
+    titulo: "Operar",
+    itens: [
+      { href: "/pessoas", rotulo: "Pessoas", icone: IcUsuarios },
+      { href: "/equipes", rotulo: "Equipes", icone: IcEquipe },
+      { href: "/frota", rotulo: "Viaturas", icone: IcCarro },
+    ],
+  },
+  {
+    titulo: "Cadastros e dados",
     itens: [
       { href: "/contratos", rotulo: "Contratos", icone: IcContrato },
-      { href: "/equipes", rotulo: "Equipes", icone: IcEquipe },
-      { href: "/vagas", rotulo: "Vagas", icone: IcVaga },
-      { href: "/colaboradores", rotulo: "Colaboradores", icone: IcUsuarios },
-    ],
-  },
-  {
-    titulo: "Recursos",
-    itens: [
-      { href: "/frota", rotulo: "Frota", icone: IcCarro },
-      { href: "/ferias", rotulo: "Férias e ausências", icone: IcFerias },
-    ],
-  },
-  {
-    titulo: "Dados",
-    itens: [
       { href: "/base", rotulo: "Base (Excel)", icone: IcBase },
       { href: "/relatorios", rotulo: "Relatórios", icone: IcRelatorio },
       { href: "/historico", rotulo: "Histórico", icone: IcHistorico, so: "editor" },
@@ -54,10 +46,11 @@ const SECOES: Secao[] = [
 function Menu({ aoNavegar }: { aoNavegar?: () => void }) {
   const pathname = usePathname();
   const { data: sessao } = useSession();
-  const { nivel, podeEditar, ocultarNomes, setOcultarNomes } = useShell();
+  const { nivel, podeEditar, ocultarNomes, setOcultarNomes, escopo, clientes, clienteSel, setClienteSel } = useShell();
   const nome = (sessao?.user as any)?.name ?? "";
   const [trocarSenha, setTrocarSenha] = useState(false);
-  const secoes = SECOES.map((s) => ({ ...s, itens: s.itens.filter((i) => !i.so || (i.so === "editor" ? podeEditar : nivel === "ADMIN")) })).filter((s) => s.itens.length > 0);
+  // o histórico geral é da administração (quem tem acesso restrito a um cliente não o vê)
+  const secoes = SECOES.map((s) => ({ ...s, itens: s.itens.filter((i) => !i.so || (i.so === "editor" ? podeEditar && !escopo : nivel === "ADMIN")) })).filter((s) => s.itens.length > 0);
 
   return (
     <div className="flex h-full flex-col">
@@ -65,6 +58,26 @@ function Menu({ aoNavegar }: { aoNavegar?: () => void }) {
         <ConsominasLogo size={34} />
         <div className="mt-3 font-display text-[13px] font-medium uppercase tracking-[0.16em] text-gray-500">Equipes de campo</div>
       </div>
+
+      {escopo ? (
+        <div className="mx-3 mb-3 rounded-lg border border-line bg-gray-50 px-3 py-2 text-[12px] text-gray-600">
+          Acesso do cliente <strong className="text-ink">{escopo}</strong>
+        </div>
+      ) : (
+        clientes.length > 1 && (
+          <label className="mx-3 mb-3 block text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+            Cliente
+            <select value={clienteSel} onChange={(e) => setClienteSel(e.target.value)} className="field !mt-1 !py-1.5 !text-[13px] normal-case">
+              <option value="">Todos os clientes</option>
+              {clientes.map((c) => (
+                <option key={c} value={c}>
+                  {c}
+                </option>
+              ))}
+            </select>
+          </label>
+        )
+      )}
 
       {podeEditar && (
         <div className="px-3 pb-3">
@@ -80,7 +93,7 @@ function Menu({ aoNavegar }: { aoNavegar?: () => void }) {
             <div className="px-3 pb-1 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-gray-400">{s.titulo}</div>
             <div className="space-y-0.5">
               {s.itens.map((i) => {
-                const ativo = pathname?.startsWith(i.href);
+                const ativo = pathname?.startsWith(i.href) || (i.href === "/pessoas" && pathname?.startsWith("/vagas"));
                 const Icone = i.icone;
                 return (
                   <Link key={i.href} href={i.href} onClick={aoNavegar} className={`nav-item ${ativo ? "nav-item-active" : ""}`} aria-current={ativo ? "page" : undefined}>

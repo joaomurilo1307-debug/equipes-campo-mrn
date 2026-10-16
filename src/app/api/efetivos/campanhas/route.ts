@@ -5,7 +5,7 @@ import { campanhaComEquipeSchema } from "@/lib/efetivos/esquemas";
 import { STATUS_CAMPANHA_QUE_LIBERAM, validarAlocacao } from "@/lib/efetivos/disponibilidade";
 
 export async function POST(req: Request) {
-  const a = await exigir("editar");
+  const a = await exigir("global");
   if ("erro" in a) return a.erro;
   const parsed = campanhaComEquipeSchema
     .refine((v) => v.inicio <= v.fim, { message: "O fim não pode ser antes do início", path: ["fim"] })

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useDados } from "../DadosContext";
+import { clienteDaEquipe } from "@/lib/efetivos/clientes";
 import { chamar, contratosConhecidos, ehReserva, rotuloContrato, rotuloEquipe, valoresUsados, type Equipe, type Vaga } from "../comum";
 import { IcLixo } from "../icones";
 import { Aviso, Campo, Modal, RodapeModal } from "../ui";
@@ -102,7 +103,11 @@ export default function ModalVaga({ equipe, vaga, onFechar, onSalvo }: { equipe?
                     ))}
                 </optgroup>
               ))}
-              {reserva && <option value={reserva.id}>Sem equipe (disponível)</option>}
+              {dados.equipes.filter(ehReserva).map((r) => (
+                <option key={r.id} value={r.id}>
+                  Sem equipe (disponível){clienteDaEquipe(r, dados.contratos) ? ` · ${clienteDaEquipe(r, dados.contratos)}` : ""}
+                </option>
+              ))}
             </select>
           </Campo>
         )}

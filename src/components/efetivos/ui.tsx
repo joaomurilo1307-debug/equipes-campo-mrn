@@ -1,7 +1,7 @@
 "use client";
 
 // Peças visuais compartilhadas por todas as telas.
-import { useEffect, type ReactNode } from "react";
+import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { IcAlerta, IcCheck, IcFechar } from "./icones";
 
 export function Modal({ titulo, subtitulo, onFechar, children, largo }: { titulo: string; subtitulo?: string; onFechar: () => void; children: ReactNode; largo?: boolean }) {
@@ -111,7 +111,20 @@ export function Segmentado<T extends string>({ valor, opcoes, onChange }: { valo
   );
 }
 
+/** Dentro de uma página com abas o título fica na página; cada aba mostra só o texto de apoio e as ações. */
+export const EmAbas = createContext(false);
+
 export function CabecalhoPagina({ titulo, subtitulo, acoes }: { titulo: string; subtitulo?: ReactNode; acoes?: ReactNode }) {
+  const emAbas = useContext(EmAbas);
+  if (emAbas) {
+    if (!subtitulo && !acoes) return null;
+    return (
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        {subtitulo ? <p className="max-w-3xl text-[13px] text-gray-500">{subtitulo}</p> : <span />}
+        {acoes && <div className="no-print flex flex-wrap items-center gap-2">{acoes}</div>}
+      </div>
+    );
+  }
   return (
     <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">

@@ -1,6 +1,6 @@
 "use client";
 
-// Disponibilidade por data: escolha um dia e veja quem está livre, quem fica livre nas próximas semanas (equipe que termina libera
+// Planejamento: escolha um dia e veja quem está livre, quem fica livre nas próximas semanas (equipe que termina libera
 // as pessoas no dia seguinte), quais equipes começam e o planejamento de início/fim de cada equipe — que se preenche aqui mesmo.
 // Sem fim previsto, o sistema não tem como saber quando alguém fica livre: por isso a tabela de planejamento fica no topo do trabalho.
 import Link from "next/link";
@@ -22,7 +22,7 @@ const HORIZONTES = [
 
 type Linha = { v: Vaga; e: Equipe | undefined; desde: Dia | null; motivo: string };
 
-export default function Disponibilidade() {
+export default function Planejamento() {
   const { dados, hoje, equipesCampo, vagasPorEquipe, equipePorId, situacaoDe, nomeDe, recarregar, contratoNoDia } = useDados();
   const podeEditar = dados.podeEditar;
   const [dia, setDia] = useState<Dia>(hoje);
@@ -132,8 +132,8 @@ export default function Disponibilidade() {
   return (
     <div>
       <CabecalhoPagina
-        titulo="Disponibilidade"
-        subtitulo="Escolha uma data e veja quem está livre, quem fica livre nas próximas semanas e quando cada equipe começa e termina. As datas de início e fim das equipes se preenchem aqui."
+        titulo="Planejamento"
+        subtitulo="Início e fim de cada equipe e quem fica livre quando. As datas se preenchem aqui, ou na base em Excel (aba EQUIPES). Para ver quem está livre numa data, use a Consulta."
       />
 
       <div className="card mb-4 flex flex-wrap items-end gap-3 p-3.5">
@@ -193,49 +193,14 @@ export default function Disponibilidade() {
 
       <section className="card mb-4 overflow-hidden" aria-label="Resumo da data">
         <div className="grid grid-cols-2 divide-x divide-line sm:grid-cols-4">
-          <Numero rotulo={`Livres em ${fmtDia(dia)}`} valor={livres.length} sub="sem equipe ou com a equipe encerrada" cor={AZUL} />
+          <Link href={`/consulta?situacao=livres&data=${dia}`} className="block hover:bg-gray-50"><Numero rotulo={`Livres em ${fmtDia(dia)}`} valor={livres.length} sub="ver quem está livre na Consulta" cor={AZUL} /></Link>
           <Numero rotulo={`Ficam livres até ${fmtDiaCurto(limite)}`} valor={terminam.reduce((s, e) => s + vagasDe(e).length, 0)} sub={`${terminam.length} equipe${terminam.length === 1 ? "" : "s"} terminam`} cor="#B86E00" />
           <Numero rotulo="Equipes que começam" valor={comecam.length} sub={`até ${fmtDiaCurto(limite)}`} cor="#0E8F63" />
           <Numero rotulo="Sem fim previsto" valor={semFim} sub="equipes sem data de fim" cor={semFim ? "#B86E00" : "#0E8F63"} />
         </div>
       </section>
 
-      <div className="mb-4 grid items-stretch gap-4 lg:grid-cols-2">
-        <Secao titulo={`Livres em ${fmtDia(dia)}`} sub="Quem está sem equipe nessa data." semPadding>
-          {livresFiltrados.length === 0 ? (
-            <Vazio
-              titulo="Ninguém livre nessa data"
-              texto={semFim > 0 ? "Pode ser porque as equipes ainda não têm data de fim: preencha o fim abaixo para o sistema saber quando as pessoas ficam livres." : "Todas as pessoas estão em equipe nessa data."}
-            />
-          ) : (
-            <div className="max-h-[360px] overflow-y-auto">
-              <table className="w-full text-[12.5px]">
-                <thead className="sticky top-0 bg-gray-50 text-[10.5px] font-semibold uppercase tracking-wide text-gray-500">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Pessoa</th>
-                    <th className="px-3 py-2 text-left">Função</th>
-                    <th className="px-3 py-2 text-left">Veio de</th>
-                    <th className="px-3 py-2 text-left">Livre desde</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {livresFiltrados.map(({ v, e, desde, motivo }) => (
-                    <tr key={v.id} className="border-t border-gray-100">
-                      <td className="px-3 py-1.5 font-medium">{nomeDe(v)}</td>
-                      <td className="px-3 py-1.5 text-gray-600">
-                        {v.cargo}
-                        <div className="text-[10.5px] text-gray-400">{v.empresa}</div>
-                      </td>
-                      <td className="px-3 py-1.5 text-gray-600">{e ? <Link href={`/equipes?equipe=${e.id}`} className="hover:underline">{e.nome}</Link> : <span className="text-gray-400">{motivo || "sem equipe"}</span>}</td>
-                      <td className="num px-3 py-1.5 text-gray-600">{desde ? fmtDia(desde) : "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Secao>
-
+      <div className="mb-4 grid items-stretch gap-4">
         <Secao titulo={`Livres por semana, a partir de ${fmtDiaCurto(segundaDaSemana(dia))}`} sub="Pessoas livres e ausentes a cada segunda-feira, nas próximas 26 semanas.">
           {haLivreNoPeriodo ? (
             <>
