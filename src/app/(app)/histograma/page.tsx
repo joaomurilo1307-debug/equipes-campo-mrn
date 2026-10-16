@@ -1,10 +1,10 @@
 import { Suspense } from "react";
-import Histograma from "@/components/efetivos/Histograma";
+import HistogramaComAbas from "@/components/efetivos/HistogramaComAbas";
 
 export default function Pagina() {
   return (
     <Suspense fallback={null}>
-      <Histograma />
+      <HistogramaComAbas />
     </Suspense>
   );
 }

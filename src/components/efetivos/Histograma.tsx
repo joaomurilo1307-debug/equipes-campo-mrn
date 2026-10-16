@@ -1,37 +1,17 @@
 "use client";
 
-// Histograma: pessoas, posições, vagas, ausências, viaturas e equipes, mês a mês, por equipe, contrato, cliente ou cargo.
+// Histograma de PESSOAS: pessoas, posições, vagas, ausências e equipes, mês a mês, por equipe, contrato, cliente ou cargo.
 // Cada mês é a média dos dias (equipe que começa no dia 20 entra pela fração). Filtra por contrato, equipe e cargo; o mesmo
 // cálculo alimenta o gráfico, a tabela equipe × mês e o Excel.
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AGRUPAMENTOS, MEDIDAS, SEM_FILTROS, agrupamentosDaMedida, agruparTopo, calcularHistograma, type Agrupar, type Filtros, type Medida } from "@/lib/efetivos/histograma";
-import { janelaPadrao, mesDe, nomeDoMes, somarMeses } from "@/lib/efetivos/linhaDoTempo";
+import { janelaPadrao, mesDe, somarMeses } from "@/lib/efetivos/linhaDoTempo";
 import { useDados } from "./DadosContext";
 import { ehReserva, rotuloContrato } from "./comum";
 import { ColunasEmpilhadas, Legenda, type Serie } from "./graficos";
+import { MultiSelecao, OUTROS, SERIES, TOPO, corDaRampa, fmtNum, nomeLongoDoMes, nomeLongoMaiusculo, rotuloMes, type Janelas } from "./histogramaComum";
 import { CabecalhoPagina, Secao, Vazio } from "./ui";
-
-// Paleta categórica de 8 posições (azul, laranja, água, amarelo, magenta, verde, violeta, vermelho), na ordem validada para
-// colunas empilhadas: vizinhos sempre distinguíveis, inclusive por quem não enxerga bem as cores. O resto vai em cinza ("Outros").
-const SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7"];
-const OUTROS = "#9AA8A1";
-// Sequencial de um tom só (azul), do claro ao escuro, para a tabela equipe × mês.
-const RAMPA = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7", "#3987e5", "#2a78d6", "#256abf", "#1c5cab", "#184f95", "#104281"];
-const TOPO = SERIES.length;
-
-const rotuloMes = (m: string) => `${nomeDoMes(Number(m.slice(5, 7)))}/${m.slice(2, 4)}`;
-const nomeLongoDoMes = (m: string) => `${nomeDoMes(Number(m.slice(5, 7)), true)} de ${m.slice(0, 4)}`;
-const nomeLongoMaiusculo = (m: string) => nomeLongoDoMes(m).replace(/^./, (c) => c.toUpperCase());
-const fmtNum = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1).replace(".", ","));
-
-function corDaRampa(v: number, max: number): { fundo: string; texto: string } {
-  if (v <= 0 || max <= 0) return { fundo: "transparent", texto: "#9AA8A1" };
-  const i = Math.min(RAMPA.length - 1, Math.round((v / max) * (RAMPA.length - 1)));
-  return { fundo: RAMPA[i], texto: i >= 6 ? "#FFFFFF" : "#101B17" };
-}
-
-type Janelas = "auto" | "6m" | "12m" | "ano" | "personalizado";
 
 export default function Histograma() {
   const { dados, hoje, idx, equipesCampo } = useDados();
@@ -46,6 +26,7 @@ export default function Histograma() {
   const agrupamentos = agrupamentosDaMedida(medida);
   const agruparEfetivo: Agrupar = agrupamentos.includes(agrupar) ? agrupar : "equipe";
   const info = MEDIDAS.find((m) => m.id === medida)!;
+  const medidasDaTela = MEDIDAS.filter((m) => m.id !== "viaturas");
 
   // ---- o período: do mês em que o planejamento começa ao mês em que termina (no máximo 24 meses)
   const { de, ate } = useMemo(() => {
@@ -97,6 +78,8 @@ export default function Histograma() {
   const iPico = h.totais.indexOf(pico);
   const media = h.totais.length ? Math.round((h.totais.reduce((s, v) => s + v, 0) / h.totais.length) * 10) / 10 : 0;
   const maxCelula = Math.max(0, ...h.grupos.flatMap((g) => g.valores));
+  const mediaLivres = h.livres.length ? Math.round((h.livres.reduce((s, v) => s + v, 0) / h.livres.length) * 10) / 10 : 0;
+  const picoLivres = Math.max(0, ...h.livres);
 
   // ---- opções dos filtros
   const opContratos = useMemo(() => [...new Set(equipesCampo.map((e) => e.projeto))].sort((a, b) => a.localeCompare(b, "pt-BR", { numeric: true })).map((c) => ({ id: c, rotulo: rotuloContrato(c) })), [equipesCampo]);
@@ -120,6 +103,7 @@ export default function Histograma() {
       const cab = [AGRUPAMENTOS.find((a) => a.id === agruparEfetivo)!.rotulo, ...h.meses.map(rotuloMes), "Média", "Pico"];
       const linhas = h.grupos.map((g) => [g.rotulo, ...g.valores, g.media, g.pico]);
       linhas.push(["Total", ...h.totais, media, pico]);
+      linhas.push(["Pessoas livres (reserva + equipes encerradas)", ...h.livres, mediaLivres, picoLivres]);
       const ws = XLSX.utils.aoa_to_sheet([cab, ...linhas]);
       ws["!cols"] = [{ wch: 40 }, ...h.meses.map(() => ({ wch: 9 })), { wch: 9 }, { wch: 9 }];
       const filt = XLSX.utils.aoa_to_sheet([
@@ -160,7 +144,7 @@ export default function Histograma() {
           <label>
             <span className="label">Medida</span>
             <select value={medida} onChange={(e) => setMedida(e.target.value as Medida)} className="field">
-              {MEDIDAS.map((m) => (
+              {medidasDaTela.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.rotulo}
                 </option>
@@ -214,7 +198,6 @@ export default function Histograma() {
         </div>
         <p className="mt-2.5 text-[12px] text-gray-500">
           <b className="text-gray-700">{info.rotulo}:</b> {info.ajuda}
-          {medida === "viaturas" && " A mesma viatura usada por mais de uma equipe aparece em cada uma, mas conta uma vez só no total."}
         </p>
       </div>
 
@@ -362,50 +345,25 @@ export default function Histograma() {
                     <td className="num border-l border-line bg-gray-50 px-2 py-2 text-right">{fmtNum(media)}</td>
                     <td className="num bg-gray-50 px-2 py-2 text-right">{fmtNum(pico)}</td>
                   </tr>
+                  <tr className="font-semibold text-brand-dark">
+                    <th className="sticky left-0 z-10 border-t border-line bg-brand-soft px-3 py-2 text-left" title="Pessoas disponíveis para outra equipe: quem está na reserva (fora de qualquer equipe) e quem já terminou a equipe. Cada mês é a média dos dias.">
+                      Pessoas livres
+                      <span className="block text-[10.5px] font-normal text-gray-500">reserva + quem terminou a equipe</span>
+                    </th>
+                    {h.livres.map((v, i) => (
+                      <td key={i} className={`num border-t border-line bg-brand-soft px-1.5 py-2 text-center ${h.meses[i] === mesAtual ? "outline outline-1 -outline-offset-1 outline-brand" : ""}`}>
+                        {fmtNum(v)}
+                      </td>
+                    ))}
+                    <td className="num border-l border-t border-line bg-brand-soft px-2 py-2 text-right">{fmtNum(mediaLivres)}</td>
+                    <td className="num border-t border-line bg-brand-soft px-2 py-2 text-right">{fmtNum(picoLivres)}</td>
+                  </tr>
                 </tfoot>
               </table>
             </div>
           </Secao>
         </>
       )}
-    </div>
-  );
-}
-
-/** Lista suspensa com várias escolhas: o botão diz quantas estão marcadas. */
-function MultiSelecao({ rotulo, opcoes, valor, onChange }: { rotulo: string; opcoes: { id: string; rotulo: string }[]; valor: string[]; onChange: (v: string[]) => void }) {
-  const [busca, setBusca] = useState("");
-  const t = busca.trim().toLowerCase();
-  const lista = opcoes.filter((o) => !t || o.rotulo.toLowerCase().includes(t));
-  return (
-    <div className="relative">
-      <span className="label">{rotulo}</span>
-      <details className="group">
-        <summary className="field flex min-w-[150px] cursor-pointer list-none items-center justify-between gap-2">
-          <span className="truncate">{valor.length === 0 ? "Todos" : valor.length === 1 ? opcoes.find((o) => o.id === valor[0])?.rotulo ?? valor[0] : `${valor.length} escolhidos`}</span>
-          <span className="text-gray-400 group-open:rotate-180">▾</span>
-        </summary>
-        <div className="absolute left-0 z-40 mt-1 w-72 rounded-xl border border-line bg-white p-2 shadow-pop">
-          <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar…" className="field mb-2" />
-          <div className="max-h-60 overflow-y-auto">
-            {lista.map((o) => {
-              const marcado = valor.includes(o.id);
-              return (
-                <label key={o.id} className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-[12.5px] hover:bg-gray-50">
-                  <input type="checkbox" checked={marcado} onChange={() => onChange(marcado ? valor.filter((x) => x !== o.id) : [...valor, o.id])} className="h-4 w-4 accent-[#0A9E7F]" />
-                  <span className="truncate">{o.rotulo}</span>
-                </label>
-              );
-            })}
-            {lista.length === 0 && <p className="px-2 py-1 text-[12px] text-gray-400">Nada encontrado.</p>}
-          </div>
-          {valor.length > 0 && (
-            <button onClick={() => onChange([])} className="mt-1 w-full rounded-md px-2 py-1 text-left text-[12px] font-semibold text-brand-dark hover:bg-gray-50">
-              Limpar escolha
-            </button>
-          )}
-        </div>
-      </details>
     </div>
   );
 }

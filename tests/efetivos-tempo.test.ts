@@ -4,6 +4,7 @@ import { indexar } from "../src/lib/efetivos/disponibilidade";
 import { colunasDaEscala, duracaoTexto, equipeAtivaNoDia, faseDaEquipe, inicioDaSemana, janelaPadrao, posicaoNaJanela, somarMeses } from "../src/lib/efetivos/linhaDoTempo";
 import { agruparTopo, calcularHistograma, SEM_FILTROS, type EntradaHistograma } from "../src/lib/efetivos/histograma";
 import { conferirUso, conflitosDeUso, lerNotaDeTroca, planejarTroca, usoCobreDia } from "../src/lib/efetivos/usosVeiculo";
+import { calcularFrotaPorMes, chegadaDaPrevista, situacaoDaViaturaNoDia, viaturasEmUsoNoDia } from "../src/lib/efetivos/frota";
 
 // Regras puras (sem banco): linha do tempo, histograma e o tempo das viaturas nas equipes.
 
@@ -226,6 +227,20 @@ test("Histograma: a mesma viatura em duas equipes conta uma vez no total (cada e
   assert.deepEqual(h.totais, [2, 2], "B e C: duas viaturas, não três");
 });
 
+test("Histograma: pessoas livres = reserva + quem terminou a equipe, mês a mês, respeitando os filtros", () => {
+  const equipes = [eq("E1", "3686", "2026-09-01", "2026-10-31"), eq("E2", "3687", null, null), { ...eq("R", "A definir", null, null), grupo: "Apoio" }];
+  const vagas = [vaga("a", "E1", "Ana"), vaga("b", "E1", "Bia"), vaga("c", "E2", "Caio"), vaga("d", "R", "Rui"), vaga("e", "E1", null)] as any;
+  const h = calcularHistograma(entrada({ equipes, vagas }), cfg);
+  // outubro: a equipe E1 ainda existe até o dia 31 -> só o Rui (reserva); novembro: Ana e Bia ficam livres (+ Rui)
+  assert.deepEqual(h.livres, [1, 3]);
+  // vaga aberta não é pessoa livre; com filtro de outro contrato, quem terminou em E1 não entra, mas a reserva sempre entra
+  const soE2 = calcularHistograma(entrada({ equipes, vagas }), { ...cfg, filtros: { ...SEM_FILTROS, contratos: ["3687"] } });
+  assert.deepEqual(soE2.livres, [1, 1]);
+  // equipe que termina no meio do mês: as pessoas ficam livres só pela fração (E1 acaba no dia 15 de novembro: 15 de 30 dias)
+  const meio = calcularHistograma(entrada(), cfg);
+  assert.deepEqual(meio.livres, [0, 1]);
+});
+
 test("Histograma: Outros soma o resto dos grupos e os totais continuam fechando", () => {
   const equipes = ["E1", "E2", "E3", "E4"].map((id) => eq(id, "3686", null, null));
   const vagas = [vaga("a", "E1", "A"), vaga("b", "E1", "B"), vaga("c", "E2", "C"), vaga("d", "E3", "D"), vaga("e", "E4", "E")] as any;
@@ -235,4 +250,40 @@ test("Histograma: Outros soma o resto dos grupos e os totais continuam fechando"
   assert.equal(topo[2].rotulo, "Outros (2)");
   for (let i = 0; i < h.meses.length; i++) assert.equal(Math.round(topo.reduce((s, g) => s + g.valores[i], 0) * 10) / 10, h.totais[i]);
   assert.equal(agruparTopo(h, 10), h.grupos);
+});
+
+// ---------------------------------------------------------------- frota: em uso, livres, indisponíveis, previstas
+
+test("Frota: situação da viatura no dia (em uso, livre, indisponível, prevista que chega na data da troca, devolvida)", () => {
+  const prev = { id: "N", status: "Prevista" };
+  const velha = { id: "V", status: "Em operação", substituidoPorId: "N", trocaEm: "2026-12-15" };
+  assert.equal(chegadaDaPrevista(prev, [prev, velha]), "2026-12-15");
+  assert.equal(chegadaDaPrevista(prev, [prev]), null);
+  assert.equal(situacaoDaViaturaNoDia(prev, false, "2026-12-15", "2026-12-14"), "prevista");
+  assert.equal(situacaoDaViaturaNoDia(prev, false, "2026-12-15", "2026-12-15"), "livre", "a prevista vira viatura do dia da troca");
+  assert.equal(situacaoDaViaturaNoDia(prev, true, "2026-12-15", "2027-01-01"), "em_uso");
+  assert.equal(situacaoDaViaturaNoDia(prev, false, null, "2030-01-01"), "prevista", "sem data de chegada nunca chegou");
+  assert.equal(situacaoDaViaturaNoDia({ id: "M", status: "Em manutenção" }, true, null, "2026-10-01"), "indisponivel");
+  assert.equal(situacaoDaViaturaNoDia({ id: "D", status: "Devolvido" }, true, null, "2026-10-01"), "devolvida");
+  assert.equal(situacaoDaViaturaNoDia({ id: "L", status: "Disponível" }, false, null, "2026-10-01"), "livre");
+});
+
+test("Frota: viatura em uso só enquanto a equipe e o período dela valem; depois fica livre", () => {
+  const equipes = [eq("E1", "3686", "2026-10-01", "2026-10-31"), eq("E2", "3687", null, null)];
+  const usos = [
+    { veiculoId: "A", equipeId: "E1", inicio: "2026-10-01", fim: "2026-10-31" },
+    { veiculoId: "B", equipeId: "E2", inicio: null, fim: null },
+  ];
+  const vagas = [{ equipeId: "E1", veiculoId: "C" }]; // C só pela pessoa
+  const e = { equipes, vagas, usos };
+  assert.deepEqual([...viaturasEmUsoNoDia(e, "2026-10-15")].sort(), ["A", "B", "C"]);
+  assert.deepEqual([...viaturasEmUsoNoDia(e, "2026-11-01")].sort(), ["B"], "a equipe E1 terminou");
+  assert.deepEqual([...viaturasEmUsoNoDia(e, "2026-10-15", (id) => id === "E2")], ["B"]);
+
+  const veiculos = [{ id: "A", status: "Em operação" }, { id: "B", status: "Em operação" }, { id: "C", status: "Disponível" }, { id: "M", status: "Em manutenção" }, { id: "D", status: "Devolvido" }, { id: "N", status: "Prevista" }];
+  const f = calcularFrotaPorMes({ ...e, veiculos }, "2026-10", "2026-11");
+  // outubro: A, B, C em uso; M indisponível; N prevista; D devolvida não conta
+  assert.deepEqual([f.emUso[0], f.livres[0], f.indisponiveis[0], f.previstas[0], f.frota[0]], [3, 0, 1, 1, 5]);
+  // novembro: só B em uso; A e C ficam livres
+  assert.deepEqual([f.emUso[1], f.livres[1], f.indisponiveis[1], f.previstas[1], f.frota[1]], [1, 2, 1, 1, 5]);
 });

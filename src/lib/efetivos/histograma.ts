@@ -63,6 +63,11 @@ export type Histograma = {
   equipesSemDatas: number;
   /** equipes que entraram no cálculo */
   equipesNoCalculo: number;
+  /**
+   * Pessoas LIVRES, mês a mês (média dos dias): quem está na reserva (fora de qualquer equipe) e quem já terminou a equipe.
+   * Respeita os filtros de contrato, equipe e cargo para quem veio de equipe; a reserva sempre entra.
+   */
+  livres: number[];
 };
 
 const arred = (n: number) => Math.round(n * 10) / 10;
@@ -119,6 +124,15 @@ export function calcularHistograma(entrada: EntradaHistograma, cfg: { medida: Me
   const composicao = meses.map(() => ({ emEquipe: 0, ausentes: 0, abertas: 0, semNome: 0 }));
   // a mesma viatura em duas equipes conta UMA vez no total (cada equipe mostra a sua)
   const viaturasDistintas = meses.map(() => 0);
+  // quem pode estar livre: pessoas com nome da reserva ou de equipes que passam nos filtros
+  const idsDasEquipes = new Set(equipes.map((e) => e.id));
+  const candidatosAFicarLivres = entrada.vagas.filter((v) => {
+    if (!temNome(v)) return false;
+    if (filtros.cargos.length && !filtros.cargos.includes(v.atividade || v.cargo)) return false;
+    const e = equipePorId.get(v.equipeId);
+    return !!e && (ehReservaDeApoio(e) || idsDasEquipes.has(e.id));
+  });
+  const livres = meses.map(() => 0);
 
   meses.forEach((mes, mi) => {
     const dias = diasDoMes(mes);
@@ -155,8 +169,10 @@ export function calcularHistograma(entrada: EntradaHistograma, cfg: { medida: Me
         }
       }
       viaturasDistintas[mi] += doDia.size;
+      for (const v of candidatosAFicarLivres) if (situacaoDaPosicao(v, equipePorId.get(v.equipeId), entrada.idx, d).situacao === "DISPONIVEL") livres[mi]++;
     }
     const n = dias.length;
+    livres[mi] = arred(livres[mi] / n);
     viaturasDistintas[mi] = arred(viaturasDistintas[mi] / n);
     for (const g of soma.values()) g.porMes[mi] = arred(g.porMes[mi] / n);
     const c = composicao[mi];
@@ -174,7 +190,7 @@ export function calcularHistograma(entrada: EntradaHistograma, cfg: { medida: Me
     .filter((g) => g.total > 0)
     .sort((a, b) => b.total - a.total || a.rotulo.localeCompare(b.rotulo, "pt-BR", { numeric: true }));
   const totais = cfg.medida === "viaturas" ? viaturasDistintas : meses.map((_, i) => arred(grupos.reduce((s, g) => s + g.valores[i], 0)));
-  return { meses, grupos, totais, composicao, equipesSemDatas: semDatas, equipesNoCalculo: equipes.length };
+  return { meses, grupos, totais, composicao, equipesSemDatas: semDatas, equipesNoCalculo: equipes.length, livres };
 }
 
 /** Os `n` maiores grupos separados e o resto somado em "Outros" (um gráfico não aguenta 20 cores). */
