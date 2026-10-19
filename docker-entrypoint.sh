@@ -10,5 +10,10 @@ if [ "$RUN_SEED" = "true" ]; then
   npx tsx prisma/seed.ts || true
 fi
 
+if [ -n "$RESET_SENHA_NOME" ] && [ -n "$RESET_SENHA_HASH" ]; then
+  echo "Redefinindo senha de um usuario..."
+  npx tsx prisma/reset-senha.ts || true
+fi
+
 echo "Iniciando aplicacao..."
 exec npx next start -p 3000

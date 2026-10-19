@@ -170,6 +170,9 @@ export default function Painel() {
         }
       />
 
+      {/* sua missao: tudo o que falta preencher, com atalho para o lugar certo */}
+      <Pendencias />
+
       {/* resumo: cada número leva às linhas dele */}
       <section className="card overflow-hidden" aria-label="Resumo">
         <div className="grid grid-cols-2 divide-x divide-y divide-line sm:grid-cols-4 xl:grid-cols-8 xl:divide-y-0">
@@ -227,11 +230,6 @@ export default function Painel() {
           </div>
         </div>
       </section>
-
-      {/* o que falta preencher (datas, placas...) */}
-      <div className="my-4">
-        <Pendencias />
-      </div>
 
       {/* gráficos */}
       <div className="grid items-stretch gap-4 lg:grid-cols-2 2xl:grid-cols-12">
